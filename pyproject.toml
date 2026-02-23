@@ -1,7 +1,7 @@
 [project]
-name = "cdp-python-backend-template"
+name = "nrf-impact-assessor"
 version = "0.1.0"
-description = "CDP Python Backend Template"
+description = "nrf-impact-assessor"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
