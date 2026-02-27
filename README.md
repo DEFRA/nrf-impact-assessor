@@ -24,7 +24,7 @@ This is work-in-progress. See [To Do List](./TODO.md)
 
 ### Python
 
-Please install python `>= 3.12` and `pipx` in your environment. This template uses [uv](https://github.com/astral-sh/uv) to manage the environment and dependencies.
+Please install python `>= 3.13` and `pipx` in your environment. This template uses [uv](https://github.com/astral-sh/uv) to manage the environment and dependencies.
 
 ```python
 # install uv via pipx
