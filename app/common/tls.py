@@ -40,6 +40,7 @@ def extract_all_certs():
 
 def load_certs_into_context(certs):
     context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     for key, path in certs.items():
         try:
             context.load_verify_locations(path)
