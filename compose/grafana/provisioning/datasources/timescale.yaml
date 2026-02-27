@@ -10,7 +10,7 @@ datasources:
     isDefault: true
     editable: true
     secureJsonData:
-      password: metrics_password
+      password: ${METRICS_DB_PASSWORD}
     jsonData:
       database: metrics
       sslmode: disable

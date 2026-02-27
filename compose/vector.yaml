@@ -251,7 +251,7 @@ sinks:
       - host_cpu_metric
       - host_memory_metric
       - health_metric
-    endpoint: postgresql://metrics:metrics_password@timescaledb:5432/metrics
+    endpoint: postgresql://metrics:${METRICS_DB_PASSWORD}@timescaledb:5432/metrics
     table: metrics
     batch:
       max_bytes: 10485760

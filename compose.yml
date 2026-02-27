@@ -58,10 +58,12 @@ services:
     container_name: nrf-metrics-db
     ports:
       - "5433:5432"
+    env_file:
+      - "compose/secrets.env"
     environment:
       POSTGRES_DB: metrics
       POSTGRES_USER: metrics
-      POSTGRES_PASSWORD: metrics_password
+      POSTGRES_PASSWORD: ${METRICS_DB_PASSWORD}
     volumes:
       - timescale-data:/var/lib/postgresql/data
       - ./compose/init-timescale.sql:/docker-entrypoint-initdb.d/init.sql
@@ -80,6 +82,8 @@ services:
     container_name: nrf-vector
     ports:
       - "8686:8686"
+    env_file:
+      - "compose/secrets.env"
     environment:
       DOCKER_API_VERSION: "1.43"  # Match host Docker daemon API version
     volumes:

@@ -37,6 +37,7 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gdal-bin \
+    htop \
     libgdal36 \
     && rm -rf /var/lib/apt/lists/*
 

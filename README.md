@@ -125,9 +125,26 @@ Ruff is configured in the `.ruff.toml` file
 
 ### Docker
 
-This repository uses Docker throughput its lifecycle i.e. both for local development and the environments. A benefit of this is that environment variables & secrets are managed consistently throughout the lifecycle
+This repository uses Docker throughout its lifecycle i.e. both for local development and the environments. A benefit of this is that environment variables & secrets are managed consistently throughout the lifecycle.
 
-See the `Dockerfile` and `compose.yml` for details
+See the `Dockerfile` and `compose.yml` for details.
+
+## Makefile
+
+A `Makefile` is provided for common development tasks. Run `make help` to see all available targets.
+
+| Command | Description |
+|:---|:---|
+| `make help` | Show all available targets |
+| `make test` | Run unit tests (`tests/` and `app/`) |
+| `make lint` | Run Ruff linter |
+| `make format` | Format code and auto-fix lint issues |
+| `make build` | Build the service Docker container |
+| `make up` | Start all services (detached) |
+| `make down` | Stop all services |
+| `make logs` | Tail service container logs |
+| `make rebuild` | Rebuild and restart the service container |
+| `make health` | Check the `/health` endpoint |
 
 ## Local development
 
@@ -145,13 +162,21 @@ Follow the convention below for environment variables and secrets in local devel
 
 **Pre-Commit Hooks:** Ensure you install the pre-commit hooks, as above
 
+See [Docs/environment.md](./Docs/environment.md) for a full reference of all environment variables.
+
 ### Development
 
 This app can be run locally by either using the Docker Compose project or via the provided script `scripts/start_dev_server.sh`.
 
 #### Using Docker Compose
 
-To run the application using Docker Compose, you can use the following command:
+```bash
+make up        # start all services
+make logs      # tail service logs
+make rebuild   # rebuild and restart after code changes
+```
+
+Or directly:
 
 ```bash
 docker compose --profile service up --build
@@ -184,10 +209,8 @@ Ensure the python virtual environment is configured and libraries are installed 
 
 Testing follows the [FastApi documented approach](https://fastapi.tiangolo.com/tutorial/testing/); using pytest & starlette.
 
-To test the application run:
-
 ```bash
-uv run pytest
+make test      # or: uv run pytest tests/ app/ -v
 ```
 
 ## API endpoints
