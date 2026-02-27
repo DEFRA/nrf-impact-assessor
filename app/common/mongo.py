@@ -29,7 +29,7 @@ async def get_mongo_client() -> AsyncMongoClient:
             logger.info("Creating MongoDB client")
             client = AsyncMongoClient(config.mongo_uri)
 
-        logger.info("Testing MongoDB connection to %s", config.mongo_uri)
+        logger.info("Testing MongoDB connection")
         await check_connection(client)
     return client
 

@@ -1,6 +1,6 @@
 services:
   localstack:
-    image: localstack/localstack:4.9.2
+    image: localstack/localstack:4.12.0
     ports:
       - "4566:4566" # LocalStack Gateway
       - "4510-4559:4510-4559" # external services port range
@@ -31,6 +31,26 @@ services:
     volumes:
       - mongodb-data:/data
     restart: always
+
+  postgres:
+    image: postgis/postgis:16-3.4
+    # Uncomment if you see platform mismatch warnings (e.g. on Apple Silicon Macs)
+    # platform: linux/${DOCKER_DEFAULT_PLATFORM:-arm64}
+    container_name: nrf-postgis
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: nrf_impact
+      POSTGRES_HOST_AUTH_METHOD: trust  # No password for local dev
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d nrf_impact"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cdp-tenant
 
   service:
     build:
@@ -85,6 +105,7 @@ services:
 
 volumes:
   mongodb-data:
+  postgres-data:
 
 networks:
   cdp-tenant:
