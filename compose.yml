@@ -52,67 +52,6 @@ services:
     networks:
       - cdp-tenant
 
-  # Monitoring Stack
-  timescaledb:
-    image: timescale/timescaledb:latest-pg16
-    container_name: nrf-metrics-db
-    ports:
-      - "5433:5432"
-    env_file:
-      - "compose/secrets.env"
-    environment:
-      POSTGRES_DB: metrics
-      POSTGRES_USER: metrics
-      POSTGRES_PASSWORD: ${METRICS_DB_PASSWORD}
-    volumes:
-      - timescale-data:/var/lib/postgresql/data
-      - ./compose/init-timescale.sql:/docker-entrypoint-initdb.d/init.sql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U metrics -d metrics"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - cdp-tenant
-
-  vector:
-    build:
-      context: .
-      dockerfile: Dockerfile.vector
-    container_name: nrf-vector
-    ports:
-      - "8686:8686"
-    env_file:
-      - "compose/secrets.env"
-    environment:
-      DOCKER_API_VERSION: "1.43"  # Match host Docker daemon API version
-    volumes:
-      - ./compose/vector.yaml:/etc/vector/vector.yaml:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro  # Access to Docker API
-    depends_on:
-      timescaledb:
-        condition: service_healthy
-    networks:
-      - cdp-tenant
-
-  grafana:
-    image: grafana/grafana:11.6.10
-    container_name: nrf-grafana
-    ports:
-      - "3000:3000"
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
-      GF_SECURITY_ADMIN_USER: admin
-      GF_INSTALL_PLUGINS: ""
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./compose/grafana/provisioning:/etc/grafana/provisioning
-    networks:
-      - cdp-tenant
-    depends_on:
-      timescaledb:
-        condition: service_healthy
-
   service:
     build:
       context: .
@@ -167,8 +106,6 @@ services:
 volumes:
   mongodb-data:
   postgres-data:
-  timescale-data:
-  grafana-data:
 
 networks:
   cdp-tenant:

@@ -140,11 +140,14 @@ A `Makefile` is provided for common development tasks. Run `make help` to see al
 | `make lint` | Run Ruff linter |
 | `make format` | Format code and auto-fix lint issues |
 | `make build` | Build the service Docker container |
-| `make up` | Start all services (detached) |
-| `make down` | Stop all services |
+| `make up` | Start core services (detached) |
+| `make down` | Stop core services |
 | `make logs` | Tail service container logs |
 | `make rebuild` | Rebuild and restart the service container |
 | `make health` | Check the `/health` endpoint |
+| `make monitoring-up` | Start all services including monitoring stack |
+| `make monitoring-down` | Stop all services including monitoring stack |
+| `make monitoring-logs` | Tail monitoring stack logs (TimescaleDB, Vector, Grafana) |
 
 ## Local development
 
@@ -171,10 +174,22 @@ This app can be run locally by either using the Docker Compose project or via th
 #### Using Docker Compose
 
 ```bash
-make up        # start all services
+make up        # start core services (LocalStack, MongoDB, PostGIS)
 make logs      # tail service logs
 make rebuild   # rebuild and restart after code changes
 ```
+
+#### Monitoring Stack (opt-in)
+
+The monitoring services (TimescaleDB, Vector, Grafana) are defined in a separate `compose.monitoring.yml` and are not started by default. To include them:
+
+```bash
+make monitoring-up     # start core + monitoring services
+make monitoring-logs   # tail TimescaleDB, Vector, Grafana logs
+make monitoring-down   # stop everything
+```
+
+Once running, Grafana is available at `http://localhost:3000` (admin/admin).
 
 Or directly:
 

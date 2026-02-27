@@ -61,7 +61,15 @@ METRICS_DB_PASSWORD=<your-password>
 
 ## Monitoring Stack
 
-These are set directly in `compose.yml` and reference the secrets above.
+The monitoring services (TimescaleDB, Vector, Grafana) live in a separate `compose.monitoring.yml` file and are **opt-in**. To start them alongside the core services:
+
+```bash
+make monitoring-up      # start core + monitoring
+make monitoring-logs    # tail monitoring logs
+make monitoring-down    # stop everything
+```
+
+The environment variables below are set directly in `compose.monitoring.yml` and reference the secrets above.
 
 | Variable | Service | Description |
 |---|---|---|
