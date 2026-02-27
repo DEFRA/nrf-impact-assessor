@@ -24,7 +24,9 @@ def extract_all_certs():
                 logger.error("Error decoding value for %s. Skipping. %s", var_name, err)
                 continue
             if not decoded_value.strip().startswith(_PEM_PREFIX):
-                logger.error("Value for %s is not a valid PEM certificate. Skipping.", var_name)
+                logger.error(
+                    "Value for %s is not a valid PEM certificate. Skipping.", var_name
+                )
                 continue
             with tempfile.NamedTemporaryFile(
                 mode="wb", delete=False, prefix=var_name, suffix=".pem"

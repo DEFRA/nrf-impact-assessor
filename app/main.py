@@ -37,6 +37,7 @@ app.add_middleware(TraceIdMiddleware)
 app.include_router(health_router)
 app.include_router(example_router)
 
+
 def main() -> None:  # pragma: no cover
     uvicorn.run(
         "app.main:app",

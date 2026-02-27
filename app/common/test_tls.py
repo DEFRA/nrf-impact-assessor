@@ -83,7 +83,7 @@ class TestLoadCertsIntoContext:
 
 
 class TestCleanupCertFiles:
-    def test_cleanup_removes_files(self, mocker, tmp_path):
+    def test_cleanup_removes_files(self, tmp_path):
         from app.common import tls
 
         cert_file = tmp_path / "test.pem"
@@ -96,7 +96,7 @@ class TestCleanupCertFiles:
         assert not cert_file.exists()
         assert len(tls.custom_ca_certs) == 0
 
-    def test_cleanup_handles_missing_files(self, mocker):
+    def test_cleanup_handles_missing_files(self):
         from app.common import tls
 
         tls.custom_ca_certs.update({"TRUSTSTORE_GONE": "/nonexistent/path.pem"})
