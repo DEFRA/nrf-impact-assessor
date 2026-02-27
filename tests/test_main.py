@@ -1,13 +1,15 @@
 from fastapi.testclient import TestClient
 
-from .main import app
+from app.main import app
 
 client = TestClient(app)
 
 
 def test_lifespan(mocker):
     mock_mongo_client = mocker.AsyncMock()
-    mock_get_mongo = mocker.patch("app.main.get_mongo_client", return_value=mock_mongo_client)
+    mock_get_mongo = mocker.patch(
+        "app.main.get_mongo_client", return_value=mock_mongo_client
+    )
 
     # Using TestClient as a context manager triggers lifespan startup/shutdown
     with TestClient(app):

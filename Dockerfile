@@ -34,8 +34,11 @@ ENV LOG_CONFIG="logging.json"
 
 USER root
 
-RUN apt update && \
-    apt install -y curl
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gdal-bin \
+    libgdal36 \
+    && rm -rf /var/lib/apt/lists/*
 
 USER nonroot
 

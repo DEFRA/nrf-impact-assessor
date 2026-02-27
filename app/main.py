@@ -25,7 +25,7 @@ async def lifespan(_: FastAPI):
         logger.info("MongoDB client closed")
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, title="NRF Impact Assessor API")
 
 # Setup middleware
 app.add_middleware(TraceIdMiddleware)
@@ -33,7 +33,6 @@ app.add_middleware(TraceIdMiddleware)
 # Setup Routes
 app.include_router(health_router)
 app.include_router(example_router)
-
 
 def main() -> None:  # pragma: no cover
     uvicorn.run(
