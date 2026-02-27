@@ -1,0 +1,268 @@
+---
+# Vector configuration for collecting Docker container metrics
+
+# API for monitoring Vector itself
+api:
+  enabled: true
+  address: "0.0.0.0:8686"
+
+# Data sources
+sources:
+  # Collect host system metrics (CPU, memory, etc.)
+  host_metrics:
+    type: host_metrics
+    collectors:
+      - cpu
+      - memory
+    scrape_interval_secs: 5
+    namespace: host
+
+  # Poll worker health endpoint
+  worker_health:
+    type: exec
+    mode: scheduled
+    scheduled:
+      exec_interval_secs: 10
+    command:
+      - sh
+      - -c
+      - 'curl -sf --max-time 5 http://nrf-worker:8085/health | grep -qF ''"status":"ok"'' && echo "healthy" || echo "unhealthy"'
+    decoding:
+      codec: bytes
+
+  # Collect Docker container stats via docker stats command
+  docker_stats:
+    type: exec
+    mode: scheduled
+    scheduled:
+      exec_interval_secs: 5
+    command:
+      - docker
+      - stats
+      - --no-stream
+      - --format
+      - "{{.Name}}: CPU={{.CPUPerc}} MEM={{.MemUsage}} NET={{.NetIO}}"
+    decoding:
+      codec: bytes
+
+# Data transformations
+transforms:
+  # Convert host metrics to log events for TimescaleDB
+  host_metrics_to_log:
+    type: metric_to_log
+    inputs:
+      - host_metrics
+
+  # Transform host CPU metrics into our table schema
+  host_cpu_metric:
+    type: remap
+    inputs:
+      - host_metrics_to_log
+    source: |
+      # Only process CPU metrics
+      name = string(.name) ?? ""
+      if !starts_with(name, "cpu_seconds_total") {
+        abort
+      }
+
+      # Extract CPU mode (user, system, idle, etc.) from tags
+      mode = string(.tags.mode) ?? "unknown"
+      cpu_id = string(.tags.cpu) ?? "total"
+
+      # Get the counter value
+      counter_val = float(.counter.value) ?? 0.0
+
+      .time = format_timestamp!(now(), format: "%+")
+      .container_name = "host"
+      .metric_name = "host_cpu_seconds_total_" + mode
+      .value = counter_val
+      .tags = encode_json({"cpu": cpu_id, "mode": mode})
+
+      # Clean up original fields
+      del(.name)
+      del(.counter)
+      del(.kind)
+      del(.namespace)
+      del(.timestamp)
+
+  # Transform host memory metrics into our table schema
+  host_memory_metric:
+    type: remap
+    inputs:
+      - host_metrics_to_log
+    source: |
+      # Only process memory metrics
+      name = string(.name) ?? ""
+      if !starts_with(name, "memory_") {
+        abort
+      }
+
+      # Get the gauge value
+      gauge_val = float(.gauge.value) ?? 0.0
+
+      .time = format_timestamp!(now(), format: "%+")
+      .container_name = "host"
+      .metric_name = "host_" + name
+      .value = gauge_val
+      .tags = "{}"
+
+      # Clean up original fields
+      del(.name)
+      del(.gauge)
+      del(.kind)
+      del(.namespace)
+      del(.timestamp)
+
+  # Parse docker stats output into structured data
+  parse_stats:
+    type: remap
+    inputs:
+      - docker_stats
+    source: |
+      # Convert bytes to string and split into lines
+      lines = split(string!(.message), "\n")
+
+      # Store all parsed containers in an array
+      .containers = []
+
+      # Parse each line
+      for_each(lines) -> |_index, line| {
+        # Skip empty lines
+        if length(line) > 0 {
+          # Try to parse, but don't fail if regex doesn't match
+          parts, err = parse_regex(line, r'^(?P<container>[^:]+): CPU=(?P<cpu>[0-9.]+)% MEM=(?P<mem_used>[^ ]+) / (?P<mem_total>[^ ]+) NET=(?P<net_rx>[^ ]+) / (?P<net_tx>.+)$')
+
+          if err == null {
+            # Parse CPU percentage (already in 0-100 format, convert to 0-1)
+            cpu_value = (to_float(parts.cpu) ?? 0.0) / 100.0
+
+            # Parse memory (convert to bytes)
+            mem_str = string!(parts.mem_used)
+            mem_value = if contains(mem_str, "GiB") {
+              (to_float(replace(mem_str, "GiB", "")) ?? 0.0) * 1073741824.0
+            } else if contains(mem_str, "MiB") {
+              (to_float(replace(mem_str, "MiB", "")) ?? 0.0) * 1048576.0
+            } else if contains(mem_str, "KiB") {
+              (to_float(replace(mem_str, "KiB", "")) ?? 0.0) * 1024.0
+            } else {
+              to_float(replace(mem_str, "B", "")) ?? 0.0
+            }
+
+            # Parse network receive (convert to bytes)
+            net_rx_str = string!(parts.net_rx)
+            net_rx_value = if contains(net_rx_str, "GB") {
+              (to_float(replace(net_rx_str, "GB", "")) ?? 0.0) * 1000000000.0
+            } else if contains(net_rx_str, "MB") {
+              (to_float(replace(net_rx_str, "MB", "")) ?? 0.0) * 1000000.0
+            } else if contains(net_rx_str, "kB") {
+              (to_float(replace(net_rx_str, "kB", "")) ?? 0.0) * 1000.0
+            } else {
+              to_float(replace(net_rx_str, "B", "")) ?? 0.0
+            }
+
+            # Parse network transmit (convert to bytes)
+            net_tx_str = string!(parts.net_tx)
+            net_tx_value = if contains(net_tx_str, "GB") {
+              (to_float(replace(net_tx_str, "GB", "")) ?? 0.0) * 1000000000.0
+            } else if contains(net_tx_str, "MB") {
+              (to_float(replace(net_tx_str, "MB", "")) ?? 0.0) * 1000000.0
+            } else if contains(net_tx_str, "kB") {
+              (to_float(replace(net_tx_str, "kB", "")) ?? 0.0) * 1000.0
+            } else {
+              to_float(replace(net_tx_str, "B", "")) ?? 0.0
+            }
+
+            # Add this container's metrics to the array
+            .containers = push(.containers, {
+              "container_name": parts.container,
+              "cpu_value": cpu_value,
+              "mem_value": mem_value,
+              "net_rx_value": net_rx_value,
+              "net_tx_value": net_tx_value
+            })
+          }
+        }
+      }
+
+  # Split containers and emit all metrics directly
+  container_metrics:
+    type: lua
+    inputs:
+      - parse_stats
+    version: "2"
+    hooks:
+      process: |
+        function (event, emit)
+          local containers = event.log.containers
+          if containers then
+            local timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+            for i, container in ipairs(containers) do
+              local metrics = {
+                {name = "container_cpu_usage_seconds_total", value = container.cpu_value},
+                {name = "container_memory_usage_bytes", value = container.mem_value},
+                {name = "container_network_receive_bytes_total", value = container.net_rx_value},
+                {name = "container_network_transmit_bytes_total", value = container.net_tx_value}
+              }
+              for j, metric in ipairs(metrics) do
+                emit({
+                  log = {
+                    time = timestamp,
+                    container_name = container.container_name,
+                    metric_name = metric.name,
+                    value = metric.value,
+                    tags = "{}"
+                  }
+                })
+              end
+            end
+          end
+        end
+
+  # Transform health check response into metric
+  health_metric:
+    type: remap
+    inputs:
+      - worker_health
+    source: |
+      msg = string(.message) ?? ""
+      health_status = if contains(msg, "unhealthy") { "unhealthy" } else if contains(msg, "healthy") { "healthy" } else { "unknown" }
+
+      .time = format_timestamp!(now(), format: "%+")
+      .container_name = "nrf-worker"
+      .metric_name = "worker_health_status"
+      .value = 0.0
+      .tags = encode_json({"status": health_status})
+
+      del(.message)
+      del(.host)
+      del(.pid)
+      del(.command)
+      del(.data_stream)
+      del(.source_type)
+      del(.timestamp)
+
+# Data sinks (outputs)
+sinks:
+  # Store in TimescaleDB
+  timescaledb:
+    type: postgres
+    inputs:
+      - container_metrics
+      - host_cpu_metric
+      - host_memory_metric
+      - health_metric
+    endpoint: postgresql://metrics:${METRICS_DB_PASSWORD}@timescaledb:5432/metrics
+    table: metrics
+    batch:
+      max_bytes: 10485760
+      timeout_secs: 1
+
+  # Console output for debugging (optional, can remove in production)
+  console_debug:
+    type: console
+    inputs:
+      - container_metrics
+    encoding:
+      codec: json
+    # Uncomment to see metrics in Vector logs
+    # target: stdout

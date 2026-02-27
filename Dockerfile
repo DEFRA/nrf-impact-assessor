@@ -1,5 +1,5 @@
 # Set default values for build arguments
-ARG PARENT_VERSION=latest-3.12
+ARG PARENT_VERSION=latest-3.13
 ARG PORT=8085
 ARG PORT_DEBUG=8086
 
@@ -34,8 +34,12 @@ ENV LOG_CONFIG="logging.json"
 
 USER root
 
-RUN apt update && \
-    apt install -y curl
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gdal-bin \
+    htop \
+    libgdal36 \
+    && rm -rf /var/lib/apt/lists/*
 
 USER nonroot
 

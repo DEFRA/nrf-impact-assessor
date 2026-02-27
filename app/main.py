@@ -5,6 +5,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from app.common.mongo import get_mongo_client
+from app.common.tls import cleanup_cert_files, init_custom_certificates
 from app.common.tracing import TraceIdMiddleware
 from app.config import config
 from app.example.router import router as example_router
@@ -16,6 +17,7 @@ logger = getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Startup
+    init_custom_certificates()
     client = await get_mongo_client()
     logger.info("MongoDB client connected")
     yield
@@ -23,9 +25,10 @@ async def lifespan(_: FastAPI):
     if client:
         await client.close()
         logger.info("MongoDB client closed")
+    cleanup_cert_files()
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(title="NRF Impact Assessor API", lifespan=lifespan)
 
 # Setup middleware
 app.add_middleware(TraceIdMiddleware)
@@ -41,7 +44,6 @@ def main() -> None:  # pragma: no cover
         host=config.host,
         port=config.port,
         log_config=config.log_config,
-        reload=config.python_env == "development",
     )
 
 

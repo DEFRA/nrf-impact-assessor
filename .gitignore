@@ -198,3 +198,4 @@ cython_debug/
 compose/secrets.env
 
 coverage*
+/.claude/settings.local.json
