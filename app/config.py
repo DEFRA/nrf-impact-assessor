@@ -307,7 +307,7 @@ class DatabaseSettings(BaseSettings):
         if self.local_password:
             password = quote_plus(self.local_password)
             return f"postgresql://{self.user}:{password}@{self.host}:{self.port}/{self.database}"
-        return f"postgresql://{self.user}@{self.host}:{self.port}/{self.database}"
+        return f"postgresql://{self.user}@{self.host}:{self.port}/{self.database}"  # NOSONAR - intentional: trust auth for local dev without a password
 
 
 class AWSConfig(BaseSettings):

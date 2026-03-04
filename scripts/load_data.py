@@ -540,6 +540,49 @@ class SpatialDataLoader:
             print(f"Error loading {table_name}: {e}")
 
 
+def _validate_names(names: list[str] | None, valid: list[str], kind: str) -> None:
+    """Exit with an error if any name is not in the valid set."""
+    if names:
+        invalid = [n for n in names if n not in valid]
+        if invalid:
+            typer.secho(
+                f"Invalid {kind} names: {', '.join(invalid)}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            typer.secho(
+                f"Valid choices: {', '.join(valid)}", fg=typer.colors.YELLOW, err=True
+            )
+            raise typer.Exit(code=1)
+
+
+def _print_load_summary(
+    settings: "ScriptSettings",
+    layer: list[str] | None,
+    lookup: list[str] | None,
+    sample: bool,
+) -> None:
+    """Print a destructive-operation warning and summary of what will be loaded."""
+    typer.secho(
+        "\nWARNING: This operation is DESTRUCTIVE!", fg=typer.colors.RED, bold=True
+    )
+    typer.secho(
+        "This will DELETE all existing data for the layers being loaded and replace it with new data.",
+        fg=typer.colors.YELLOW,
+    )
+    typer.secho(f"\nData source: {settings.base_path}", fg=typer.colors.CYAN)
+    typer.secho(
+        f"Layers to load: {', '.join(layer)}" if layer else "Layers to load: ALL",
+        fg=typer.colors.CYAN,
+    )
+    typer.secho(
+        f"Lookups to load: {', '.join(lookup)}" if lookup else "Lookups to load: ALL",
+        fg=typer.colors.CYAN,
+    )
+    if sample:
+        typer.secho("Mode: SAMPLE (100 features per layer)", fg=typer.colors.CYAN)
+
+
 @app.command()
 def main(
     layer: Annotated[
@@ -566,50 +609,20 @@ def main(
 
     File paths are configured via .env file. See scripts/.env.example for configuration.
     """
-    # Validate layer names
+    # Validate layer and lookup names
     valid_layers = [
-        # Nutrient mitigation layers
         "wwtw_catchments",
         "lpa_boundaries",
         "nn_catchments",
         "subcatchments",
         "coefficients",
-        # GCN assessment layers
         "gcn_risk_zones",
         "gcn_ponds",
         "edp_edges",
     ]
-    if layer:
-        invalid = [name for name in layer if name not in valid_layers]
-        if invalid:
-            typer.secho(
-                f"Invalid layer names: {', '.join(invalid)}",
-                fg=typer.colors.RED,
-                err=True,
-            )
-            typer.secho(
-                f"Valid choices: {', '.join(valid_layers)}",
-                fg=typer.colors.YELLOW,
-                err=True,
-            )
-            raise typer.Exit(code=1)
-
-    # Validate lookup names
     valid_lookups = ["wwtw_lookup", "rates_lookup"]
-    if lookup:
-        invalid = [name for name in lookup if name not in valid_lookups]
-        if invalid:
-            typer.secho(
-                f"Invalid lookup names: {', '.join(invalid)}",
-                fg=typer.colors.RED,
-                err=True,
-            )
-            typer.secho(
-                f"Valid choices: {', '.join(valid_lookups)}",
-                fg=typer.colors.YELLOW,
-                err=True,
-            )
-            raise typer.Exit(code=1)
+    _validate_names(layer, valid_layers, "layer")
+    _validate_names(lookup, valid_lookups, "lookup")
 
     # Load settings from .env
     settings = ScriptSettings()
@@ -623,32 +636,7 @@ def main(
     loader = SpatialDataLoader(repository, settings, sample_mode=sample)
 
     # Confirmation prompt with warning
-    typer.secho(
-        "\nWARNING: This operation is DESTRUCTIVE!", fg=typer.colors.RED, bold=True
-    )
-    typer.secho(
-        "This will DELETE all existing data for the layers being loaded "
-        "and replace it with new data.",
-        fg=typer.colors.YELLOW,
-    )
-    typer.secho(
-        f"\nData source: {settings.base_path}",
-        fg=typer.colors.CYAN,
-    )
-
-    if layer:
-        typer.secho(f"Layers to load: {', '.join(layer)}", fg=typer.colors.CYAN)
-    else:
-        typer.secho("Layers to load: ALL", fg=typer.colors.CYAN)
-
-    if lookup:
-        typer.secho(f"Lookups to load: {', '.join(lookup)}", fg=typer.colors.CYAN)
-    else:
-        typer.secho("Lookups to load: ALL", fg=typer.colors.CYAN)
-
-    if sample:
-        typer.secho("Mode: SAMPLE (100 features per layer)", fg=typer.colors.CYAN)
-
+    _print_load_summary(settings, layer, lookup, sample)
     typer.echo()
     confirm = typer.confirm("Do you want to continue?")
 
