@@ -66,3 +66,24 @@ def init_custom_certificates():
     logger.info("Initializing custom certificates")
     custom_ca_certs.update(extract_all_certs())
     ctx = load_certs_into_context(custom_ca_certs)
+
+
+def get_cert_path(truststore_name: str) -> str | None:
+    """Get the file path for a specific truststore certificate.
+
+    Args:
+        truststore_name: The TRUSTSTORE_* environment variable name,
+                        e.g., "TRUSTSTORE_RDS" or just "RDS".
+
+    Returns:
+        Path to the certificate file, or None if not found.
+    """
+    if not truststore_name.startswith("TRUSTSTORE_"):
+        truststore_name = f"TRUSTSTORE_{truststore_name}"
+
+    cert_path = custom_ca_certs.get(truststore_name)
+    if cert_path:
+        logger.debug("Found certificate for %s: %s", truststore_name, cert_path)
+    else:
+        logger.debug("No certificate found for %s", truststore_name)
+    return cert_path
