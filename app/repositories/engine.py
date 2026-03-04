@@ -78,6 +78,97 @@ def _get_password(settings: DatabaseSettings, region: str) -> str:
     return settings.local_password
 
 
+def _build_ssl_connect_args(settings: DatabaseSettings, region: str) -> dict:
+    """Build SSL connect_args for IAM authentication."""
+    connect_args: dict = {"sslmode": settings.ssl_mode}
+    cert_path = tls.get_cert_path(settings.rds_truststore)
+    if cert_path:
+        connect_args["sslrootcert"] = cert_path
+        logger.info(
+            "SSL enabled: sslmode=%s, sslrootcert=%s (from TRUSTSTORE_%s, region=%s)",
+            settings.ssl_mode,
+            cert_path,
+            settings.rds_truststore,
+            region,
+        )
+    else:
+        logger.info(
+            "SSL enabled: sslmode=%s, no TRUSTSTORE_%s cert found (region=%s)",
+            settings.ssl_mode,
+            settings.rds_truststore,
+            region,
+        )
+    return connect_args
+
+
+def _create_pooled_engine(
+    settings: DatabaseSettings,
+    region: str,
+    base_url: str,
+    connect_args: dict,
+    pool_size: int,
+    max_overflow: int,
+    echo: bool,
+) -> Engine:
+    """Create a QueuePool engine for IAM or local authentication."""
+    pool_recycle = (
+        IAM_TOKEN_POOL_RECYCLE_SECONDS if settings.iam_authentication else None
+    )
+
+    if settings.iam_authentication:
+        engine = create_engine(
+            base_url,
+            poolclass=QueuePool,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_recycle=pool_recycle,
+            pool_pre_ping=True,
+            echo=echo,
+            connect_args=connect_args,
+        )
+
+        @event.listens_for(engine, "do_connect")
+        def provide_token(_dialect, _conn_rec, _cargs, cparams):
+            """Inject fresh IAM token before each connection."""
+            logger.debug("do_connect event: requesting fresh IAM token")
+            cparams["password"] = _get_iam_auth_token(settings, region)
+            logger.debug("do_connect event: IAM token injected into connection params")
+
+        logger.info(
+            "Created engine with IAM authentication: pool_size=%d, max_overflow=%d, pool_recycle=%ds",
+            pool_size,
+            max_overflow,
+            pool_recycle,
+        )
+    else:
+        password = settings.local_password
+        if password:
+            url_with_password = base_url.replace(
+                f"{settings.user}@", f"{settings.user}:{password}@"
+            )
+            logger.debug("Using static password for local authentication")
+        else:
+            url_with_password = base_url
+            logger.debug("No password configured (using trust authentication)")
+
+        engine = create_engine(
+            url_with_password,
+            poolclass=QueuePool,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_pre_ping=True,
+            echo=echo,
+            connect_args=connect_args,
+        )
+        logger.info(
+            "Created engine with local authentication: pool_size=%d, max_overflow=%d",
+            pool_size,
+            max_overflow,
+        )
+
+    return engine
+
+
 def create_db_engine(
     settings: DatabaseSettings | None = None,
     aws_config: AWSConfig | None = None,
@@ -110,100 +201,23 @@ def create_db_engine(
     )
 
     base_url = settings.connection_url
-    connect_args: dict = {}
-
-    if settings.iam_authentication:
-        connect_args["sslmode"] = settings.ssl_mode
-
-        cert_path = tls.get_cert_path(settings.rds_truststore)
-        if cert_path:
-            connect_args["sslrootcert"] = cert_path
-            logger.info(
-                "SSL enabled: sslmode=%s, sslrootcert=%s (from TRUSTSTORE_%s, region=%s)",
-                settings.ssl_mode,
-                cert_path,
-                settings.rds_truststore,
-                region,
-            )
-        else:
-            logger.info(
-                "SSL enabled: sslmode=%s, no TRUSTSTORE_%s cert found (region=%s)",
-                settings.ssl_mode,
-                settings.rds_truststore,
-                region,
-            )
+    connect_args = (
+        _build_ssl_connect_args(settings, region) if settings.iam_authentication else {}
+    )
 
     if use_null_pool:
         logger.info("Generating authentication token for connection check")
         password = _get_password(settings, region)
         url_with_password = base_url.replace(
-            f"{settings.user}@",
-            f"{settings.user}:{password}@",
+            f"{settings.user}@", f"{settings.user}:{password}@"
         )
         engine = create_engine(
-            url_with_password,
-            poolclass=NullPool,
-            echo=echo,
-            connect_args=connect_args if connect_args else {},
+            url_with_password, poolclass=NullPool, echo=echo, connect_args=connect_args
         )
         logger.info("Created engine with NullPool for connection check")
     else:
-        pool_recycle = (
-            IAM_TOKEN_POOL_RECYCLE_SECONDS if settings.iam_authentication else None
+        engine = _create_pooled_engine(
+            settings, region, base_url, connect_args, pool_size, max_overflow, echo
         )
-
-        if settings.iam_authentication:
-            engine = create_engine(
-                base_url,
-                poolclass=QueuePool,
-                pool_size=pool_size,
-                max_overflow=max_overflow,
-                pool_recycle=pool_recycle,
-                pool_pre_ping=True,
-                echo=echo,
-                connect_args=connect_args,
-            )
-
-            @event.listens_for(engine, "do_connect")
-            def provide_token(_dialect, _conn_rec, _cargs, cparams):
-                """Inject fresh IAM token before each connection."""
-                logger.debug("do_connect event: requesting fresh IAM token")
-                cparams["password"] = _get_iam_auth_token(settings, region)
-                logger.debug(
-                    "do_connect event: IAM token injected into connection params"
-                )
-
-            logger.info(
-                "Created engine with IAM authentication: pool_size=%d, max_overflow=%d, pool_recycle=%ds",
-                pool_size,
-                max_overflow,
-                pool_recycle,
-            )
-        else:
-            password = settings.local_password
-            if password:
-                url_with_password = base_url.replace(
-                    f"{settings.user}@",
-                    f"{settings.user}:{password}@",
-                )
-                logger.debug("Using static password for local authentication")
-            else:
-                url_with_password = base_url
-                logger.debug("No password configured (using trust authentication)")
-
-            engine = create_engine(
-                url_with_password,
-                poolclass=QueuePool,
-                pool_size=pool_size,
-                max_overflow=max_overflow,
-                pool_pre_ping=True,
-                echo=echo,
-                connect_args=connect_args if connect_args else {},
-            )
-            logger.info(
-                "Created engine with local authentication: pool_size=%d, max_overflow=%d",
-                pool_size,
-                max_overflow,
-            )
 
     return engine

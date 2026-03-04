@@ -74,7 +74,7 @@ def spatial_difference_with_precision(
                 for chunk in chunks
             ]
             results = [f.result() for f in futures]
-    except (NotImplementedError, PermissionError, OSError) as exc:
+    except (NotImplementedError, OSError) as exc:
         logger.warning(
             f"Parallel spatial_difference unavailable ({exc}); falling back to sequential"
         )
@@ -99,6 +99,24 @@ def _difference_chunk(
     return gpd.overlay(left_chunk, right_gdf, how="difference", keep_geom_type=False)
 
 
+def _partition_axis(
+    gdf: gpd.GeoDataFrame,
+    coords: "pd.Series",
+    axis_min: float,
+    axis_max: float,
+    n_chunks: int,
+) -> list[gpd.GeoDataFrame]:
+    """Partition GeoDataFrame into n_chunks slices along one axis."""
+    step = (axis_max - axis_min) / n_chunks
+    bins = ((coords - axis_min) / step).clip(0, n_chunks - 1).astype(int)
+    chunks = []
+    for i in range(n_chunks):
+        chunk = gdf[bins == i]
+        if len(chunk) > 0:
+            chunks.append(chunk)
+    return chunks
+
+
 def _partition_by_bounds(
     gdf: gpd.GeoDataFrame, n_chunks: int
 ) -> list[gpd.GeoDataFrame]:
@@ -109,33 +127,11 @@ def _partition_by_bounds(
     bounds = gdf.total_bounds  # minx, miny, maxx, maxy
     x_range = bounds[2] - bounds[0]
     y_range = bounds[3] - bounds[1]
-
     centroids = gdf.geometry.centroid
-    cx = centroids.x
-    cy = centroids.y
 
-    chunks = []
     if x_range >= y_range:
-        step = x_range / n_chunks
-        for i in range(n_chunks):
-            min_x = bounds[0] + i * step
-            max_x = bounds[0] + (i + 1) * step
-            if i < n_chunks - 1:
-                chunk = gdf[(cx >= min_x) & (cx < max_x)]
-            else:
-                chunk = gdf[(cx >= min_x) & (cx <= bounds[2])]
-            if len(chunk) > 0:
-                chunks.append(chunk)
+        chunks = _partition_axis(gdf, centroids.x, bounds[0], bounds[2], n_chunks)
     else:
-        step = y_range / n_chunks
-        for i in range(n_chunks):
-            min_y = bounds[1] + i * step
-            max_y = bounds[1] + (i + 1) * step
-            if i < n_chunks - 1:
-                chunk = gdf[(cy >= min_y) & (cy < max_y)]
-            else:
-                chunk = gdf[(cy >= min_y) & (cy <= bounds[3])]
-            if len(chunk) > 0:
-                chunks.append(chunk)
+        chunks = _partition_axis(gdf, centroids.y, bounds[1], bounds[3], n_chunks)
 
     return chunks if chunks else [gdf]

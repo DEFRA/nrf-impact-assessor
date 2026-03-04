@@ -48,6 +48,8 @@ from app.models.enums import SpatialLayerType
 from app.repositories.engine import create_db_engine
 from app.repositories.repository import Repository
 
+CRS_BRITISH_NATIONAL_GRID = "EPSG:27700"
+
 app = typer.Typer(help="Load spatial data into PostGIS database")
 
 
@@ -84,6 +86,17 @@ def clean_nan_values(obj: Any) -> Any:
         # Catch any remaining pandas NA types
         return None
     return obj
+
+
+_NAME_COLUMN_CANDIDATES = ("name", "Name", "NAME", "label", "id")
+
+
+def _find_name_column(gdf: gpd.GeoDataFrame) -> str | None:
+    """Return the first recognised name column present in gdf, or None."""
+    for candidate in _NAME_COLUMN_CANDIDATES:
+        if candidate in gdf.columns:
+            return candidate
+    return None
 
 
 class SpatialDataLoader:
@@ -206,10 +219,10 @@ class SpatialDataLoader:
         # Ensure CRS is EPSG:27700
         if gdf.crs is None:
             print("No CRS found, assuming EPSG:27700")
-            gdf = gdf.set_crs("EPSG:27700")
+            gdf = gdf.set_crs(CRS_BRITISH_NATIONAL_GRID)
         elif gdf.crs.to_epsg() != 27700:
             print(f"Reprojecting from {gdf.crs} to EPSG:27700")
-            gdf = gdf.to_crs("EPSG:27700")
+            gdf = gdf.to_crs(CRS_BRITISH_NATIONAL_GRID)
 
         # Force 2D geometries (remove Z dimension if present)
         if gdf.geometry.has_z.any():
@@ -346,10 +359,10 @@ class SpatialDataLoader:
         # Ensure CRS is EPSG:27700
         if gdf.crs is None:
             print("No CRS found, assuming EPSG:27700")
-            gdf = gdf.set_crs("EPSG:27700")
+            gdf = gdf.set_crs(CRS_BRITISH_NATIONAL_GRID)
         elif gdf.crs.to_epsg() != 27700:
             print(f"Reprojecting from {gdf.crs} to EPSG:27700")
-            gdf = gdf.to_crs("EPSG:27700")
+            gdf = gdf.to_crs(CRS_BRITISH_NATIONAL_GRID)
 
         # Force 2D geometries (remove Z dimension if present)
         if gdf.geometry.has_z.any():
@@ -367,13 +380,7 @@ class SpatialDataLoader:
         print(f"Loaded {total_features} features")
 
         # Prepare DataFrame for SpatialLayer model
-        # Extract name field if available (try common name columns)
-        name_candidates = ["name", "Name", "NAME", "label", "id"]
-        name_col = None
-        for candidate in name_candidates:
-            if candidate in gdf.columns:
-                name_col = candidate
-                break
+        name_col = _find_name_column(gdf)
 
         # Create clean DataFrame with required columns
         clean_gdf = gpd.GeoDataFrame(geometry=gdf.geometry, crs=gdf.crs)

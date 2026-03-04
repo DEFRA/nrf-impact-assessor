@@ -89,5 +89,5 @@ def inject_job_fields(
     gdf["dwelling_category"] = dwelling_type
     gdf["source"] = "api"
     gdf["dwellings"] = dwellings
-    gdf["area_m2"] = gdf.geometry.area
+    gdf["area_m2"] = gdf.geometry.to_crs("EPSG:27700").area
     return gdf
