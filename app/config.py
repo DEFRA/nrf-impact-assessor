@@ -1,4 +1,5 @@
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -301,6 +302,11 @@ class DatabaseSettings(BaseSettings):
 
     @property
     def connection_url(self) -> str:
+        from urllib.parse import quote_plus
+
+        if self.local_password:
+            password = quote_plus(self.local_password)
+            return f"postgresql://{self.user}:{password}@{self.host}:{self.port}/{self.database}"
         return f"postgresql://{self.user}@{self.host}:{self.port}/{self.database}"
 
 
@@ -333,6 +339,10 @@ class ApiServerConfig(BaseSettings):
         extra="ignore",
     )
 
+    host: str = Field(
+        default="127.0.0.1",
+        description="Host interface to bind the API server (use 0.0.0.0 for container deployments)",
+    )
     port: int = Field(
         default=8085, ge=1, le=65535, description="Port for the API server"
     )
@@ -360,7 +370,7 @@ class DebugConfig:
     def __init__(
         self,
         enabled: bool = False,
-        output_dir: Path = Path("/tmp/iat-debug"),
+        output_dir: Path = Path(tempfile.gettempdir()) / "iat-debug",
     ):
         self.enabled = enabled
         self.output_dir = output_dir
@@ -369,5 +379,9 @@ class DebugConfig:
     def from_env(cls) -> "DebugConfig":
         return cls(
             enabled=os.environ.get("DEBUG_OUTPUT", "false").lower() == "true",
-            output_dir=Path(os.environ.get("DEBUG_OUTPUT_DIR", "/tmp/iat-debug")),
+            output_dir=Path(
+                os.environ.get(
+                    "DEBUG_OUTPUT_DIR", str(Path(tempfile.gettempdir()) / "iat-debug")
+                )
+            ),
         )

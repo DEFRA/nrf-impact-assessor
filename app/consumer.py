@@ -88,16 +88,17 @@ logger = logging.getLogger(__name__)
 configure_proxy_settings()
 
 
-def run_api_server(port: int) -> None:
+def run_api_server(host: str, port: int) -> None:
     """Run the API server in a separate process.
 
     Uses uvicorn as an ASGI server to serve the FastAPI app.
     The API server provides health check and job submission endpoints.
 
     Args:
+        host: The host interface to bind (e.g. 127.0.0.1 or 0.0.0.0).
         port: The port to listen on for API requests.
     """
-    uvicorn.run("app.main:app", host="0.0.0.0", port=port, log_level="warning")
+    uvicorn.run("app.main:app", host=host, port=port, log_level="warning")
 
 
 class SqsConsumer:
@@ -205,7 +206,7 @@ def main():
         # Start API server in separate process for health checks and job submission
         api_server_process = multiprocessing.Process(
             target=run_api_server,
-            args=(api_config.port,),
+            args=(api_config.host, api_config.port),
             daemon=True,
         )
         api_server_process.start()

@@ -57,7 +57,9 @@ class TestPostAssess:
 
     @patch("app.assess.router.run_assessment", side_effect=_fake_run_assessment)
     @patch("app.assess.router._get_repository", return_value=MagicMock())
-    def test_returns_202_with_job_id(self, client):
+    def test_returns_202_with_job_id(
+        self, mock_get_repository, mock_run_assessment, client
+    ):
         content = _make_geojson_bytes()
         response = client.post(
             "/assess",
@@ -75,7 +77,9 @@ class TestPostAssess:
 
     @patch("app.assess.router.run_assessment", side_effect=_fake_run_assessment)
     @patch("app.assess.router._get_repository", return_value=MagicMock())
-    def test_job_completes_successfully(self, client):
+    def test_job_completes_successfully(
+        self, mock_get_repository, mock_run_assessment, client
+    ):
         content = _make_geojson_bytes()
         response = client.post(
             "/assess",
@@ -108,7 +112,7 @@ class TestPostAssess:
 
     @patch("app.assess.router._MAX_JOBS", 0)
     @patch("app.assess.router._prune_expired_jobs")
-    def test_too_many_jobs_returns_503(self, client):
+    def test_too_many_jobs_returns_503(self, mock_prune, client):
         # Pre-fill with a job so len(_jobs) >= _MAX_JOBS (which is 0)
         _jobs["existing"] = JobState(status="running")
         content = _make_geojson_bytes()
@@ -142,14 +146,14 @@ class TestGetAssess:
         _jobs["test-456"] = JobState(
             status="completed",
             results={"summary": [{"col": 1}]},
-            timing_s=2.5,
+            timing_s=3,
         )
         response = client.get("/assess/test-456")
         assert response.status_code == 200
         body = response.json()
         assert body["status"] == "completed"
         assert body["results"] == {"summary": [{"col": 1}]}
-        assert body["timing_s"] == 2.5
+        assert body["timing_s"] == 3
 
     def test_failed_job_returns_error(self, client):
         _jobs["test-789"] = JobState(

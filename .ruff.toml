@@ -62,8 +62,7 @@ ignore = [
     "COM812", # missing trailing comma, conflicts with formatter
     "G004",   # logging-f-string: f-strings in logging are accepted in this codebase
     "RET504", # unnecessary-assign: improves readability
-    "S104",   # hardcoded-bind-all-interfaces: intentional for server config
-    "S108",   # hardcoded-temp-file: intentional for debug output
+    # "S108",   # hardcoded-temp-file: intentional for debug output
     "ARG001", # unused-function-argument: required for callback signatures
     "ARG002", # unused-method-argument: required for callback signatures
     "C901",   # complex-structure: acceptable complexity in spatial logic

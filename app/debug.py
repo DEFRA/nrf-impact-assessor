@@ -31,7 +31,7 @@ def save_debug_gdf(
         return
 
     output_dir = config.output_dir / job_id
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     timestamp = datetime.now(UTC).strftime("%H%M%S")
     filename = f"{timestamp}_{name}.gpkg"

@@ -15,6 +15,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Form, HTTPException, UploadFile
@@ -53,6 +54,7 @@ class JobState:
 
 
 _jobs: dict[str, JobState] = {}
+_background_tasks: set[asyncio.Task] = set()
 
 # ---------------------------------------------------------------------------
 # Pydantic response models
@@ -189,13 +191,21 @@ async def _run_in_background(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/assess", response_model=AssessSubmitResponse, status_code=202)
+@router.post(
+    "/assess",
+    response_model=AssessSubmitResponse,
+    status_code=202,
+    responses={
+        400: {"description": "Invalid assessment_type"},
+        503: {"description": "Server at job capacity"},
+    },
+)
 async def submit_assessment(
     geometry_file: UploadFile,
-    assessment_type: str = Form("nutrient"),
-    dwelling_type: str = Form("house"),
-    dwellings: int = Form(1),
-    name: str = Form("Development"),
+    assessment_type: Annotated[str, Form()] = "nutrient",
+    dwelling_type: Annotated[str, Form()] = "house",
+    dwellings: Annotated[int, Form()] = 1,
+    name: Annotated[str, Form()] = "Development",
 ):
     """Submit an impact assessment job for background processing.
 
@@ -222,7 +232,7 @@ async def submit_assessment(
 
     _jobs[job_id] = JobState(status="pending")
 
-    asyncio.create_task(
+    task = asyncio.create_task(
         _run_in_background(
             job_id=job_id,
             content=content,
@@ -233,6 +243,8 @@ async def submit_assessment(
             dwellings=dwellings,
         )
     )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return JSONResponse(
         status_code=202,
@@ -244,7 +256,11 @@ async def submit_assessment(
     )
 
 
-@router.get("/assess/{job_id}", response_model=AssessStatusResponse)
+@router.get(
+    "/assess/{job_id}",
+    response_model=AssessStatusResponse,
+    responses={404: {"description": "Job not found"}},
+)
 async def get_assessment_status(job_id: str):
     """Poll the status of a submitted assessment job."""
     if job_id not in _jobs:
