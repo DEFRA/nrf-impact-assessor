@@ -1,0 +1,9 @@
+PANS|Area|MaxZone|TmpImp|EDPName|FREQUENCY
+NS|Buffer|Amber|F|AreaA|20
+NS|Buffer|Amber|F|AreaB|7
+NS|Buffer|Green|F|AreaA|3
+NS|Buffer|Red|F|AreaA|33
+NS|Buffer|Red|F|AreaB|47
+NS|RLB|Amber|F|AreaA|5
+NS|RLB|Red|F|AreaA|16
+NS|RLB|Red|F|AreaB|38

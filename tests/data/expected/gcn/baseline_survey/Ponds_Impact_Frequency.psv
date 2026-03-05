@@ -1,0 +1,15 @@
+PANS|Area|MaxZone|TmpImp|FREQUENCY
+A|Buffer|Amber|F|3
+A|Buffer|Green|F|1
+A|Buffer|Red|F|4
+A|RLB|Amber|F|1
+A|RLB|Red|F|19
+A|RLB|Red|T|3
+NS|Buffer|Amber|F|17
+NS|Buffer|Green|F|2
+NS|Buffer|Red|F|59
+NS|RLB|Red|F|3
+P|Buffer|Amber|F|2
+P|RLB|Amber|F|1
+P|RLB|Red|F|13
+P|RLB|Red|T|4

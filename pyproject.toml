@@ -5,41 +5,37 @@ description = "nrf-impact-assessor"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "alembic>=1.18.3",
+    "alembic>=1.18.4",
     "alembic-postgresql-enum>=1.9.0",
-    "boto3==1.42.44",
     "asgi-logger==0.1.0",
     "aws-embedded-metrics==3.3.1",
-    "dnspython==2.7.0",
-    "email-validator>=2.2.0",
+    "boto3==1.42.59",
+    "dnspython==2.8.0",
     "ecs-logging==2.2.0",
-    "fastapi==0.115.12",
-    "geoalchemy2>=0.18.0",
+    "email-validator>=2.2.0",
+    "fastapi==0.134.0",
+    "geoalchemy2>=0.18.3",
     "geopandas>=1.1.2",
-    "httpx==0.28.1",
+    "notifications-python-client>=10.0.1",
     "psycopg2-binary>=2.9.11",
-    "python-multipart>=0.0.18",
     "pydantic-settings==2.11.0",
     "pymongo[aws,encryption,snappy,zstd]==4.16.0",
+    "python-multipart>=0.0.18",
     "sqlalchemy>=2.0.44",
-    "aws-embedded-metrics==3.3.1",
-    "dnspython==2.7.0",
-    "ecs-logging==2.2.0",
     "typer>=0.19.2",
-    "asgi-logger==0.1.0",
     "uvicorn==0.40.0",
-    "notifications-python-client>=10.0.1",
 ]
 
 [dependency-groups]
 dev = [
+    "moto[s3,sqs]>=5.0.0",
     "httpx==0.28.1",
     "pre-commit==4.2.0",
     "pytest==8.4.0",
     "pytest-asyncio==1.0.0",
     "pytest-cov==6.2.1",
     "pytest-mock>=3.15.1",
-    "ruff==0.11.13",
+    "ruff==0.15.4",
     "taskipy==1.14.1",
 ]
 
