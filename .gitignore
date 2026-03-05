@@ -199,3 +199,7 @@ compose/secrets.env
 
 coverage*
 /.claude/settings.local.json
+
+scripts/.env.local
+
+iat_input
