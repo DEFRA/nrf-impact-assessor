@@ -1,0 +1,43 @@
+{
+  "type": "FeatureCollection",
+  "name": "RedLineBoundary",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "urn:ogc:def:crs:EPSG::27700"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {},
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              623767,
+              307793
+            ],
+            [
+              623867,
+              307793
+            ],
+            [
+              623867,
+              307993
+            ],
+            [
+              623767,
+              307993
+            ],
+            [
+              623767,
+              307793
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

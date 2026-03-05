@@ -1,0 +1,72 @@
+[
+  {
+    "geometry": "tests/data/inputs/generated/01_tiny_parcel.geojson",
+    "assessment_type": "nutrient",
+    "dwellings": 1,
+    "dwelling_type": "house",
+    "name": "Tiny site ~200m2, single house, south"
+  },
+  {
+    "geometry": "tests/data/inputs/generated/02_small_residential.geojson",
+    "assessment_type": "nutrient",
+    "dwellings": 10,
+    "dwelling_type": "house",
+    "name": "Small residential ~2500m2, 10 houses"
+  },
+  {
+    "geometry": "tests/data/inputs/generated/03_medium_mixed.geojson",
+    "assessment_type": "nutrient",
+    "dwellings": 50,
+    "dwelling_type": "house",
+    "name": "Medium site ~1ha, 50 houses"
+  },
+  {
+    "geometry": "tests/data/inputs/generated/04_large_apartments.geojson",
+    "assessment_type": "nutrient",
+    "dwellings": 200,
+    "dwelling_type": "apartment",
+    "name": "Large development ~4ha, 200 apartments"
+  },
+  {
+    "geometry": "tests/data/inputs/generated/05_l_shaped.geojson",
+    "assessment_type": "nutrient",
+    "dwellings": 25,
+    "dwelling_type": "house",
+    "name": "L-shaped site ~5000m2, 25 houses"
+  },
+  {
+    "geometry": "tests/data/inputs/generated/06_narrow_strip.geojson",
+    "assessment_type": "nutrient",
+    "dwellings": 15,
+    "dwelling_type": "house",
+    "name": "Narrow strip ~5000m2, 15 terraced houses"
+  },
+  {
+    "geometry": "tests/data/inputs/generated/07_medium_north.geojson",
+    "assessment_type": "nutrient",
+    "dwellings": 75,
+    "dwelling_type": "house",
+    "name": "Medium site ~1.5ha, 75 houses, north"
+  },
+  {
+    "geometry": "tests/data/inputs/generated/08_small_east.geojson",
+    "assessment_type": "nutrient",
+    "dwellings": 5,
+    "dwelling_type": "house",
+    "name": "Small site ~3000m2, 5 houses, east"
+  },
+  {
+    "geometry": "tests/data/inputs/generated/09_medium_central.geojson",
+    "assessment_type": "nutrient",
+    "dwellings": 30,
+    "dwelling_type": "house",
+    "name": "Medium central site ~8000m2, 30 houses"
+  },
+  {
+    "geometry": "tests/data/inputs/generated/10_large_central.geojson",
+    "assessment_type": "nutrient",
+    "dwellings": 300,
+    "dwelling_type": "apartment",
+    "name": "Large central site ~6ha, 300 apartments"
+  }
+]
