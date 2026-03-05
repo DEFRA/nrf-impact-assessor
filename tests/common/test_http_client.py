@@ -3,6 +3,9 @@ import httpx
 from app.common.http_client import hook_request_tracing
 from app.common.tracing import ctx_trace_id
 
+MOCK_URL = "http://localhost:1234/test"  # NOSONAR
+MOCK_PROXY = "http://proxy.example.com:8080"  # NOSONAR
+
 
 def mock_handler(request):
     request_id = request.headers.get("x-cdp-request-id", "")
@@ -15,7 +18,7 @@ def test_trace_id_missing():
         event_hooks={"request": [hook_request_tracing]},
         transport=httpx.MockTransport(mock_handler),
     )
-    resp = client.get("http://localhost:1234/test")  # NOSONAR (test mock transport)
+    resp = client.get(MOCK_URL)
     assert resp.text == ""
 
 
@@ -25,7 +28,7 @@ def test_trace_id_set():
         event_hooks={"request": [hook_request_tracing]},
         transport=httpx.MockTransport(mock_handler),
     )
-    resp = client.get("http://localhost:1234/test")  # NOSONAR (test mock transport)
+    resp = client.get(MOCK_URL)
     assert resp.text == "trace-id-value"
 
 
@@ -37,7 +40,7 @@ def test_create_client_with_proxy(monkeypatch):
     # Set http_proxy config before reloading http_client
     monkeypatch.setattr(
         "app.config.config.http_proxy",
-        HttpUrl("http://proxy.example.com:8080"),  # NOSONAR (test fixture)
+        HttpUrl(MOCK_PROXY),
     )
 
     # Reload the http_client module to trigger creation of proxy_mounts with HttpUrl set

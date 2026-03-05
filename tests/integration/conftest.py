@@ -26,12 +26,11 @@ def test_engine() -> Engine:
     3. Returns engine for test use
     4. Drops database after all tests complete
     """
-    test_db_url = "postgresql://postgres@localhost:5432/test_nrf_impact"  # NOSONAR (local test DB)
+    admin_db_url = "postgresql://postgres@localhost:5432/postgres"  # NOSONAR
+    test_db_url = "postgresql://postgres@localhost:5432/test_nrf_impact"  # NOSONAR
 
     # Connect to default postgres database to create test database
-    admin_engine = create_engine(
-        "postgresql://postgres@localhost:5432/postgres"
-    )  # NOSONAR
+    admin_engine = create_engine(admin_db_url)
 
     # Drop and recreate test database
     with admin_engine.connect() as conn:
@@ -84,9 +83,7 @@ def test_engine() -> Engine:
 
     # Cleanup: drop test database
     engine.dispose()
-    admin_engine = create_engine(
-        "postgresql://postgres@localhost:5432/postgres"
-    )  # NOSONAR
+    admin_engine = create_engine(admin_db_url)
     with admin_engine.connect() as conn:
         conn.execution_options(isolation_level="AUTOCOMMIT")
         conn.execute(
