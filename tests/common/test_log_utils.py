@@ -2,6 +2,8 @@ import logging
 
 from app.common.log_utils import EndpointFilter, ExtraFieldsFilter
 
+MOCK_URL = "http://test.com"  # NOSONAR
+
 
 def test_extra_fields_filter_with_all_context(mocker):
     # Mock the context variables
@@ -11,7 +13,7 @@ def test_extra_fields_filter_with_all_context(mocker):
 
     # Set context values
     mock_trace_id.get.return_value = "test-trace-id"
-    mock_request.get.return_value = {"url": "http://test.com", "method": "GET"}
+    mock_request.get.return_value = {"url": MOCK_URL, "method": "GET"}
     mock_response.get.return_value = {"status_code": 200}
 
     # Create a log record
@@ -32,7 +34,7 @@ def test_extra_fields_filter_with_all_context(mocker):
     # Assertions
     assert result is True
     assert record.trace == {"id": "test-trace-id"}
-    assert record.url == {"full": "http://test.com"}
+    assert record.url == {"full": MOCK_URL}
     assert record.http == {
         "request": {"method": "GET"},
         "response": {"status_code": 200},
