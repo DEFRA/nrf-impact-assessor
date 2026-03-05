@@ -15,7 +15,7 @@ def test_trace_id_missing():
         event_hooks={"request": [hook_request_tracing]},
         transport=httpx.MockTransport(mock_handler),
     )
-    resp = client.get("http://localhost:1234/test")
+    resp = client.get("http://localhost:1234/test")  # NOSONAR (test mock transport)
     assert resp.text == ""
 
 
@@ -25,7 +25,7 @@ def test_trace_id_set():
         event_hooks={"request": [hook_request_tracing]},
         transport=httpx.MockTransport(mock_handler),
     )
-    resp = client.get("http://localhost:1234/test")
+    resp = client.get("http://localhost:1234/test")  # NOSONAR (test mock transport)
     assert resp.text == "trace-id-value"
 
 
@@ -36,7 +36,8 @@ def test_create_client_with_proxy(monkeypatch):
 
     # Set http_proxy config before reloading http_client
     monkeypatch.setattr(
-        "app.config.config.http_proxy", HttpUrl("http://proxy.example.com:8080")
+        "app.config.config.http_proxy",
+        HttpUrl("http://proxy.example.com:8080"),  # NOSONAR (test fixture)
     )
 
     # Reload the http_client module to trigger creation of proxy_mounts with HttpUrl set

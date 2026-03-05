@@ -81,7 +81,9 @@ class TestRepositoryCoefficientQueries:
         # Create a test point that intersects with polygon 1
         test_point = WKTElement("POINT(450500 100500)", srid=27700)
 
-        stmt = select(CoefficientLayer).where(ST_Intersects(CoefficientLayer.geometry, test_point))
+        stmt = select(CoefficientLayer).where(
+            ST_Intersects(CoefficientLayer.geometry, test_point)
+        )
 
         result = repository.execute_query(stmt, as_gdf=True)
 
@@ -110,14 +112,18 @@ class TestRepositorySpatialLayerQueries:
         self, repository: Repository, sample_spatial_data: gpd.GeoDataFrame
     ):
         """Test filtering by layer type discriminator."""
-        stmt = select(SpatialLayer).where(SpatialLayer.layer_type == SpatialLayerType.NN_CATCHMENTS)
+        stmt = select(SpatialLayer).where(
+            SpatialLayer.layer_type == SpatialLayerType.NN_CATCHMENTS
+        )
 
         result = repository.execute_query(stmt, as_gdf=False)
 
         assert len(result) == 2
         assert all(obj.layer_type == SpatialLayerType.NN_CATCHMENTS for obj in result)
 
-    def test_filter_by_name(self, repository: Repository, sample_spatial_data: gpd.GeoDataFrame):
+    def test_filter_by_name(
+        self, repository: Repository, sample_spatial_data: gpd.GeoDataFrame
+    ):
         """Test filtering by feature name."""
         stmt = select(SpatialLayer).where(SpatialLayer.name == "Solent")
 
@@ -126,7 +132,9 @@ class TestRepositorySpatialLayerQueries:
         assert len(result) == 1
         assert result.iloc[0]["name"] == "Solent"
 
-    def test_count_query(self, repository: Repository, sample_spatial_data: gpd.GeoDataFrame):
+    def test_count_query(
+        self, repository: Repository, sample_spatial_data: gpd.GeoDataFrame
+    ):
         """Test count query using SQLAlchemy func.count()."""
         stmt = select(func.count()).select_from(SpatialLayer)
 
@@ -152,10 +160,14 @@ class TestRepositoryLookupQueries:
         assert len(lookup.data) == 3
         assert lookup.data[0]["WwTW_code"] == "WW001"
 
-    def test_query_latest_version(self, repository: Repository, sample_lookup_data: dict):
+    def test_query_latest_version(
+        self, repository: Repository, sample_lookup_data: dict
+    ):
         """Test querying latest version of lookup table."""
         # Get max version
-        stmt_max = select(func.max(LookupTable.version)).where(LookupTable.name == "wwtw_lookup")
+        stmt_max = select(func.max(LookupTable.version)).where(
+            LookupTable.name == "wwtw_lookup"
+        )
 
         with repository.session() as session:
             max_version = session.scalar(stmt_max)
@@ -221,7 +233,9 @@ class TestRepositoryMultiTableQueries:
             count = session.scalar(stmt_count)
 
             # Query 2: Filter
-            stmt_filter = select(CoefficientLayer).where(CoefficientLayer.nn_catchment == "Solent")
+            stmt_filter = select(CoefficientLayer).where(
+                CoefficientLayer.nn_catchment == "Solent"
+            )
             result = session.scalars(stmt_filter).all()
 
             assert count == 3
@@ -244,7 +258,7 @@ class TestRepositoryContextManager:
         from sqlalchemy import create_engine
 
         # Create a separate engine for this test (don't use shared test_engine)
-        test_url = "postgresql://postgres@localhost:5432/test_nrf_impact"
+        test_url = "postgresql://postgres@localhost:5432/test_nrf_impact"  # NOSONAR
         engine = create_engine(test_url, pool_size=2)
 
         repo = Repository(engine)

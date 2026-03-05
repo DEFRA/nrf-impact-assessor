@@ -57,8 +57,12 @@ def compare_dataframe_to_baseline(
     baseline_df = pd.read_csv(baseline_file, sep="|")
 
     # Extract comparison columns and sort by stable identifier columns only
-    result_subset = result_df[compare_cols].sort_values(by=sort_cols).reset_index(drop=True)
-    baseline_subset = baseline_df[compare_cols].sort_values(by=sort_cols).reset_index(drop=True)
+    result_subset = (
+        result_df[compare_cols].sort_values(by=sort_cols).reset_index(drop=True)
+    )
+    baseline_subset = (
+        baseline_df[compare_cols].sort_values(by=sort_cols).reset_index(drop=True)
+    )
 
     # Check shape
     if result_subset.shape != baseline_subset.shape:
@@ -68,9 +72,9 @@ def compare_dataframe_to_baseline(
         print(f"\nResult data:\n{result_subset}")
         print(f"\nBaseline data:\n{baseline_subset}")
 
-    assert (
-        result_subset.shape == baseline_subset.shape
-    ), f"{label}: Shape mismatch - result={result_subset.shape}, baseline={baseline_subset.shape}"
+    assert result_subset.shape == baseline_subset.shape, (
+        f"{label}: Shape mismatch - result={result_subset.shape}, baseline={baseline_subset.shape}"
+    )
 
     # Compare each column
     for col in compare_cols:
@@ -109,7 +113,9 @@ def test_gcn_assessment_no_survey_route(
         test_data_dir: Path to tests/data directory (fixture)
     """
     # Input files
-    rlb_path = test_data_dir / "inputs" / "gcn" / "SiteBoundaries" / "SiteBoundary_00001.shp"
+    rlb_path = (
+        test_data_dir / "inputs" / "gcn" / "SiteBoundaries" / "SiteBoundary_00001.shp"
+    )
 
     # Expected outputs - Phase 0 baseline (from opensource_gcn.py)
     baseline_dir = test_data_dir / "expected" / "gcn" / "baseline_no_survey"
@@ -118,7 +124,9 @@ def test_gcn_assessment_no_survey_route(
 
     # Verify prerequisites
     assert rlb_path.exists(), f"Test RLB not found: {rlb_path}"
-    assert baseline_habitat.exists(), f"Baseline habitat output not found: {baseline_habitat}"
+    assert baseline_habitat.exists(), (
+        f"Baseline habitat output not found: {baseline_habitat}"
+    )
     assert baseline_ponds.exists(), f"Baseline ponds output not found: {baseline_ponds}"
 
     # Load test RLB
@@ -161,7 +169,9 @@ def test_gcn_assessment_survey_route(
         test_data_dir: Path to tests/data directory (fixture)
     """
     # Input files
-    rlb_path = test_data_dir / "inputs" / "gcn" / "SiteBoundaries" / "SiteBoundary_00001.shp"
+    rlb_path = (
+        test_data_dir / "inputs" / "gcn" / "SiteBoundaries" / "SiteBoundary_00001.shp"
+    )
     ponds_path = test_data_dir / "inputs" / "gcn" / "SitePonds" / "SitePonds_00001.shp"
 
     # Expected outputs - Phase 0 baseline (from opensource_gcn.py)
@@ -172,7 +182,9 @@ def test_gcn_assessment_survey_route(
     # Verify prerequisites
     assert rlb_path.exists(), f"Test RLB not found: {rlb_path}"
     assert ponds_path.exists(), f"Test survey ponds not found: {ponds_path}"
-    assert baseline_habitat.exists(), f"Baseline habitat output not found: {baseline_habitat}"
+    assert baseline_habitat.exists(), (
+        f"Baseline habitat output not found: {baseline_habitat}"
+    )
     assert baseline_ponds.exists(), f"Baseline ponds output not found: {baseline_ponds}"
 
     # Load test inputs

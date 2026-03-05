@@ -13,6 +13,8 @@ from sqlalchemy.engine import Engine
 from app.models.enums import SpatialLayerType
 from app.repositories.repository import Repository
 
+CRS_BNG = "EPSG:27700"
+
 
 @pytest.fixture(scope="session")
 def test_engine() -> Engine:
@@ -24,10 +26,12 @@ def test_engine() -> Engine:
     3. Returns engine for test use
     4. Drops database after all tests complete
     """
-    test_db_url = "postgresql://postgres@localhost:5432/test_nrf_impact"
+    test_db_url = "postgresql://postgres@localhost:5432/test_nrf_impact"  # NOSONAR (local test DB)
 
     # Connect to default postgres database to create test database
-    admin_engine = create_engine("postgresql://postgres@localhost:5432/postgres")
+    admin_engine = create_engine(
+        "postgresql://postgres@localhost:5432/postgres"
+    )  # NOSONAR
 
     # Drop and recreate test database
     with admin_engine.connect() as conn:
@@ -63,23 +67,26 @@ def test_engine() -> Engine:
         "DB_LOCAL_PASSWORD": "",
     }
 
-    result = subprocess.run(
-        ["alembic", "-c", str(alembic_ini), "upgrade", "head"],
+    cmd = ["alembic", "-c", str(alembic_ini), "upgrade", "head"]
+    result = subprocess.run(  # noqa: S603, S607
+        cmd,
         env={**subprocess.os.environ, **env},
         capture_output=True,
         text=True,
+        check=False,
     )
 
     if result.returncode != 0:
-        raise RuntimeError(
-            f"Alembic migration failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
-        )
+        msg = f"Alembic migration failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        raise RuntimeError(msg)
 
     yield engine
 
     # Cleanup: drop test database
     engine.dispose()
-    admin_engine = create_engine("postgresql://postgres@localhost:5432/postgres")
+    admin_engine = create_engine(
+        "postgresql://postgres@localhost:5432/postgres"
+    )  # NOSONAR
     with admin_engine.connect() as conn:
         conn.execution_options(isolation_level="AUTOCOMMIT")
         conn.execute(
@@ -92,7 +99,7 @@ def test_engine() -> Engine:
     admin_engine.dispose()
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def repository(test_engine: Engine) -> Repository:
     """Create Repository instance with clean database for each test.
 
@@ -109,7 +116,7 @@ def repository(test_engine: Engine) -> Repository:
     return Repository(test_engine)
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def sample_coefficient_data(repository: Repository) -> gpd.GeoDataFrame:
     """Load minimal coefficient layer test data.
 
@@ -198,7 +205,7 @@ def sample_coefficient_data(repository: Repository) -> gpd.GeoDataFrame:
         },
     ]
 
-    gdf = gpd.GeoDataFrame(polygons, crs="EPSG:27700")
+    gdf = gpd.GeoDataFrame(polygons, crs=CRS_BNG)
 
     # Load into database using to_postgis
     gdf.to_postgis(
@@ -212,7 +219,7 @@ def sample_coefficient_data(repository: Repository) -> gpd.GeoDataFrame:
     return gdf
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def sample_spatial_data(repository: Repository) -> gpd.GeoDataFrame:
     """Load minimal spatial layer test data.
 
@@ -255,7 +262,7 @@ def sample_spatial_data(repository: Repository) -> gpd.GeoDataFrame:
         },
     ]
 
-    gdf = gpd.GeoDataFrame(features, crs="EPSG:27700")
+    gdf = gpd.GeoDataFrame(features, crs=CRS_BNG)
 
     # Load into database using to_postgis
     gdf.to_postgis(
@@ -269,7 +276,7 @@ def sample_spatial_data(repository: Repository) -> gpd.GeoDataFrame:
     return gdf
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def sample_lookup_data(repository: Repository) -> dict:
     """Load minimal lookup table test data.
 
@@ -305,7 +312,7 @@ def sample_lookup_data(repository: Repository) -> dict:
 # ======================================================================================
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def sample_gcn_risk_zones(repository: Repository) -> gpd.GeoDataFrame:
     """Load minimal GCN risk zones test data.
 
@@ -365,7 +372,7 @@ def sample_gcn_risk_zones(repository: Repository) -> gpd.GeoDataFrame:
         },
     ]
 
-    gdf = gpd.GeoDataFrame(risk_zones, crs="EPSG:27700")
+    gdf = gpd.GeoDataFrame(risk_zones, crs=CRS_BNG)
 
     # Convert attributes dict to JSON string for JSONB column
     import json
@@ -384,7 +391,7 @@ def sample_gcn_risk_zones(repository: Repository) -> gpd.GeoDataFrame:
     return gdf
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def sample_gcn_ponds(repository: Repository) -> gpd.GeoDataFrame:
     """Load minimal GCN ponds test data.
 
@@ -420,7 +427,7 @@ def sample_gcn_ponds(repository: Repository) -> gpd.GeoDataFrame:
         },
     ]
 
-    gdf = gpd.GeoDataFrame(ponds, crs="EPSG:27700")
+    gdf = gpd.GeoDataFrame(ponds, crs=CRS_BNG)
 
     # Convert attributes dict to JSON string for JSONB column
     import json
@@ -439,7 +446,7 @@ def sample_gcn_ponds(repository: Repository) -> gpd.GeoDataFrame:
     return gdf
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def sample_edp_edges(repository: Repository) -> gpd.GeoDataFrame:
     """Load minimal EDP edges test data (placeholder - not yet used)."""
     from shapely.geometry import LineString
@@ -455,7 +462,7 @@ def sample_edp_edges(repository: Repository) -> gpd.GeoDataFrame:
         }
     ]
 
-    gdf = gpd.GeoDataFrame(edges, crs="EPSG:27700")
+    gdf = gpd.GeoDataFrame(edges, crs=CRS_BNG)
 
     # Convert attributes dict to JSON string for JSONB column
     import json

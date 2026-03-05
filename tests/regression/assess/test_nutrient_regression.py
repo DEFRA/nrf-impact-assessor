@@ -98,10 +98,14 @@ def test_regression_single_site_assessment(
     """
     # Load test geometry
     test_geometry_file = test_data_dir / "inputs" / "nutrients" / geometry_file
-    baseline_path = test_data_dir / "expected" / "nutrients" / "BnW_small_under_1_hectare.csv"
+    baseline_path = (
+        test_data_dir / "expected" / "nutrients" / "BnW_small_under_1_hectare.csv"
+    )
 
     # Verify inputs exist
-    assert test_geometry_file.exists(), f"Test geometry file not found: {test_geometry_file}"
+    assert test_geometry_file.exists(), (
+        f"Test geometry file not found: {test_geometry_file}"
+    )
     assert baseline_path.exists(), f"Baseline not found: {baseline_path}"
 
     # Read development geometry
@@ -119,7 +123,9 @@ def test_regression_single_site_assessment(
     )
 
     # Get results DataFrame and rename to baseline column names
-    postgis_df = dataframes["impact_summary"].rename(columns=INTERNAL_TO_BASELINE_COLUMNS)
+    postgis_df = dataframes["impact_summary"].rename(
+        columns=INTERNAL_TO_BASELINE_COLUMNS
+    )
     print(f"Assessment complete: {len(postgis_df)} results")
 
     # Load baseline and compare
@@ -166,17 +172,27 @@ def test_regression_full_broads_wensum_assessment(
     """
     # Load test geometry
     test_geometry_file = (
-        test_data_dir / "inputs" / "nutrients" / "BnW_cleaned_110925" / "BnW_cleaned_110925.shp"
+        test_data_dir
+        / "inputs"
+        / "nutrients"
+        / "BnW_cleaned_110925"
+        / "BnW_cleaned_110925.shp"
     )
-    baseline_path = test_data_dir / "expected" / "nutrients" / "BroadsWensum_IAT_101025.csv"
+    baseline_path = (
+        test_data_dir / "expected" / "nutrients" / "BroadsWensum_IAT_101025.csv"
+    )
 
     # Verify inputs exist
-    assert test_geometry_file.exists(), f"Test geometry file not found: {test_geometry_file}"
+    assert test_geometry_file.exists(), (
+        f"Test geometry file not found: {test_geometry_file}"
+    )
     assert baseline_path.exists(), f"Baseline not found: {baseline_path}"
 
     # Read development geometry
     developments_gdf = gpd.read_file(test_geometry_file)
-    print(f"\nLoaded {len(developments_gdf)} development sites from BnW_cleaned_110925.shp")
+    print(
+        f"\nLoaded {len(developments_gdf)} development sites from BnW_cleaned_110925.shp"
+    )
 
     # Run assessment via new runner
     print("Running PostGIS-based impact assessment on full dataset...")
@@ -189,7 +205,9 @@ def test_regression_full_broads_wensum_assessment(
     )
 
     # Get results DataFrame and rename to baseline column names
-    postgis_df = dataframes["impact_summary"].rename(columns=INTERNAL_TO_BASELINE_COLUMNS)
+    postgis_df = dataframes["impact_summary"].rename(
+        columns=INTERNAL_TO_BASELINE_COLUMNS
+    )
     print(f"Assessment complete: {len(postgis_df)} results")
 
     # Load baseline and compare
@@ -235,7 +253,9 @@ def _compare_csv_outputs(
     skip_columns = skip_columns or []
 
     # Check same number of rows
-    assert len(df1) == len(df2), f"Row count mismatch: {label1}={len(df1)}, {label2}={len(df2)}"
+    assert len(df1) == len(df2), (
+        f"Row count mismatch: {label1}={len(df1)}, {label2}={len(df2)}"
+    )
 
     # Check same columns
     assert set(df1.columns) == set(df2.columns), (
@@ -249,66 +269,69 @@ def _compare_csv_outputs(
 
     # Identify numerical vs string columns
     numerical_cols = df1_sorted.select_dtypes(include=["number"]).columns.tolist()
-    string_cols = df1_sorted.select_dtypes(include=["object", "string"]).columns.tolist()
+    string_cols = df1_sorted.select_dtypes(
+        include=["object", "string"]
+    ).columns.tolist()
 
-    # Compare string columns exactly
-    for col in string_cols:
-        if col == "geometry":  # Skip geometry column if present
-            continue
-        if col in skip_columns:  # Skip columns specified by caller
-            continue
-        assert df1_sorted[col].equals(
-            df2_sorted[col]
-        ), f"String column '{col}' mismatch between {label1} and {label2}"
+    # Compare string columns exactly (skip geometry and caller-specified columns)
+    comparable_str_cols = [
+        c for c in string_cols if c != "geometry" and c not in skip_columns
+    ]
+    for col in comparable_str_cols:
+        assert df1_sorted[col].equals(df2_sorted[col]), (
+            f"String column '{col}' mismatch between {label1} and {label2}"
+        )
 
     # Compare numerical columns with tolerance
-    for col in numerical_cols:
-        if col in skip_columns:  # Skip columns specified by caller
-            continue
+    comparable_num_cols = [c for c in numerical_cols if c not in skip_columns]
+    for col in comparable_num_cols:
+        _compare_numerical_column(
+            df1_sorted, df2_sorted, col, tolerance, label1, label2
+        )
 
-        # Handle NaN values
-        df1_col = df1_sorted[col].fillna(0)
-        df2_col = df2_sorted[col].fillna(0)
 
-        # Check within absolute tolerance (with float epsilon to avoid
-        # false failures from floating-point representation noise)
-        diff = (df1_col - df2_col).abs()
-        max_diff = diff.max()
-        eps = 1e-9
+def _compare_numerical_column(
+    df1: pd.DataFrame,
+    df2: pd.DataFrame,
+    col: str,
+    tolerance: dict[str, float],
+    label1: str,
+    label2: str,
+) -> None:
+    """Compare a single numerical column between two DataFrames with tolerance."""
+    df1_col = df1[col].fillna(0)
+    df2_col = df2[col].fillna(0)
 
-        if max_diff > tolerance["absolute"] + eps:
-            worst_idx = diff.idxmax()
-            worst_rlb_id = df1_sorted.loc[worst_idx, "RLB_ID"]
-            worst_baseline = df1_col.iloc[worst_idx]
-            worst_postgis = df2_col.iloc[worst_idx]
-            failing_mask = diff > tolerance["absolute"] + eps
-            failing_rlb_ids = df1_sorted.loc[failing_mask, "RLB_ID"].tolist()
-            assert False, (
-                f"Numerical column '{col}' exceeds absolute tolerance: "
-                f"max_diff={max_diff:.6f}, tolerance={tolerance['absolute']}\n"
-                f"  Worst row: RLB_ID={worst_rlb_id}, "
-                f"{label1}={worst_baseline:.4f}, {label2}={worst_postgis:.4f}, "
-                f"diff={max_diff:.4f}\n"
-                f"  Failing RLB_IDs ({len(failing_rlb_ids)} rows): "
-                f"{failing_rlb_ids[:10]}{'...' if len(failing_rlb_ids) > 10 else ''}"
-            )
+    diff = (df1_col - df2_col).abs()
+    max_diff = diff.max()
+    eps = 1e-9
 
-        # For non-zero values, also check relative tolerance
-        # NOTE: Skip relative tolerance check for small values (< 0.2) where floating-point
-        # precision in geometry operations can cause large relative differences despite
-        # negligible absolute differences. For example, -0.03 vs -0.02 is a 33% relative
-        # difference but only 0.01 absolute - well within acceptable precision for
-        # nutrient calculations. PostGIS ST_Area and Python geometry.area use different
-        # computational paths (GEOS vs JTS-derived), so small area differences are expected
-        # and amplified in relative terms for small values.
-        non_zero_mask = df1_col != 0
-        significant_value_mask = (
-            df1_col.abs() >= 0.1
-        )  # Only check relative tolerance for significant values
-        check_mask = non_zero_mask & significant_value_mask
-        if check_mask.any():
-            rel_diff = (diff[check_mask] / df1_col[check_mask].abs()).max()
-            assert rel_diff <= tolerance["relative"], (
-                f"Numerical column '{col}' exceeds relative tolerance: "
-                f"max_rel_diff={rel_diff:.6f}, tolerance={tolerance['relative']}"
-            )
+    if max_diff > tolerance["absolute"] + eps:
+        worst_idx = diff.idxmax()
+        worst_rlb_id = df1.loc[worst_idx, "RLB_ID"]
+        failing_mask = diff > tolerance["absolute"] + eps
+        failing_rlb_ids = df1.loc[failing_mask, "RLB_ID"].tolist()
+        pytest.fail(
+            f"Numerical column '{col}' exceeds absolute tolerance: "
+            f"max_diff={max_diff:.6f}, tolerance={tolerance['absolute']}\n"
+            f"  Worst row: RLB_ID={worst_rlb_id}, "
+            f"{label1}={df1_col.iloc[worst_idx]:.4f}, "
+            f"{label2}={df2_col.iloc[worst_idx]:.4f}, "
+            f"diff={max_diff:.4f}\n"
+            f"  Failing RLB_IDs ({len(failing_rlb_ids)} rows): "
+            f"{failing_rlb_ids[:10]}{'...' if len(failing_rlb_ids) > 10 else ''}"
+        )
+
+    # For non-zero values, also check relative tolerance.
+    # Skip small values (< 0.1) where floating-point precision in geometry
+    # operations can cause large relative differences despite negligible
+    # absolute differences (e.g. -0.03 vs -0.02 is 33% relative but only 0.01
+    # absolute). PostGIS ST_Area and Python geometry.area use different
+    # computational paths, so small area differences are expected.
+    check_mask = (df1_col != 0) & (df1_col.abs() >= 0.1)
+    if check_mask.any():
+        rel_diff = (diff[check_mask] / df1_col[check_mask].abs()).max()
+        assert rel_diff <= tolerance["relative"], (
+            f"Numerical column '{col}' exceeds relative tolerance: "
+            f"max_rel_diff={rel_diff:.6f}, tolerance={tolerance['relative']}"
+        )
