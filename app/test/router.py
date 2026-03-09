@@ -61,12 +61,12 @@ def _get_repository() -> Repository:
 def _parse_assessment_type(value: str) -> AssessmentType:
     try:
         return AssessmentType(value)
-    except ValueError:
+    except ValueError as err:
         valid = [e.value for e in AssessmentType]
         raise HTTPException(
             status_code=400,
             detail=f"Invalid assessment_type '{value}'. Must be one of: {valid}",
-        )
+        ) from err
 
 
 def _wkt_to_gdf(wkt_str: str, crs: str) -> gpd.GeoDataFrame:
