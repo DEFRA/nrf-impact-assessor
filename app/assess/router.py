@@ -38,6 +38,7 @@ router = APIRouter()
 _config = ApiServerConfig()
 _JOB_TTL_SECONDS = _config.assess_job_ttl_seconds
 _MAX_JOBS = 100
+_max_upload_bytes = 50 * 1024 * 1024  # 50 MB
 
 # ---------------------------------------------------------------------------
 # Job store
@@ -197,6 +198,7 @@ async def _run_in_background(
     status_code=202,
     responses={
         400: {"description": "Invalid assessment_type"},
+        413: {"description": "File too large (max 50 MB)"},
         503: {"description": "Server at job capacity"},
     },
 )
@@ -226,8 +228,13 @@ async def submit_assessment(
 
     _prune_expired_jobs()
 
+    content = await geometry_file.read(_max_upload_bytes + 1)
+    if len(content) > _max_upload_bytes:
+        raise HTTPException(
+            status_code=413, detail="File too large. Maximum upload size is 50 MB."
+        )
+
     job_id = str(uuid4())
-    content = await geometry_file.read()
     filename = geometry_file.filename or "input.geojson"
 
     _jobs[job_id] = JobState(status="pending")

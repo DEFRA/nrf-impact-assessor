@@ -80,7 +80,8 @@ services:
       MONGO_URI: ${MONGO_URI:-mongodb://mongodb:27017/}
       HOST: ${HOST:-0.0.0.0}
       DB_HOST: postgres
-      DB_IAM_AUTHENTICATION: "false"
+      DB_IAM_AUTHENTICATION: "false" # Disable IAM authentication for local development
+      API_TESTING_ENABLED: "true"   # Enable API testing in development environment
     develop:
       watch:
         - action: sync
