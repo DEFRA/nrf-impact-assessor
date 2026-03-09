@@ -152,11 +152,17 @@ def mock_repository(sample_risk_zones, sample_ponds, sample_edp_edges):
 
     def execute_query_side_effect(stmt, as_gdf=False):
         layer_type = _extract_layer_type(stmt.whereclause)
-        return _gdf_for_layer_type(layer_type, sample_risk_zones, sample_ponds, sample_edp_edges)
+        return _gdf_for_layer_type(
+            layer_type, sample_risk_zones, sample_ponds, sample_edp_edges
+        )
 
-    def intersection_postgis_side_effect(input_gdf, overlay_table, overlay_filter, overlay_columns):
+    def intersection_postgis_side_effect(
+        input_gdf, overlay_table, overlay_filter, overlay_columns
+    ):
         layer_type = _extract_layer_type(overlay_filter)
-        return _gdf_for_layer_type(layer_type, sample_risk_zones, sample_ponds, sample_edp_edges)
+        return _gdf_for_layer_type(
+            layer_type, sample_risk_zones, sample_ponds, sample_edp_edges
+        )
 
     repo.execute_query.side_effect = execute_query_side_effect
     repo.intersection_postgis.side_effect = intersection_postgis_side_effect

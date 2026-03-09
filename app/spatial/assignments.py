@@ -224,7 +224,7 @@ def majority_overlap(
                 for chunk in chunks
             ]
             results = [f.result() for f in futures]
-    except (NotImplementedError, PermissionError, OSError) as exc:
+    except (NotImplementedError, OSError) as exc:
         logger.warning(
             f"Parallel majority_overlap unavailable ({exc}); falling back to sequential"
         )

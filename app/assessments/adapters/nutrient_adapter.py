@@ -58,9 +58,15 @@ def _build_wastewater(row: pd.Series) -> WastewaterImpact | None:
         water_usage_L_per_person_day=_opt_float(row, "water_usage_L_per_person_day"),
         daily_water_usage_L=_opt_float(row, "daily_water_usage_L"),
         nitrogen_conc_2025_2030_mg_L=_opt_float(row, "nitrogen_conc_2025_2030_mg_L"),
-        phosphorus_conc_2025_2030_mg_L=_opt_float(row, "phosphorus_conc_2025_2030_mg_L"),
-        nitrogen_conc_2030_onwards_mg_L=_opt_float(row, "nitrogen_conc_2030_onwards_mg_L"),
-        phosphorus_conc_2030_onwards_mg_L=_opt_float(row, "phosphorus_conc_2030_onwards_mg_L"),
+        phosphorus_conc_2025_2030_mg_L=_opt_float(
+            row, "phosphorus_conc_2025_2030_mg_L"
+        ),
+        nitrogen_conc_2030_onwards_mg_L=_opt_float(
+            row, "nitrogen_conc_2030_onwards_mg_L"
+        ),
+        phosphorus_conc_2030_onwards_mg_L=_opt_float(
+            row, "phosphorus_conc_2030_onwards_mg_L"
+        ),
         nitrogen_temp_kg_yr=_opt_float(row, "n_wwtw_temp"),
         phosphorus_temp_kg_yr=_opt_float(row, "p_wwtw_temp"),
         nitrogen_perm_kg_yr=_opt_float(row, "n_wwtw_perm"),

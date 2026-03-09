@@ -247,7 +247,7 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
             Bucket=aws.s3_input_bucket,
             Key=s3_key,
             Body=geojson_bytes,
-            **( {"ExpectedBucketOwner": aws.account_id} if aws.account_id else {} ),
+            **({"ExpectedBucketOwner": aws.account_id} if aws.account_id else {}),
         )
     except ClientError as e:
         logger.error("S3 upload failed: %s", e)

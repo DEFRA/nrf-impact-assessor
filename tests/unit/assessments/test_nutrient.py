@@ -204,9 +204,18 @@ def sample_wwtw_lookup():
 
 
 _LU_COLUMNS = [
-    "rlb_id", "dwellings", "name", "dwelling_category", "source",
-    "crome_id", "lu_curr_n_coeff", "lu_curr_p_coeff", "n_resi_coeff",
-    "p_resi_coeff", "n2k_site_n", "area_in_nn_catchment_ha",
+    "rlb_id",
+    "dwellings",
+    "name",
+    "dwelling_category",
+    "source",
+    "crome_id",
+    "lu_curr_n_coeff",
+    "lu_curr_p_coeff",
+    "n_resi_coeff",
+    "p_resi_coeff",
+    "n2k_site_n",
+    "area_in_nn_catchment_ha",
 ]
 
 _GDF_LAYER_TYPES = [
@@ -230,7 +239,9 @@ def _layer_type_from_params(compiled_params) -> SpatialLayerType | None:
     return None
 
 
-def _gdf_execute_query(compiled_params, wwtw, lpa, subcatchments, nn) -> gpd.GeoDataFrame:
+def _gdf_execute_query(
+    compiled_params, wwtw, lpa, subcatchments, nn
+) -> gpd.GeoDataFrame:
     layer = _layer_type_from_params(compiled_params)
     mapping = {
         SpatialLayerType.WWTW_CATCHMENTS: wwtw,
@@ -268,7 +279,9 @@ def _resolve_majority_layer(overlay_filter, wwtw, lpa, subcatchments):
     return None, None
 
 
-def _compute_majority_overlap(input_gdf, input_id_col, output_field, layer_data, attr_key, default_value):
+def _compute_majority_overlap(
+    input_gdf, input_id_col, output_field, layer_data, attr_key, default_value
+):
     """Python-side majority overlap computation."""
     layer_data[attr_key] = layer_data["attributes"].apply(
         lambda x: x.get(attr_key) if isinstance(x, dict) else None
@@ -276,7 +289,9 @@ def _compute_majority_overlap(input_gdf, input_id_col, output_field, layer_data,
     intersections = gpd.overlay(input_gdf, layer_data, how="intersection")
     intersections["_area"] = intersections.geometry.area
     if len(intersections) == 0:
-        return pd.DataFrame({input_id_col: input_gdf[input_id_col], output_field: default_value})
+        return pd.DataFrame(
+            {input_id_col: input_gdf[input_id_col], output_field: default_value}
+        )
     majority = intersections.loc[
         intersections.groupby(input_id_col)["_area"].idxmax(),
         [input_id_col, attr_key],
@@ -321,16 +336,39 @@ def mock_repository(
     def execute_query_side_effect(stmt, as_gdf=False):
         compiled_params = stmt.compile().params
         if as_gdf:
-            return _gdf_execute_query(compiled_params, sample_wwtw_catchments, sample_lpa_boundaries, sample_subcatchments, sample_nn_catchments)
+            return _gdf_execute_query(
+                compiled_params,
+                sample_wwtw_catchments,
+                sample_lpa_boundaries,
+                sample_subcatchments,
+                sample_nn_catchments,
+            )
         return _scalar_execute_query(stmt, sample_rates_lookup, sample_wwtw_lookup)
 
-    def majority_overlap_postgis_side_effect(input_gdf, overlay_table, overlay_filter, input_id_col, overlay_attr_col, output_field, default_value=None):
-        layer_data, attr_key = _resolve_majority_layer(overlay_filter, sample_wwtw_catchments, sample_lpa_boundaries, sample_subcatchments)
+    def majority_overlap_postgis_side_effect(
+        input_gdf,
+        overlay_table,
+        overlay_filter,
+        input_id_col,
+        overlay_attr_col,
+        output_field,
+        default_value=None,
+    ):
+        layer_data, attr_key = _resolve_majority_layer(
+            overlay_filter,
+            sample_wwtw_catchments,
+            sample_lpa_boundaries,
+            sample_subcatchments,
+        )
         if layer_data is None:
             return pd.DataFrame(columns=[input_id_col, output_field])
-        return _compute_majority_overlap(input_gdf, input_id_col, output_field, layer_data, attr_key, default_value)
+        return _compute_majority_overlap(
+            input_gdf, input_id_col, output_field, layer_data, attr_key, default_value
+        )
 
-    def batch_majority_overlap_postgis_side_effect(input_gdf, input_id_col, assignments):
+    def batch_majority_overlap_postgis_side_effect(
+        input_gdf, input_id_col, assignments
+    ):
         return {
             a["output_field"]: majority_overlap_postgis_side_effect(
                 input_gdf=input_gdf,
@@ -345,12 +383,18 @@ def mock_repository(
         }
 
     def land_use_intersection_postgis_side_effect(input_gdf, coeff_version, nn_version):
-        return _compute_land_use_intersection(input_gdf, sample_coefficient_layer, sample_nn_catchments)
+        return _compute_land_use_intersection(
+            input_gdf, sample_coefficient_layer, sample_nn_catchments
+        )
 
     repo.execute_query.side_effect = execute_query_side_effect
     repo.majority_overlap_postgis.side_effect = majority_overlap_postgis_side_effect
-    repo.batch_majority_overlap_postgis.side_effect = batch_majority_overlap_postgis_side_effect
-    repo.land_use_intersection_postgis.side_effect = land_use_intersection_postgis_side_effect
+    repo.batch_majority_overlap_postgis.side_effect = (
+        batch_majority_overlap_postgis_side_effect
+    )
+    repo.land_use_intersection_postgis.side_effect = (
+        land_use_intersection_postgis_side_effect
+    )
     return repo
 
 
