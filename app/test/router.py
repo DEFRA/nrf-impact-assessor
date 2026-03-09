@@ -58,6 +58,17 @@ def _get_repository() -> Repository:
 # ---------------------------------------------------------------------------
 
 
+def _parse_assessment_type(value: str) -> AssessmentType:
+    try:
+        return AssessmentType(value)
+    except ValueError:
+        valid = [e.value for e in AssessmentType]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid assessment_type '{value}'. Must be one of: {valid}",
+        )
+
+
 def _wkt_to_gdf(wkt_str: str, crs: str) -> gpd.GeoDataFrame:
     """Parse a WKT string into a GeoDataFrame reprojected to EPSG:27700."""
     try:
@@ -83,7 +94,7 @@ class WktAssessRequest(BaseModel):
 
     wkt: str
     crs: str = "EPSG:27700"
-    assessment_type: AssessmentType = AssessmentType.NUTRIENT
+    assessment_type: str = "nutrient"
     dwelling_type: str = "house"
     dwellings: int = 1
     name: str = ""
@@ -103,7 +114,7 @@ class WktEnqueueRequest(BaseModel):
 
     wkt: str
     crs: str = "EPSG:27700"
-    assessment_type: AssessmentType = AssessmentType.NUTRIENT
+    assessment_type: str = "nutrient"
     dwelling_type: str = "house"
     dwellings: int = 1
     name: str = ""
@@ -138,6 +149,7 @@ def assess_from_wkt(request: WktAssessRequest) -> WktAssessResponse:
     Returns results immediately — no S3, no SQS, no polling needed.
     Useful for quickly testing assessment logic during local development.
     """
+    assessment_type = _parse_assessment_type(request.assessment_type)
     gdf = _wkt_to_gdf(request.wkt, request.crs)
 
     job_id = str(uuid4())
@@ -150,7 +162,7 @@ def assess_from_wkt(request: WktAssessRequest) -> WktAssessResponse:
     start = time.time()
     try:
         dataframes = run_assessment(
-            assessment_type=request.assessment_type.value,
+            assessment_type=assessment_type.value,
             rlb_gdf=gdf,
             metadata={"unique_ref": job_id},
             repository=repository,
@@ -170,13 +182,13 @@ def assess_from_wkt(request: WktAssessRequest) -> WktAssessResponse:
     logger.info(
         "WKT assessment %s (%s) completed in %.2fs",
         job_id,
-        request.assessment_type.value,
+        assessment_type.value,
         timing_s,
     )
 
     return WktAssessResponse(
         job_id=job_id,
-        assessment_type=request.assessment_type.value,
+        assessment_type=assessment_type.value,
         timing_s=timing_s,
         results=results,
     )
@@ -201,6 +213,7 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
     Requires LocalStack running with S3 bucket and SQS queue provisioned, and the
     consumer running (docker-compose worker profile or `python -m app.consumer`).
     """
+    assessment_type = _parse_assessment_type(request.assessment_type)
     aws = AWSConfig()
 
     if not aws.s3_input_bucket:
@@ -243,7 +256,7 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
         s3_input_key=s3_key,
         developer_email=request.developer_email,
         submitted_at=datetime.now(UTC),
-        assessment_type=request.assessment_type,
+        assessment_type=assessment_type,
         dwelling_type=request.dwelling_type,
         number_of_dwellings=request.dwellings,
         development_name=request.name,
