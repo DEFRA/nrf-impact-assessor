@@ -82,8 +82,13 @@ class S3Client:
     def _download_geojson(self, s3_key: str, local_dir: Path) -> Path:
         logger.info(f"Downloading GeoJSON from s3://{self.bucket_name}/{s3_key}")
 
-        file_extension = Path(s3_key).suffix
-        local_path = local_dir / f"input{file_extension}"
+        suffix = Path(s3_key).suffix.lower()
+        if suffix not in (".json", ".geojson"):
+            msg = (
+                f"Unsupported GeoJSON extension: {suffix!r}. Expected .json or .geojson"
+            )
+            raise ValueError(msg)
+        local_path = local_dir / f"input{suffix}"
 
         try:
             self.s3.download_file(self.bucket_name, s3_key, str(local_path))

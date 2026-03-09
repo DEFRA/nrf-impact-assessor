@@ -11,6 +11,8 @@ from app.models.job import ImpactAssessmentJob
 
 logger = logging.getLogger(__name__)
 
+_max_body_bytes = 262_144  # SQS hard limit is 256 KiB
+
 
 class SQSClient:
     """Handles SQS message polling and lifecycle."""
@@ -63,7 +65,15 @@ class SQSClient:
         results = []
         for raw_message in messages:
             receipt_handle = raw_message["ReceiptHandle"]
-            body = json.loads(raw_message["Body"])
+            raw_body = raw_message["Body"]
+            if len(raw_body) > _max_body_bytes:
+                logger.error(
+                    "SQS message body exceeds size limit (%d bytes), skipping",
+                    len(raw_body),
+                    extra={"message_id": raw_message.get("MessageId")},
+                )
+                continue
+            body = json.loads(raw_body)
 
             try:
                 job_message = ImpactAssessmentJob.model_validate(body)

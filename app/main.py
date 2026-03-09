@@ -8,7 +8,7 @@ from app.assess.router import router as assess_router
 from app.common.mongo import get_mongo_client
 from app.common.tls import cleanup_cert_files, init_custom_certificates
 from app.common.tracing import TraceIdMiddleware
-from app.config import config
+from app.config import ApiServerConfig, config
 from app.example.router import router as example_router
 from app.health.router import router as health_router
 
@@ -38,6 +38,12 @@ app.add_middleware(TraceIdMiddleware)
 app.include_router(health_router)
 app.include_router(example_router)
 app.include_router(assess_router)
+
+if ApiServerConfig().testing_enabled:
+    from app.test.router import router as test_router
+
+    logger.info("API_TESTING_ENABLED=true: mounting /test/* endpoints")
+    app.include_router(test_router, prefix="/test", tags=["test"])
 
 
 def main() -> None:  # pragma: no cover

@@ -93,36 +93,28 @@ class Repository:
             table_name = table.name
             qualified = f"{schema}.{table_name}" if schema else table_name
 
-            filter_str = str(
-                overlay_filter.compile(
-                    dialect=session.bind.dialect,
-                    compile_kwargs={"literal_binds": True},
-                )
-            )
-            attr_str = str(
-                overlay_attr.compile(
-                    dialect=session.bind.dialect,
-                    compile_kwargs={"literal_binds": True},
-                )
-            )
+            compiled_filter = overlay_filter.compile(dialect=session.bind.dialect)
+            filter_str = str(compiled_filter).replace(f"{qualified}.", "t.")
+            filter_params = dict(compiled_filter.params)
 
-            filter_sql = filter_str.replace(f"{qualified}.", "t.")
-            attr_sql = attr_str.replace(f"{qualified}.", "t.")
+            attr_str = str(overlay_attr.compile(dialect=session.bind.dialect)).replace(
+                f"{qualified}.", "t."
+            )
 
             raw_sql = text(f"""
                 SELECT i.input_id, best.attr_val
                 FROM _tmp_input_geom i
                 LEFT JOIN LATERAL (
-                    SELECT {attr_sql} AS attr_val
+                    SELECT {attr_str} AS attr_val
                     FROM {qualified} t
-                    WHERE {filter_sql}
+                    WHERE {filter_str}
                       AND ST_Intersects(t.geometry, i.geom)
                     ORDER BY ST_Area(ST_Intersection(t.geometry, i.geom)) DESC
                     LIMIT 1
                 ) best ON true
             """)
 
-            rows = session.execute(raw_sql).fetchall()
+            rows = session.execute(raw_sql, filter_params).fetchall()
 
         df = pd.DataFrame(rows, columns=[input_id_col, output_field])
 
@@ -185,6 +177,7 @@ class Repository:
 
             select_cols = ["i.input_id"]
             lateral_clauses = []
+            all_params: dict[str, Any] = {}
 
             for idx, assignment in enumerate(assignments):
                 overlay_table = assignment["overlay_table"]
@@ -203,27 +196,23 @@ class Repository:
                 table_name = table.name
                 qualified = f"{schema}.{table_name}" if schema else table_name
 
-                filter_str = str(
-                    overlay_filter.compile(
-                        dialect=session.bind.dialect,
-                        compile_kwargs={"literal_binds": True},
-                    )
-                )
-                attr_str = str(
-                    overlay_attr.compile(
-                        dialect=session.bind.dialect,
-                        compile_kwargs={"literal_binds": True},
-                    )
-                )
+                compiled_filter = overlay_filter.compile(dialect=session.bind.dialect)
+                filter_str = str(compiled_filter).replace(f"{qualified}.", "t.")
+                # Prefix bind param names to avoid collisions across assignments
+                for param_name, param_value in compiled_filter.params.items():
+                    prefixed = f"lat{idx}_{param_name}"
+                    filter_str = filter_str.replace(f":{param_name}", f":{prefixed}")
+                    all_params[prefixed] = param_value
 
-                filter_sql = filter_str.replace(f"{qualified}.", "t.")
-                attr_sql = attr_str.replace(f"{qualified}.", "t.")
+                attr_str = str(
+                    overlay_attr.compile(dialect=session.bind.dialect)
+                ).replace(f"{qualified}.", "t.")
 
                 lateral_clauses.append(
                     f"LEFT JOIN LATERAL ("
-                    f"  SELECT {attr_sql} AS attr_val"
+                    f"  SELECT {attr_str} AS attr_val"
                     f"  FROM {qualified} t"
-                    f"  WHERE {filter_sql}"
+                    f"  WHERE {filter_str}"
                     f"    AND ST_Intersects(t.geometry, i.geom)"
                     f"  ORDER BY ST_Area(ST_Intersection(t.geometry, i.geom)) DESC"
                     f"  LIMIT 1"
@@ -236,7 +225,7 @@ class Repository:
                 f"FROM _tmp_input_geom i " + " ".join(lateral_clauses)
             )
 
-            rows = session.execute(combined_sql).fetchall()
+            rows = session.execute(combined_sql, all_params).fetchall()
 
             logger.info(
                 f"[timing] batch_majority_overlap: combined query "

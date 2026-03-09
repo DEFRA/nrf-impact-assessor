@@ -12,7 +12,7 @@ This document describes all environment variables used by the application and it
 |---|---|---|
 | `PYTHON_ENV` | `None` | Runtime environment name. Set to `development` by the `defradigital/python-development` base image. **Do not** use this to control uvicorn reload — Docker Compose `develop.watch` handles hot-reload externally. |
 | `HOST` | `127.0.0.1` | Address the server binds to |
-| `PORT` | `8086` | Port the server listens on |
+| `PORT` | `8085` | Port the server listens on |
 | `LOG_CONFIG` | `None` | Path to the JSON logging config file |
 | `MONGO_URI` | `None` | MongoDB connection URI |
 | `MONGO_DATABASE` | `nrf-impact-assessor` | MongoDB database name |
@@ -21,6 +21,17 @@ This document describes all environment variables used by the application and it
 | `HTTP_PROXY` | `None` | Outbound HTTP proxy URL |
 | `ENABLE_METRICS` | `false` | Enable CloudWatch EMF metrics emission |
 | `TRACING_HEADER` | `x-cdp-request-id` | Header name used for request tracing |
+
+---
+
+## API Server (`app/config.py` — `ApiServerConfig`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `API_HOST` | `127.0.0.1` | Host interface for the API server |
+| `API_PORT` | `8085` | Port for the API server |
+| `API_TESTING_ENABLED` | `false` | Mount `/test/*` endpoints for local development. **Never enable in production.** See [local-testing.md](local-testing.md). |
+| `API_ASSESS_JOB_TTL_SECONDS` | `3600` | How long `/assess` job results are kept in memory before cleanup (seconds) |
 
 ---
 
