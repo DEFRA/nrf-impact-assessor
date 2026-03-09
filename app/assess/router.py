@@ -198,6 +198,7 @@ async def _run_in_background(
     status_code=202,
     responses={
         400: {"description": "Invalid assessment_type"},
+        413: {"description": "File too large (max 50 MB)"},
         503: {"description": "Server at job capacity"},
     },
 )

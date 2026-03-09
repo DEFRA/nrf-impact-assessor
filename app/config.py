@@ -322,6 +322,7 @@ class AWSConfig(BaseSettings):
     )
 
     s3_input_bucket: str = ""
+    account_id: str = ""
     region: str = Field(default="eu-west-2")
     sqs_queue_url: str = ""
     endpoint_url: str | None = Field(

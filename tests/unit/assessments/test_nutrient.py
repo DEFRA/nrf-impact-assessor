@@ -203,6 +203,108 @@ def sample_wwtw_lookup():
     return mock_lookup
 
 
+_LU_COLUMNS = [
+    "rlb_id", "dwellings", "name", "dwelling_category", "source",
+    "crome_id", "lu_curr_n_coeff", "lu_curr_p_coeff", "n_resi_coeff",
+    "p_resi_coeff", "n2k_site_n", "area_in_nn_catchment_ha",
+]
+
+_GDF_LAYER_TYPES = [
+    SpatialLayerType.WWTW_CATCHMENTS,
+    SpatialLayerType.LPA_BOUNDARIES,
+    SpatialLayerType.SUBCATCHMENTS,
+    SpatialLayerType.NN_CATCHMENTS,
+]
+
+_MAJORITY_LAYER_ATTR = {
+    SpatialLayerType.WWTW_CATCHMENTS: "WwTw_ID",
+    SpatialLayerType.LPA_BOUNDARIES: "NAME",
+    SpatialLayerType.SUBCATCHMENTS: "OPCAT_NAME",
+}
+
+
+def _layer_type_from_params(compiled_params) -> SpatialLayerType | None:
+    for pv in compiled_params.values():
+        if isinstance(pv, SpatialLayerType):
+            return pv
+    return None
+
+
+def _gdf_execute_query(compiled_params, wwtw, lpa, subcatchments, nn) -> gpd.GeoDataFrame:
+    layer = _layer_type_from_params(compiled_params)
+    mapping = {
+        SpatialLayerType.WWTW_CATCHMENTS: wwtw,
+        SpatialLayerType.LPA_BOUNDARIES: lpa,
+        SpatialLayerType.SUBCATCHMENTS: subcatchments,
+        SpatialLayerType.NN_CATCHMENTS: nn,
+    }
+    sample = mapping.get(layer)
+    return sample.copy() if sample is not None else gpd.GeoDataFrame()
+
+
+def _scalar_execute_query(stmt, rates_lookup, wwtw_lookup):
+    stmt_str = str(stmt).lower()
+    if "max" in stmt_str and "version" in stmt_str:
+        return [1]
+    for pv in stmt.compile().params.values():
+        if pv == "rates_lookup":
+            return [rates_lookup]
+        if pv == "wwtw_lookup":
+            return [wwtw_lookup]
+    return []
+
+
+def _resolve_majority_layer(overlay_filter, wwtw, lpa, subcatchments):
+    """Return (layer_data_copy, attr_key) or (None, None) if unrecognised."""
+    samples = {
+        SpatialLayerType.WWTW_CATCHMENTS: (wwtw, "WwTw_ID"),
+        SpatialLayerType.LPA_BOUNDARIES: (lpa, "NAME"),
+        SpatialLayerType.SUBCATCHMENTS: (subcatchments, "OPCAT_NAME"),
+    }
+    for pv in overlay_filter.compile().params.values():
+        if pv in samples:
+            gdf, attr_key = samples[pv]
+            return gdf.copy(), attr_key
+    return None, None
+
+
+def _compute_majority_overlap(input_gdf, input_id_col, output_field, layer_data, attr_key, default_value):
+    """Python-side majority overlap computation."""
+    layer_data[attr_key] = layer_data["attributes"].apply(
+        lambda x: x.get(attr_key) if isinstance(x, dict) else None
+    )
+    intersections = gpd.overlay(input_gdf, layer_data, how="intersection")
+    intersections["_area"] = intersections.geometry.area
+    if len(intersections) == 0:
+        return pd.DataFrame({input_id_col: input_gdf[input_id_col], output_field: default_value})
+    majority = intersections.loc[
+        intersections.groupby(input_id_col)["_area"].idxmax(),
+        [input_id_col, attr_key],
+    ].reset_index(drop=True)
+    result = input_gdf[[input_id_col]].merge(majority, on=input_id_col, how="left")
+    result = result.rename(columns={attr_key: output_field})
+    if default_value is not None:
+        result[output_field] = result[output_field].fillna(default_value)
+    return result[[input_id_col, output_field]]
+
+
+def _compute_land_use_intersection(input_gdf, coeff_layer, nn_layer) -> pd.DataFrame:
+    """Python-side 3-way intersection for land use."""
+    intersections = gpd.overlay(input_gdf, coeff_layer.copy(), how="intersection")
+    if len(intersections) == 0:
+        return pd.DataFrame(columns=_LU_COLUMNS)
+    nn = nn_layer.copy()
+    nn["n2k_site_n"] = nn["attributes"].apply(
+        lambda x: x.get("N2K_Site_N") if isinstance(x, dict) else None
+    )
+    intersections = gpd.overlay(intersections, nn, how="intersection")
+    if len(intersections) == 0:
+        return pd.DataFrame(columns=_LU_COLUMNS)
+    intersections["area_in_nn_catchment_ha"] = intersections.geometry.area / 10000.0
+    intersections = intersections[intersections["area_in_nn_catchment_ha"] > 0]
+    return intersections[_LU_COLUMNS].reset_index(drop=True)
+
+
 @pytest.fixture
 def mock_repository(
     sample_wwtw_catchments,
@@ -217,205 +319,38 @@ def mock_repository(
     repo = Mock()
 
     def execute_query_side_effect(stmt, as_gdf=False):
-        """Inspect the compiled query parameters to decide what data to return."""
         compiled_params = stmt.compile().params
-
         if as_gdf:
-            # Check for a matching layer type enum member in the query's parameters
-            for param_value in compiled_params.values():
-                if param_value == SpatialLayerType.WWTW_CATCHMENTS:
-                    return sample_wwtw_catchments.copy()
-                if param_value == SpatialLayerType.LPA_BOUNDARIES:
-                    return sample_lpa_boundaries.copy()
-                if param_value == SpatialLayerType.SUBCATCHMENTS:
-                    return sample_subcatchments.copy()
-                if param_value == SpatialLayerType.NN_CATCHMENTS:
-                    return sample_nn_catchments.copy()
-            return gpd.GeoDataFrame()
+            return _gdf_execute_query(compiled_params, sample_wwtw_catchments, sample_lpa_boundaries, sample_subcatchments, sample_nn_catchments)
+        return _scalar_execute_query(stmt, sample_rates_lookup, sample_wwtw_lookup)
 
-        # Handle non-spatial queries (as_gdf=False)
-        # Check for version lookups (func.max queries for spatial layers)
-        stmt_str = str(stmt).lower()
-        if "max" in stmt_str and "version" in stmt_str:
-            return [1]
-
-        # Check for a matching lookup table name in the query's parameters
-        for param_value in compiled_params.values():
-            if param_value == "rates_lookup":
-                return [sample_rates_lookup]
-            if param_value == "wwtw_lookup":
-                return [sample_wwtw_lookup]
-        return []
-
-    repo.execute_query.side_effect = execute_query_side_effect
-
-    def majority_overlap_postgis_side_effect(
-        input_gdf,
-        overlay_table,
-        overlay_filter,
-        input_id_col,
-        overlay_attr_col,
-        output_field,
-        default_value=None,
-    ):
-        """Simulate PostGIS majority_overlap by doing Python-side overlay."""
-        # Determine which layer based on the filter (check compiled params)
-        compiled = overlay_filter.compile()
-        layer_data = None
-        attr_key = None
-        for pv in compiled.params.values():
-            if pv == SpatialLayerType.WWTW_CATCHMENTS:
-                layer_data = sample_wwtw_catchments.copy()
-                attr_key = "WwTw_ID"
-                break
-            if pv == SpatialLayerType.LPA_BOUNDARIES:
-                layer_data = sample_lpa_boundaries.copy()
-                attr_key = "NAME"
-                break
-            if pv == SpatialLayerType.SUBCATCHMENTS:
-                layer_data = sample_subcatchments.copy()
-                attr_key = "OPCAT_NAME"
-                break
-
+    def majority_overlap_postgis_side_effect(input_gdf, overlay_table, overlay_filter, input_id_col, overlay_attr_col, output_field, default_value=None):
+        layer_data, attr_key = _resolve_majority_layer(overlay_filter, sample_wwtw_catchments, sample_lpa_boundaries, sample_subcatchments)
         if layer_data is None:
             return pd.DataFrame(columns=[input_id_col, output_field])
+        return _compute_majority_overlap(input_gdf, input_id_col, output_field, layer_data, attr_key, default_value)
 
-        # Extract attribute from JSONB
-        layer_data[attr_key] = layer_data["attributes"].apply(
-            lambda x: x.get(attr_key) if isinstance(x, dict) else None
-        )
-
-        # Simple Python-side majority overlap
-        intersections = gpd.overlay(input_gdf, layer_data, how="intersection")
-        intersections["_area"] = intersections.geometry.area
-
-        if len(intersections) == 0:
-            result = pd.DataFrame(
-                {
-                    input_id_col: input_gdf[input_id_col],
-                    output_field: default_value,
-                }
-            )
-        else:
-            majority = intersections.loc[
-                intersections.groupby(input_id_col)["_area"].idxmax(),
-                [input_id_col, attr_key],
-            ].reset_index(drop=True)
-            result = input_gdf[[input_id_col]].merge(
-                majority, on=input_id_col, how="left"
-            )
-            result = result.rename(columns={attr_key: output_field})
-            if default_value is not None:
-                result[output_field] = result[output_field].fillna(default_value)
-
-        return result[[input_id_col, output_field]]
-
-    repo.majority_overlap_postgis.side_effect = majority_overlap_postgis_side_effect
-
-    def batch_majority_overlap_postgis_side_effect(
-        input_gdf,
-        input_id_col,
-        assignments,
-    ):
-        """Simulate batched PostGIS majority_overlap using Python-side overlay."""
-        results = {}
-        for assignment in assignments:
-            result = majority_overlap_postgis_side_effect(
+    def batch_majority_overlap_postgis_side_effect(input_gdf, input_id_col, assignments):
+        return {
+            a["output_field"]: majority_overlap_postgis_side_effect(
                 input_gdf=input_gdf,
-                overlay_table=assignment["overlay_table"],
-                overlay_filter=assignment["overlay_filter"],
+                overlay_table=a["overlay_table"],
+                overlay_filter=a["overlay_filter"],
                 input_id_col=input_id_col,
-                overlay_attr_col=assignment["overlay_attr_col"],
-                output_field=assignment["output_field"],
-                default_value=assignment.get("default_value"),
+                overlay_attr_col=a["overlay_attr_col"],
+                output_field=a["output_field"],
+                default_value=a.get("default_value"),
             )
-            results[assignment["output_field"]] = result
-        return results
+            for a in assignments
+        }
 
-    repo.batch_majority_overlap_postgis.side_effect = (
-        batch_majority_overlap_postgis_side_effect
-    )
+    def land_use_intersection_postgis_side_effect(input_gdf, coeff_version, nn_version):
+        return _compute_land_use_intersection(input_gdf, sample_coefficient_layer, sample_nn_catchments)
 
-    def land_use_intersection_postgis_side_effect(
-        input_gdf,
-        coeff_version,
-        nn_version,
-    ):
-        """Simulate PostGIS 3-way intersection by doing Python-side overlays."""
-        # Step 1: Intersect RLBs with coefficient layer
-        coeff = sample_coefficient_layer.copy()
-        intersections = gpd.overlay(input_gdf, coeff, how="intersection")
-
-        if len(intersections) == 0:
-            return pd.DataFrame(
-                columns=[
-                    "rlb_id",
-                    "dwellings",
-                    "name",
-                    "dwelling_category",
-                    "source",
-                    "crome_id",
-                    "lu_curr_n_coeff",
-                    "lu_curr_p_coeff",
-                    "n_resi_coeff",
-                    "p_resi_coeff",
-                    "n2k_site_n",
-                    "area_in_nn_catchment_ha",
-                ]
-            )
-
-        # Step 2: Intersect with NN catchments
-        nn = sample_nn_catchments.copy()
-        nn["n2k_site_n"] = nn["attributes"].apply(
-            lambda x: x.get("N2K_Site_N") if isinstance(x, dict) else None
-        )
-        intersections = gpd.overlay(intersections, nn, how="intersection")
-
-        if len(intersections) == 0:
-            return pd.DataFrame(
-                columns=[
-                    "rlb_id",
-                    "dwellings",
-                    "name",
-                    "dwelling_category",
-                    "source",
-                    "crome_id",
-                    "lu_curr_n_coeff",
-                    "lu_curr_p_coeff",
-                    "n_resi_coeff",
-                    "p_resi_coeff",
-                    "n2k_site_n",
-                    "area_in_nn_catchment_ha",
-                ]
-            )
-
-        # Step 3: Calculate area in hectares
-        intersections["area_in_nn_catchment_ha"] = intersections.geometry.area / 10000.0
-
-        # Filter zero-area intersections
-        intersections = intersections[intersections["area_in_nn_catchment_ha"] > 0]
-
-        return intersections[
-            [
-                "rlb_id",
-                "dwellings",
-                "name",
-                "dwelling_category",
-                "source",
-                "crome_id",
-                "lu_curr_n_coeff",
-                "lu_curr_p_coeff",
-                "n_resi_coeff",
-                "p_resi_coeff",
-                "n2k_site_n",
-                "area_in_nn_catchment_ha",
-            ]
-        ].reset_index(drop=True)
-
-    repo.land_use_intersection_postgis.side_effect = (
-        land_use_intersection_postgis_side_effect
-    )
-
+    repo.execute_query.side_effect = execute_query_side_effect
+    repo.majority_overlap_postgis.side_effect = majority_overlap_postgis_side_effect
+    repo.batch_majority_overlap_postgis.side_effect = batch_majority_overlap_postgis_side_effect
+    repo.land_use_intersection_postgis.side_effect = land_use_intersection_postgis_side_effect
     return repo
 
 

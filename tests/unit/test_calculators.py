@@ -33,8 +33,8 @@ class TestLandUseCalculator:
             greenspace_config=default_gs_config,
         )
 
-        assert n_uplift == 22.5  # (25 - 10) * 1.5
-        assert p_uplift == 4.5  # (5 - 2) * 1.5
+        assert n_uplift == pytest.approx(22.5)  # (25 - 10) * 1.5
+        assert p_uplift == pytest.approx(4.5)  # (5 - 2) * 1.5
 
     def test_positive_uplift_above_greenspace_threshold(self, default_gs_config):
         """Test greenspace adjustment for development >= 2.5ha."""
@@ -74,8 +74,8 @@ class TestLandUseCalculator:
             greenspace_config=default_gs_config,
         )
 
-        assert n_uplift == -30.0  # (15 - 30) * 2.0
-        assert p_uplift == -10.0  # (3 - 8) * 2.0
+        assert n_uplift == pytest.approx(-30.0)  # (15 - 30) * 2.0
+        assert p_uplift == pytest.approx(-10.0)  # (3 - 8) * 2.0
 
     def test_zero_area(self, default_gs_config):
         """Test with zero development area."""
@@ -89,8 +89,8 @@ class TestLandUseCalculator:
             greenspace_config=default_gs_config,
         )
 
-        assert n_uplift == 0.0
-        assert p_uplift == 0.0
+        assert n_uplift == pytest.approx(0.0)
+        assert p_uplift == pytest.approx(0.0)
 
     def test_rounding(self, default_gs_config):
         """Test that results are rounded to 2 decimal places."""
@@ -151,11 +151,11 @@ class TestSuDsMitigationCalculator:
 
         # SuDS adj N: (20.0 * (1 - 0.40)) + 0.6 = 12.0 + 0.6 = 12.6
         # Post-SuDS uplift: (12.6 - 10.0) * 1.5 = 3.9
-        assert n_post == 3.9
+        assert n_post == pytest.approx(3.9)
 
         # SuDS adj P: (4.0 * (1 - 0.40)) + 0.04 = 2.4 + 0.04 = 2.44
         # Post-SuDS uplift: (2.44 - 2.0) * 1.5 = 0.66
-        assert p_post == 0.66
+        assert p_post == pytest.approx(0.66)
 
     def test_suds_below_threshold(self, default_suds_config):
         """Test SuDS NOT applied below threshold — returns greenspace-adjusted uplift."""
@@ -172,9 +172,9 @@ class TestSuDsMitigationCalculator:
         )
 
         # No SuDS: (25 - 10) * 1.5 = 22.5
-        assert n_post == 22.5
+        assert n_post == pytest.approx(22.5)
         # No SuDS: (5 - 2) * 1.5 = 4.5
-        assert p_post == 4.5
+        assert p_post == pytest.approx(4.5)
 
     def test_suds_zero_area(self, default_suds_config):
         """Test SuDS with zero intersection area."""
@@ -190,8 +190,8 @@ class TestSuDsMitigationCalculator:
             suds_config=default_suds_config,
         )
 
-        assert n_post == 0.0
-        assert p_post == 0.0
+        assert n_post == pytest.approx(0.0)
+        assert p_post == pytest.approx(0.0)
 
     def test_suds_only_reduces_residential(self, default_suds_config):
         """Test that SuDS only reduces residential component, not greenspace."""
@@ -227,10 +227,10 @@ class TestSuDsMitigationCalculator:
         )
 
         # Without GS: (25 * 0.6 + 0 - 10) * 1 = 5.0
-        assert n_post_no_gs == 5.0
+        assert n_post_no_gs == pytest.approx(5.0)
         # With GS: (20 * 0.6 + 5.0 - 10) * 1 = 7.0
         # GS component passes through unreduced
-        assert n_post_with_gs == 7.0
+        assert n_post_with_gs == pytest.approx(7.0)
 
     def test_custom_suds_config(self):
         """Test with custom SuDS configuration."""
@@ -255,10 +255,10 @@ class TestSuDsMitigationCalculator:
         # Reduction = 0.75 * 0.50 = 0.375
         # SuDS adj N: 25 * (1 - 0.375) + 0 = 15.625
         # Uplift: (15.625 - 10) * 1 = 5.625 -> 5.62
-        assert n_post == 5.62
+        assert n_post == pytest.approx(5.62)
         # SuDS adj P: 5 * 0.625 + 0 = 3.125
         # Uplift: (3.125 - 2) * 1 = 1.125 -> 1.12
-        assert p_post == 1.12
+        assert p_post == pytest.approx(1.12)
 
 
 class TestWastewaterLoadCalculator:
@@ -275,14 +275,14 @@ class TestWastewaterLoadCalculator:
         )
 
         # Daily water: 100 * (2.4 * 110) = 26,400 L
-        assert daily_water == 26400.0
+        assert daily_water == pytest.approx(26400.0)
 
         # Annual water: 26,400 * 365.25 = 9,642,600 L
         # N load: 9,642,600 * ((10 / 1,000,000) * 0.9) = 86.7834 kg
-        assert n_load == 86.7834
+        assert n_load == pytest.approx(86.7834)
 
         # P load: 9,642,600 * ((1 / 1,000,000) * 0.9) = 8.67834 kg
-        assert p_load == 8.67834
+        assert p_load == pytest.approx(8.67834)
 
     def test_single_dwelling(self):
         """Test with single dwelling."""
@@ -294,7 +294,7 @@ class TestWastewaterLoadCalculator:
             phosphorus_conc_mg_per_litre=1.0,
         )
 
-        assert daily_water == 264.0
+        assert daily_water == pytest.approx(264.0)
         assert n_load == pytest.approx(0.867834)
         assert p_load == pytest.approx(0.0867834)
 
@@ -308,9 +308,9 @@ class TestWastewaterLoadCalculator:
             phosphorus_conc_mg_per_litre=0.0,
         )
 
-        assert daily_water == 13200.0
-        assert n_load == 0.0
-        assert p_load == 0.0
+        assert daily_water == pytest.approx(13200.0)
+        assert n_load == pytest.approx(0.0)
+        assert p_load == pytest.approx(0.0)
 
     def test_high_concentration(self):
         """Test with high nutrient concentrations."""
@@ -322,7 +322,7 @@ class TestWastewaterLoadCalculator:
             phosphorus_conc_mg_per_litre=10.0,
         )
 
-        assert daily_water == 2640.0
+        assert daily_water == pytest.approx(2640.0)
         assert n_load == pytest.approx(43.3917)
         assert p_load == pytest.approx(8.67834)
 
@@ -353,8 +353,8 @@ class TestTotalImpactCalculator:
             precautionary_buffer_percent=20.0,
         )
 
-        assert n_total == 70.836
-        assert p_total == -2.28
+        assert n_total == pytest.approx(70.836)
+        assert p_total == pytest.approx(-2.28)
 
     def test_land_use_only(self):
         """Test with only land use impact (no wastewater)."""
@@ -366,8 +366,8 @@ class TestTotalImpactCalculator:
             precautionary_buffer_percent=20.0,
         )
 
-        assert n_total == 20.256
-        assert p_total == 4.056
+        assert n_total == pytest.approx(20.256)
+        assert p_total == pytest.approx(4.056)
 
     def test_wastewater_only(self):
         """Test with only wastewater impact (no land use in NN catchment)."""
@@ -379,8 +379,8 @@ class TestTotalImpactCalculator:
             precautionary_buffer_percent=20.0,
         )
 
-        assert n_total == 115.836
-        assert p_total == 11.58
+        assert n_total == pytest.approx(115.836)
+        assert p_total == pytest.approx(11.58)
 
     def test_all_zero(self):
         """Test with zero impacts."""
@@ -392,8 +392,8 @@ class TestTotalImpactCalculator:
             precautionary_buffer_percent=20.0,
         )
 
-        assert n_total == 0.0
-        assert p_total == 0.0
+        assert n_total == pytest.approx(0.0)
+        assert p_total == pytest.approx(0.0)
 
     def test_different_buffer_percent(self):
         """Test with different precautionary buffer percentage."""
@@ -405,5 +405,5 @@ class TestTotalImpactCalculator:
             precautionary_buffer_percent=10.0,
         )
 
-        assert n_total == 110.0
-        assert p_total == 11.0
+        assert n_total == pytest.approx(110.0)
+        assert p_total == pytest.approx(11.0)

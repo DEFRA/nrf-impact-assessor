@@ -92,6 +92,25 @@ def _majority_overlap_sequential(
     )
 
 
+def _slice_axis(
+    gdf: gpd.GeoDataFrame,
+    coords: gpd.GeoSeries,
+    axis_min: float,
+    axis_max: float,
+    n_chunks: int,
+) -> list[gpd.GeoDataFrame]:
+    """Slice a GeoDataFrame into n_chunks strips along one axis."""
+    step = (axis_max - axis_min) / n_chunks
+    chunks = []
+    for i in range(n_chunks):
+        lo = axis_min + i * step
+        hi = axis_max if i == n_chunks - 1 else axis_min + (i + 1) * step
+        chunk = gdf[(coords >= lo) & (coords <= hi)]
+        if len(chunk) > 0:
+            chunks.append(chunk)
+    return chunks
+
+
 def _partition_by_bounds(
     gdf: gpd.GeoDataFrame, n_chunks: int
 ) -> list[gpd.GeoDataFrame]:
@@ -106,34 +125,11 @@ def _partition_by_bounds(
     x_range = bounds[2] - bounds[0]
     y_range = bounds[3] - bounds[1]
 
-    # Pre-compute centroids once (avoid recomputing on every loop iteration)
     centroids = gdf.geometry.centroid
-    cx = centroids.x
-    cy = centroids.y
-
-    chunks = []
     if x_range >= y_range:
-        step = x_range / n_chunks
-        for i in range(n_chunks):
-            min_x = bounds[0] + i * step
-            max_x = bounds[0] + (i + 1) * step
-            if i < n_chunks - 1:
-                chunk = gdf[(cx >= min_x) & (cx < max_x)]
-            else:
-                chunk = gdf[(cx >= min_x) & (cx <= bounds[2])]
-            if len(chunk) > 0:
-                chunks.append(chunk)
+        chunks = _slice_axis(gdf, centroids.x, bounds[0], bounds[2], n_chunks)
     else:
-        step = y_range / n_chunks
-        for i in range(n_chunks):
-            min_y = bounds[1] + i * step
-            max_y = bounds[1] + (i + 1) * step
-            if i < n_chunks - 1:
-                chunk = gdf[(cy >= min_y) & (cy < max_y)]
-            else:
-                chunk = gdf[(cy >= min_y) & (cy <= bounds[3])]
-            if len(chunk) > 0:
-                chunks.append(chunk)
+        chunks = _slice_axis(gdf, centroids.y, bounds[1], bounds[3], n_chunks)
 
     return chunks if chunks else [gdf]
 

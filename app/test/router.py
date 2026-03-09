@@ -33,6 +33,8 @@ from app.runner.runner import run_assessment
 
 logger = logging.getLogger(__name__)
 
+_CRS_BNG = "EPSG:27700"
+
 router = APIRouter()
 
 # ---------------------------------------------------------------------------
@@ -79,7 +81,7 @@ def _wkt_to_gdf(wkt_str: str, crs: str) -> gpd.GeoDataFrame:
     gdf = gpd.GeoDataFrame(geometry=[geometry], crs=crs)
 
     if gdf.crs and gdf.crs.to_epsg() != 27700:
-        gdf = gdf.to_crs("EPSG:27700")
+        gdf = gdf.to_crs(_CRS_BNG)
 
     return gdf
 
@@ -93,7 +95,7 @@ class WktAssessRequest(BaseModel):
     """Request body for POST /test/assess."""
 
     wkt: str
-    crs: str = "EPSG:27700"
+    crs: str = _CRS_BNG
     assessment_type: str = "nutrient"
     dwelling_type: str = "house"
     dwellings: int = 1
@@ -113,7 +115,7 @@ class WktEnqueueRequest(BaseModel):
     """Request body for POST /test/enqueue."""
 
     wkt: str
-    crs: str = "EPSG:27700"
+    crs: str = _CRS_BNG
     assessment_type: str = "nutrient"
     dwelling_type: str = "house"
     dwellings: int = 1
@@ -137,7 +139,6 @@ class WktEnqueueResponse(BaseModel):
 
 @router.post(
     "/assess",
-    response_model=WktAssessResponse,
     responses={
         400: {"description": "Invalid WKT or assessment_type"},
         500: {"description": "Assessment failed"},
@@ -196,7 +197,6 @@ def assess_from_wkt(request: WktAssessRequest) -> WktAssessResponse:
 
 @router.post(
     "/enqueue",
-    response_model=WktEnqueueResponse,
     status_code=202,
     responses={
         400: {"description": "Invalid WKT, assessment_type, or missing AWS config"},
@@ -243,7 +243,12 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
 
     try:
         logger.info("Uploading GeoJSON to s3://%s/%s", aws.s3_input_bucket, s3_key)
-        s3.put_object(Bucket=aws.s3_input_bucket, Key=s3_key, Body=geojson_bytes)
+        s3.put_object(
+            Bucket=aws.s3_input_bucket,
+            Key=s3_key,
+            Body=geojson_bytes,
+            **( {"ExpectedBucketOwner": aws.account_id} if aws.account_id else {} ),
+        )
     except ClientError as e:
         logger.error("S3 upload failed: %s", e)
         raise HTTPException(

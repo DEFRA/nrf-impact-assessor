@@ -10,6 +10,8 @@ Includes models for:
 
 from pydantic import BaseModel, ConfigDict, Field
 
+_AREA_TYPE_DESC = "'RLB' or 'Buffer'"
+
 
 class Development(BaseModel):
     """A proposed residential development (Red Line Boundary).
@@ -296,7 +298,7 @@ class GcnPondInfo(BaseModel):
     pond_id: str = Field(description="Unique pond identifier")
     pans: str = Field(description="P (present), A (absent), NS (not surveyed)")
     tmp_imp: str = Field(description="T (temporary impact), F (no impact)")
-    area: str = Field(description="'RLB' or 'Buffer'")
+    area: str = Field(description=_AREA_TYPE_DESC)
     concatenate_rz: str = Field(description="Concatenated risk zones")
     max_zone: str = Field(description="Highest priority zone (Red/Amber/Green)")
 
@@ -324,7 +326,7 @@ class GcnHabitatImpact(BaseModel):
     unique_buffer_site: str | None = Field(
         default=None, description="UniqueBufferSite (None for RLB)"
     )
-    area: str = Field(description="'RLB' or 'Buffer'")
+    area: str = Field(description=_AREA_TYPE_DESC)
     risk_zone: str = Field(description="'Red', 'Amber', or 'Green'")
     shape_area: float = Field(ge=0, description="Area in square metres")
 
@@ -351,7 +353,7 @@ class GcnPondFrequency(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     pans: str = Field(description="P, A, or NS")
-    area: str = Field(description="'RLB' or 'Buffer'")
+    area: str = Field(description=_AREA_TYPE_DESC)
     max_zone: str = Field(description="'Red', 'Amber', or 'Green'")
     tmp_imp: str = Field(description="T or F")
     frequency: int = Field(ge=0, description="Count of ponds")

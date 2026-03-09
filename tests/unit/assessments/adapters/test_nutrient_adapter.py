@@ -134,8 +134,8 @@ def test_development_conversion(sample_impact_summary):
     assert dev.dwelling_category == "Small"
     assert dev.source == "LPA"
     assert dev.dwellings == 10
-    assert dev.area_m2 == 5000.0
-    assert dev.area_ha == 0.5
+    assert dev.area_m2 == pytest.approx(5000.0)
+    assert dev.area_ha == pytest.approx(0.5)
 
 
 def test_spatial_assignment_conversion(sample_impact_summary):
@@ -151,7 +151,7 @@ def test_spatial_assignment_conversion(sample_impact_summary):
     assert spatial.lpa_name == "Test LPA"
     assert spatial.nn_catchment == "Solent"
     assert spatial.dev_subcatchment == "Operational Catchment"
-    assert spatial.area_in_nn_catchment_ha == 0.3
+    assert spatial.area_in_nn_catchment_ha == pytest.approx(0.3)
 
 
 def test_land_use_impact_conversion(sample_impact_summary):
@@ -161,10 +161,10 @@ def test_land_use_impact_conversion(sample_impact_summary):
     result = to_domain_models(dataframes)
     land_use = result["assessment_results"][0].land_use
 
-    assert land_use.nitrogen_kg_yr == 5.25
-    assert land_use.phosphorus_kg_yr == 0.45
-    assert land_use.nitrogen_post_suds_kg_yr == 4.72
-    assert land_use.phosphorus_post_suds_kg_yr == 0.41
+    assert land_use.nitrogen_kg_yr == pytest.approx(5.25)
+    assert land_use.phosphorus_kg_yr == pytest.approx(0.45)
+    assert land_use.nitrogen_post_suds_kg_yr == pytest.approx(4.72)
+    assert land_use.phosphorus_post_suds_kg_yr == pytest.approx(0.41)
 
 
 def test_wastewater_impact_conversion(sample_impact_summary):
@@ -174,17 +174,17 @@ def test_wastewater_impact_conversion(sample_impact_summary):
     result = to_domain_models(dataframes)
     wastewater = result["assessment_results"][0].wastewater
 
-    assert wastewater.occupancy_rate == 2.4
-    assert wastewater.water_usage_L_per_person_day == 150.0
-    assert wastewater.daily_water_usage_L == 3600.0
-    assert wastewater.nitrogen_conc_2025_2030_mg_L == 10.0
-    assert wastewater.phosphorus_conc_2025_2030_mg_L == 1.0
-    assert wastewater.nitrogen_conc_2030_onwards_mg_L == 8.0
-    assert wastewater.phosphorus_conc_2030_onwards_mg_L == 0.8
-    assert wastewater.nitrogen_temp_kg_yr == 13.14
-    assert wastewater.phosphorus_temp_kg_yr == 1.31
-    assert wastewater.nitrogen_perm_kg_yr == 10.51
-    assert wastewater.phosphorus_perm_kg_yr == 1.05
+    assert wastewater.occupancy_rate == pytest.approx(2.4)
+    assert wastewater.water_usage_L_per_person_day == pytest.approx(150.0)
+    assert wastewater.daily_water_usage_L == pytest.approx(3600.0)
+    assert wastewater.nitrogen_conc_2025_2030_mg_L == pytest.approx(10.0)
+    assert wastewater.phosphorus_conc_2025_2030_mg_L == pytest.approx(1.0)
+    assert wastewater.nitrogen_conc_2030_onwards_mg_L == pytest.approx(8.0)
+    assert wastewater.phosphorus_conc_2030_onwards_mg_L == pytest.approx(0.8)
+    assert wastewater.nitrogen_temp_kg_yr == pytest.approx(13.14)
+    assert wastewater.phosphorus_temp_kg_yr == pytest.approx(1.31)
+    assert wastewater.nitrogen_perm_kg_yr == pytest.approx(10.51)
+    assert wastewater.phosphorus_perm_kg_yr == pytest.approx(1.05)
 
 
 def test_nutrient_impact_conversion(sample_impact_summary):
@@ -194,8 +194,8 @@ def test_nutrient_impact_conversion(sample_impact_summary):
     result = to_domain_models(dataframes)
     total = result["assessment_results"][0].total
 
-    assert total.nitrogen_total_kg_yr == 18.35
-    assert total.phosphorus_total_kg_yr == 1.75
+    assert total.nitrogen_total_kg_yr == pytest.approx(18.35)
+    assert total.phosphorus_total_kg_yr == pytest.approx(1.75)
 
 
 def test_wastewater_none_when_outside_catchment(sample_impact_summary):
@@ -222,7 +222,7 @@ def test_handles_null_values(sample_impact_summary):
 
     # Other fields should still be populated
     assert spatial.nn_catchment == "Solent"
-    assert spatial.area_in_nn_catchment_ha == 0.8
+    assert spatial.area_in_nn_catchment_ha == pytest.approx(0.8)
 
 
 def test_handles_empty_dataframe():

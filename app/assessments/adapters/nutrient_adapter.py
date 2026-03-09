@@ -37,15 +37,39 @@ def to_domain_models(dataframes: dict) -> dict:
     return {"assessment_results": results}
 
 
+def _opt_float(row: pd.Series, key: str) -> float | None:
+    """Return float(row[key]) or None if the value is NA."""
+    val = row.get(key)
+    return float(val) if pd.notna(val) else None
+
+
+def _opt_str(row: pd.Series, key: str) -> str | None:
+    """Return row[key] or None if the value is NA."""
+    val = row.get(key)
+    return val if pd.notna(val) else None
+
+
+def _build_wastewater(row: pd.Series) -> WastewaterImpact | None:
+    """Build WastewaterImpact from a row, or None if outside WwTW catchment."""
+    if not pd.notna(row.get("wwtw_name")):
+        return None
+    return WastewaterImpact(
+        occupancy_rate=_opt_float(row, "occupancy_rate"),
+        water_usage_L_per_person_day=_opt_float(row, "water_usage_L_per_person_day"),
+        daily_water_usage_L=_opt_float(row, "daily_water_usage_L"),
+        nitrogen_conc_2025_2030_mg_L=_opt_float(row, "nitrogen_conc_2025_2030_mg_L"),
+        phosphorus_conc_2025_2030_mg_L=_opt_float(row, "phosphorus_conc_2025_2030_mg_L"),
+        nitrogen_conc_2030_onwards_mg_L=_opt_float(row, "nitrogen_conc_2030_onwards_mg_L"),
+        phosphorus_conc_2030_onwards_mg_L=_opt_float(row, "phosphorus_conc_2030_onwards_mg_L"),
+        nitrogen_temp_kg_yr=_opt_float(row, "n_wwtw_temp"),
+        phosphorus_temp_kg_yr=_opt_float(row, "p_wwtw_temp"),
+        nitrogen_perm_kg_yr=_opt_float(row, "n_wwtw_perm"),
+        phosphorus_perm_kg_yr=_opt_float(row, "p_wwtw_perm"),
+    )
+
+
 def _row_to_result(row: pd.Series) -> ImpactAssessmentResult:
-    """Convert a single DataFrame row to ImpactAssessmentResult.
-
-    Args:
-        row: Single row from processed DataFrame
-
-    Returns:
-        ImpactAssessmentResult domain model
-    """
+    """Convert a single DataFrame row to ImpactAssessmentResult."""
     development = Development(
         id=str(row["id"]),
         name=row["name"] if pd.notna(row["name"]) else "",
@@ -58,108 +82,21 @@ def _row_to_result(row: pd.Series) -> ImpactAssessmentResult:
 
     spatial = SpatialAssignment(
         wwtw_id=int(row["majority_wwtw_id"]),
-        wwtw_name=row["wwtw_name"] if pd.notna(row["wwtw_name"]) else None,
-        wwtw_subcatchment=row["wwtw_subcatchment"]
-        if pd.notna(row["wwtw_subcatchment"])
-        else None,
+        wwtw_name=_opt_str(row, "wwtw_name"),
+        wwtw_subcatchment=_opt_str(row, "wwtw_subcatchment"),
         lpa_name=row["majority_name"],
-        nn_catchment=row["nn_catchment"] if pd.notna(row["nn_catchment"]) else None,
-        dev_subcatchment=row["majority_opcat_name"]
-        if pd.notna(row["majority_opcat_name"])
-        else None,
-        area_in_nn_catchment_ha=float(row["area_in_nn_catchment_ha"])
-        if pd.notna(row["area_in_nn_catchment_ha"])
-        else None,
+        nn_catchment=_opt_str(row, "nn_catchment"),
+        dev_subcatchment=_opt_str(row, "majority_opcat_name"),
+        area_in_nn_catchment_ha=_opt_float(row, "area_in_nn_catchment_ha"),
     )
 
     land_use = LandUseImpact(
-        nitrogen_kg_yr=float(row["n_lu_uplift"])
-        if pd.notna(row["n_lu_uplift"])
-        else None,
-        phosphorus_kg_yr=float(row["p_lu_uplift"])
-        if pd.notna(row["p_lu_uplift"])
-        else None,
-        nitrogen_post_suds_kg_yr=float(row["n_lu_post_suds"])
-        if pd.notna(row["n_lu_post_suds"])
-        else None,
-        phosphorus_post_suds_kg_yr=float(row["p_lu_post_suds"])
-        if pd.notna(row["p_lu_post_suds"])
-        else None,
+        nitrogen_kg_yr=_opt_float(row, "n_lu_uplift"),
+        phosphorus_kg_yr=_opt_float(row, "p_lu_uplift"),
+        nitrogen_post_suds_kg_yr=_opt_float(row, "n_lu_post_suds"),
+        phosphorus_post_suds_kg_yr=_opt_float(row, "p_lu_post_suds"),
     )
 
-    # WastewaterImpact model (None if outside WwTW catchment)
-    # Create wastewater impact whenever WwTW is assigned, even if rates are missing
-    # This ensures we output WwTW permit concentrations for reporting
-    wastewater = None
-    if pd.notna(row.get("wwtw_name")):
-        # Extract concentration values (from WwTW lookup)
-        n_conc_2025_2030 = (
-            float(row.get("nitrogen_conc_2025_2030_mg_L"))
-            if pd.notna(row.get("nitrogen_conc_2025_2030_mg_L"))
-            else None
-        )
-        p_conc_2025_2030 = (
-            float(row.get("phosphorus_conc_2025_2030_mg_L"))
-            if pd.notna(row.get("phosphorus_conc_2025_2030_mg_L"))
-            else None
-        )
-        n_conc_2030_onwards = (
-            float(row.get("nitrogen_conc_2030_onwards_mg_L"))
-            if pd.notna(row.get("nitrogen_conc_2030_onwards_mg_L"))
-            else None
-        )
-        p_conc_2030_onwards = (
-            float(row.get("phosphorus_conc_2030_onwards_mg_L"))
-            if pd.notna(row.get("phosphorus_conc_2030_onwards_mg_L"))
-            else None
-        )
-
-        # Extract calculated loads (can be None if rates were missing)
-        n_temp = (
-            float(row.get("n_wwtw_temp")) if pd.notna(row.get("n_wwtw_temp")) else None
-        )
-        p_temp = (
-            float(row.get("p_wwtw_temp")) if pd.notna(row.get("p_wwtw_temp")) else None
-        )
-        n_perm = (
-            float(row.get("n_wwtw_perm")) if pd.notna(row.get("n_wwtw_perm")) else None
-        )
-        p_perm = (
-            float(row.get("p_wwtw_perm")) if pd.notna(row.get("p_wwtw_perm")) else None
-        )
-
-        # Extract rates and usage (can be None if outside NN catchment)
-        occ_rate = (
-            float(row.get("occupancy_rate"))
-            if pd.notna(row.get("occupancy_rate"))
-            else None
-        )
-        water_usage = (
-            float(row.get("water_usage_L_per_person_day"))
-            if pd.notna(row.get("water_usage_L_per_person_day"))
-            else None
-        )
-        daily_usage = (
-            float(row.get("daily_water_usage_L"))
-            if pd.notna(row.get("daily_water_usage_L"))
-            else None
-        )
-
-        wastewater = WastewaterImpact(
-            occupancy_rate=occ_rate,
-            water_usage_L_per_person_day=water_usage,
-            daily_water_usage_L=daily_usage,
-            nitrogen_conc_2025_2030_mg_L=n_conc_2025_2030,
-            phosphorus_conc_2025_2030_mg_L=p_conc_2025_2030,
-            nitrogen_conc_2030_onwards_mg_L=n_conc_2030_onwards,
-            phosphorus_conc_2030_onwards_mg_L=p_conc_2030_onwards,
-            nitrogen_temp_kg_yr=n_temp,
-            phosphorus_temp_kg_yr=p_temp,
-            nitrogen_perm_kg_yr=n_perm,
-            phosphorus_perm_kg_yr=p_perm,
-        )
-
-    # NutrientImpact model (totals always present, uses 0 for missing)
     total = NutrientImpact(
         nitrogen_total_kg_yr=float(row["n_total"]),
         phosphorus_total_kg_yr=float(row["p_total"]),
@@ -170,6 +107,6 @@ def _row_to_result(row: pd.Series) -> ImpactAssessmentResult:
         development=development,
         spatial=spatial,
         land_use=land_use,
-        wastewater=wastewater,
+        wastewater=_build_wastewater(row),
         total=total,
     )

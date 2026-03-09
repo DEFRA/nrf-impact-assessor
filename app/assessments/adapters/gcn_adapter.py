@@ -98,6 +98,7 @@ def to_domain_models(dataframes: dict) -> dict:
         pond_zones_df[["Pond_ID", "CONCATENATE_RZ", "MaxZone"]],
         on="Pond_ID",
         how="left",
+        validate="many_to_one",
     )
 
     ponds_in_rlb_list = [

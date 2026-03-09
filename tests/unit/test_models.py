@@ -16,7 +16,7 @@ def test_development_model_validation():
         area_ha=5.0,
     )
     assert dev.dwellings == 100
-    assert dev.area_ha == 5.0
+    assert dev.area_ha == pytest.approx(5.0)
 
     # Invalid: negative dwellings
     with pytest.raises(ValueError, match="greater than or equal to 0"):
