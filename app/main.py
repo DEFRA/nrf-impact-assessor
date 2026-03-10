@@ -5,6 +5,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from app.assess.router import router as assess_router
+from app.boundary.router import router as boundary_router
 from app.common.mongo import get_mongo_client
 from app.common.tls import cleanup_cert_files, init_custom_certificates
 from app.common.tracing import TraceIdMiddleware
@@ -38,6 +39,7 @@ app.add_middleware(TraceIdMiddleware)
 app.include_router(health_router)
 app.include_router(example_router)
 app.include_router(assess_router)
+app.include_router(boundary_router)
 
 if ApiServerConfig().testing_enabled:
     from app.test.router import router as test_router
