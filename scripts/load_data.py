@@ -444,7 +444,9 @@ class SpatialDataLoader:
     def load_edp_boundaries(self) -> None:
         """Load EDP boundary polygons into dedicated edp_boundary_layer table."""
         if not self.edp_boundary_gpkg.exists():
-            print(f"Skipping edp_boundaries: File not found at {self.edp_boundary_gpkg}")
+            print(
+                f"Skipping edp_boundaries: File not found at {self.edp_boundary_gpkg}"
+            )
             return
 
         print(f"Loading edp_boundaries from {self.edp_boundary_gpkg.name}...")

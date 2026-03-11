@@ -22,7 +22,6 @@ from botocore.exceptions import ClientError
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from shapely import wkt as shapely_wkt
-
 from sqlalchemy import func, select, text
 
 from app.assess._geometry import inject_job_fields
@@ -174,7 +173,9 @@ def check_db() -> DbCheckResponse:
     except Exception as e:
         return DbCheckResponse(
             db_connected=False,
-            tables=[DbTableStatus(table="db", row_count=None, status="error", error=str(e))],
+            tables=[
+                DbTableStatus(table="db", row_count=None, status="error", error=str(e))
+            ],
         )
 
     # 2. Count each table
@@ -199,8 +200,9 @@ def check_db() -> DbCheckResponse:
     try:
         with repository.session() as session:
             rows = session.execute(
-                select(SpatialLayer.layer_type, func.count().label("n"))
-                .group_by(SpatialLayer.layer_type)
+                select(SpatialLayer.layer_type, func.count().label("n")).group_by(
+                    SpatialLayer.layer_type
+                )
             ).all()
 
         loaded_types = {row.layer_type: row.n for row in rows}
@@ -208,11 +210,17 @@ def check_db() -> DbCheckResponse:
             n = loaded_types.get(layer_type, 0)
             status = "ok" if n > 0 else "empty"
             tables.append(
-                DbTableStatus(table=f"spatial_layer/{layer_type.value}", row_count=n, status=status)
+                DbTableStatus(
+                    table=f"spatial_layer/{layer_type.value}",
+                    row_count=n,
+                    status=status,
+                )
             )
     except Exception as e:
         tables.append(
-            DbTableStatus(table="spatial_layer", row_count=None, status="error", error=str(e))
+            DbTableStatus(
+                table="spatial_layer", row_count=None, status="error", error=str(e)
+            )
         )
 
     return DbCheckResponse(db_connected=db_connected, tables=tables)
