@@ -566,6 +566,19 @@ class SpatialDataLoader:
             print(f"Error loading {table_name}: {e}")
 
 
+def _load_selected_layers(loader: "SpatialDataLoader", layer: list[str]) -> None:
+    """Load the specific layers requested, routing each to its dedicated loader."""
+    regular_layers = [
+        name for name in layer if name not in ("coefficients", "edp_boundaries")
+    ]
+    if regular_layers:
+        loader.load_spatial_layers(layer_types=regular_layers)
+    if "coefficients" in layer:
+        loader.load_coefficient_layer()
+    if "edp_boundaries" in layer:
+        loader.load_edp_boundaries()
+
+
 def _validate_names(names: list[str] | None, valid: list[str], kind: str) -> None:
     """Exit with an error if any name is not in the valid set."""
     if names:
@@ -682,23 +695,7 @@ def main(
         else:
             # Load specific items
             if layer:
-                # Separate out layers that have their own dedicated tables
-                regular_layers = [
-                    layer_name
-                    for layer_name in layer
-                    if layer_name not in ("coefficients", "edp_boundaries")
-                ]
-                load_coefficients = "coefficients" in layer
-                load_edp_boundaries = "edp_boundaries" in layer
-
-                if regular_layers:
-                    loader.load_spatial_layers(layer_types=regular_layers)
-
-                if load_coefficients:
-                    loader.load_coefficient_layer()
-
-                if load_edp_boundaries:
-                    loader.load_edp_boundaries()
+                _load_selected_layers(loader, layer)
 
             if lookup:
                 # Load specific lookups - need to update load_lookup_tables to accept filter
