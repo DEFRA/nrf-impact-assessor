@@ -94,6 +94,31 @@ class SpatialLayer(Base):
         return f"<SpatialLayer(id={self.id}, layer_type={self.layer_type}, name={self.name})>"
 
 
+class EdpBoundaryLayer(Base):
+    """Dedicated model for EDP boundary polygons."""
+
+    __tablename__ = "edp_boundary_layer"
+    __table_args__ = {"schema": "nrf_reference"}
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, index=True)
+
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="GEOMETRY", srid=27700, spatial_index=True),
+        nullable=False,
+    )
+
+    name: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    attributes: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<EdpBoundaryLayer(id={self.id}, name={self.name})>"
+
+
 class LookupTable(Base):
     """JSONB-based storage for lookup tables (WwTW, rates)."""
 

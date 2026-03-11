@@ -43,7 +43,7 @@ from settings import ScriptSettings
 from sqlalchemy import delete, func, select
 
 from app.config import DatabaseSettings
-from app.models.db import CoefficientLayer, LookupTable, SpatialLayer
+from app.models.db import CoefficientLayer, EdpBoundaryLayer, LookupTable, SpatialLayer
 from app.models.enums import SpatialLayerType
 from app.repositories.engine import create_db_engine
 from app.repositories.repository import Repository
@@ -137,12 +137,15 @@ class SpatialDataLoader:
         self.gcn_ponds_layer = settings.gcn_ponds_layer
         self.edp_edges_gdb = settings.edp_edges_gdb_path
         self.edp_edges_layer = settings.edp_edges_layer
+        self.edp_boundary_gpkg = settings.edp_boundary_gpkg_path
+        self.edp_boundary_layer = settings.edp_boundary_layer
 
     def load_all(self) -> None:
         """Load all reference data layers and lookups."""
         print("Loading all data...")
         self.load_spatial_layers()
         self.load_coefficient_layer()
+        self.load_edp_boundaries()
         self.load_lookup_tables()
         print("All data loaded successfully!")
 
@@ -438,6 +441,74 @@ class SpatialDataLoader:
             )
             print(f"Verified {count} records in database")
 
+    def load_edp_boundaries(self) -> None:
+        """Load EDP boundary polygons into dedicated edp_boundary_layer table."""
+        if not self.edp_boundary_gpkg.exists():
+            print(f"Skipping edp_boundaries: File not found at {self.edp_boundary_gpkg}")
+            return
+
+        print(f"Loading edp_boundaries from {self.edp_boundary_gpkg.name}...")
+
+        gdf = gpd.read_file(self.edp_boundary_gpkg, layer=self.edp_boundary_layer)
+
+        if gdf.crs is None:
+            print("No CRS found, assuming EPSG:27700")
+            gdf = gdf.set_crs(CRS_BRITISH_NATIONAL_GRID)
+        elif gdf.crs.to_epsg() != 27700:
+            print(f"Reprojecting from {gdf.crs} to EPSG:27700")
+            gdf = gdf.to_crs(CRS_BRITISH_NATIONAL_GRID)
+
+        if gdf.geometry.has_z.any():
+            print("Converting 3D geometries to 2D")
+            gdf.geometry = gdf.geometry.apply(
+                lambda geom: shapely.force_2d(geom) if geom else geom
+            )
+
+        if self.sample_mode and len(gdf) > self.sample_limit:
+            print(f"Sample mode: using {self.sample_limit} of {len(gdf)} features")
+            gdf = gdf.head(self.sample_limit)
+
+        total_features = len(gdf)
+        print(f"Loaded {total_features} features")
+
+        name_col = _find_name_column(gdf)
+        attribute_columns = [col for col in gdf.columns if col != "geometry"]
+
+        clean_gdf = gpd.GeoDataFrame(geometry=gdf.geometry, crs=gdf.crs)
+        clean_gdf["id"] = [uuid4() for _ in range(len(clean_gdf))]
+        clean_gdf["version"] = 1
+        clean_gdf["name"] = gdf[name_col].astype(str) if name_col else None
+
+        if attribute_columns:
+            records = gdf[attribute_columns].to_dict("records")
+            clean_gdf["attributes"] = [
+                json.dumps(clean_nan_values(rec)) for rec in records
+            ]
+        else:
+            clean_gdf["attributes"] = None
+
+        with self.repository.session() as session:
+            deleted = session.execute(delete(EdpBoundaryLayer))
+            session.commit()
+            if deleted.rowcount > 0:
+                print(f"Deleted {deleted.rowcount} existing records")
+
+        print(f"Loading {total_features} features to PostGIS...")
+        clean_gdf.to_postgis(
+            name="edp_boundary_layer",
+            con=self.repository.engine,
+            schema="nrf_reference",
+            if_exists="append",
+            index=False,
+            chunksize=5000,
+        )
+
+        print(f"Successfully loaded {total_features} records")
+
+        with self.repository.session() as session:
+            count = session.scalar(select(func.count()).select_from(EdpBoundaryLayer))
+            print(f"Verified {count} records in database")
+
     def load_lookup_tables(self) -> None:
         """Load lookup tables from SQLite database."""
         if not self.lookup_database.exists():
@@ -590,7 +661,7 @@ def main(
         typer.Option(
             help="Specific spatial layer(s) to load. Can be specified multiple times. "
             "Choices: wwtw_catchments, lpa_boundaries, nn_catchments, subcatchments, coefficients, "
-            "gcn_risk_zones, gcn_ponds, edp_edges"
+            "gcn_risk_zones, gcn_ponds, edp_edges, edp_boundaries"
         ),
     ] = None,
     lookup: Annotated[
@@ -619,6 +690,7 @@ def main(
         "gcn_risk_zones",
         "gcn_ponds",
         "edp_edges",
+        "edp_boundaries",
     ]
     valid_lookups = ["wwtw_lookup", "rates_lookup"]
     _validate_names(layer, valid_layers, "layer")
@@ -655,17 +727,23 @@ def main(
         else:
             # Load specific items
             if layer:
-                # Separate coefficient loading from other spatial layers
+                # Separate out layers that have their own dedicated tables
                 regular_layers = [
-                    layer_name for layer_name in layer if layer_name != "coefficients"
+                    layer_name
+                    for layer_name in layer
+                    if layer_name not in ("coefficients", "edp_boundaries")
                 ]
                 load_coefficients = "coefficients" in layer
+                load_edp_boundaries = "edp_boundaries" in layer
 
                 if regular_layers:
                     loader.load_spatial_layers(layer_types=regular_layers)
 
                 if load_coefficients:
                     loader.load_coefficient_layer()
+
+                if load_edp_boundaries:
+                    loader.load_edp_boundaries()
 
             if lookup:
                 # Load specific lookups - need to update load_lookup_tables to accept filter

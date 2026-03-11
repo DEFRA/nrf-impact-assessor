@@ -83,3 +83,6 @@ BASE_URL ?= http://localhost:8085
 
 health: ## Check health endpoint
 	curl -s $(BASE_URL)/health | python -m json.tool
+
+db-check: ## Check database tables and row counts (requires API_TESTING_ENABLED=true)
+	curl -s $(BASE_URL)/test/db | python -m json.tool

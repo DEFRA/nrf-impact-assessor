@@ -23,9 +23,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from shapely import wkt as shapely_wkt
 
+from sqlalchemy import func, select, text
+
 from app.assess._geometry import inject_job_fields
 from app.config import AWSConfig, DatabaseSettings
-from app.models.enums import AssessmentType
+from app.models.db import CoefficientLayer, EdpBoundaryLayer, LookupTable, SpatialLayer
+from app.models.enums import AssessmentType, SpatialLayerType
 from app.models.job import ImpactAssessmentJob
 from app.repositories.engine import create_db_engine
 from app.repositories.repository import Repository
@@ -91,6 +94,22 @@ def _wkt_to_gdf(wkt_str: str, crs: str) -> gpd.GeoDataFrame:
 # ---------------------------------------------------------------------------
 
 
+class DbTableStatus(BaseModel):
+    """Status of a single database table."""
+
+    table: str
+    row_count: int | None
+    status: str
+    error: str | None = None
+
+
+class DbCheckResponse(BaseModel):
+    """Response from GET /test/db."""
+
+    db_connected: bool
+    tables: list[DbTableStatus]
+
+
 class WktAssessRequest(BaseModel):
     """Request body for POST /test/assess."""
 
@@ -135,6 +154,68 @@ class WktEnqueueResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+
+@router.get("/db", responses={503: {"description": "Database not reachable"}})
+def check_db() -> DbCheckResponse:
+    """Check database connectivity and row counts for all reference tables.
+
+    Returns a summary of each table's status and how many rows it contains.
+    Spatial layer counts are broken down by layer_type.
+    """
+    repository = _get_repository()
+    tables: list[DbTableStatus] = []
+
+    # 1. Check DB connectivity
+    try:
+        with repository.session() as session:
+            session.execute(text("SELECT 1"))
+        db_connected = True
+    except Exception as e:
+        return DbCheckResponse(
+            db_connected=False,
+            tables=[DbTableStatus(table="db", row_count=None, status="error", error=str(e))],
+        )
+
+    # 2. Count each table
+    def _count(model) -> tuple[int | None, str, str | None]:
+        try:
+            with repository.session() as session:
+                n = session.scalar(select(func.count()).select_from(model))
+            status = "ok" if n and n > 0 else "empty"
+            return n, status, None
+        except Exception as e:
+            return None, "error", str(e)
+
+    for model, label in [
+        (CoefficientLayer, "coefficient_layer"),
+        (EdpBoundaryLayer, "edp_boundary_layer"),
+        (LookupTable, "lookup_table"),
+    ]:
+        n, status, err = _count(model)
+        tables.append(DbTableStatus(table=label, row_count=n, status=status, error=err))
+
+    # 3. spatial_layer broken down by layer_type
+    try:
+        with repository.session() as session:
+            rows = session.execute(
+                select(SpatialLayer.layer_type, func.count().label("n"))
+                .group_by(SpatialLayer.layer_type)
+            ).all()
+
+        loaded_types = {row.layer_type: row.n for row in rows}
+        for layer_type in SpatialLayerType:
+            n = loaded_types.get(layer_type, 0)
+            status = "ok" if n > 0 else "empty"
+            tables.append(
+                DbTableStatus(table=f"spatial_layer/{layer_type.value}", row_count=n, status=status)
+            )
+    except Exception as e:
+        tables.append(
+            DbTableStatus(table="spatial_layer", row_count=None, status="error", error=str(e))
+        )
+
+    return DbCheckResponse(db_connected=db_connected, tables=tables)
 
 
 @router.post(

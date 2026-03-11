@@ -52,6 +52,8 @@ class ScriptSettings(BaseSettings):
     gcn_ponds_layer: str = Field(description="Layer name for GCN Ponds (National)")
     edp_edges_gdb: str = Field(description="EDP Edges GDB path (relative)")
     edp_edges_layer: str = Field(description="Layer name for EDP Edges")
+    edp_boundary_gpkg: str = Field(description="EDP boundary GeoPackage path (relative)")
+    edp_boundary_layer: str = Field(description="Layer name within EDP boundary GeoPackage")
 
     # Lookup database (relative to base_path)
     lookup_database: str = Field(description="SQLite lookup database path (relative)")
@@ -111,3 +113,8 @@ class ScriptSettings(BaseSettings):
     def edp_edges_gdb_path(self) -> Path:
         """Full path to EDP Edges GDB."""
         return self.base_path / self.edp_edges_gdb
+
+    @property
+    def edp_boundary_gpkg_path(self) -> Path:
+        """Full path to EDP boundary GeoPackage."""
+        return self.base_path / self.edp_boundary_gpkg
