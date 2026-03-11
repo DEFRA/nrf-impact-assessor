@@ -79,7 +79,7 @@ monitoring-logs: ## Tail monitoring stack logs
 # ---------------------------------------------------------------------------
 # Test endpoints
 # ---------------------------------------------------------------------------
-BASE_URL ?= http://localhost:8085
+BASE_URL ?= http://0.0.0.0:8085
 
 health: ## Check health endpoint
 	curl -s $(BASE_URL)/health | python -m json.tool
