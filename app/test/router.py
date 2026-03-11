@@ -97,7 +97,7 @@ class DbTableStatus(BaseModel):
     """Status of a single database table."""
 
     table: str
-    row_count: int | None
+    row_count: int | None = None
     status: str
     error: str | None = None
 

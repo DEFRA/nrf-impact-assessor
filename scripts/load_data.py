@@ -49,6 +49,8 @@ from app.repositories.engine import create_db_engine
 from app.repositories.repository import Repository
 
 CRS_BRITISH_NATIONAL_GRID = "EPSG:27700"
+_MSG_NO_CRS = f"No CRS found, assuming {CRS_BRITISH_NATIONAL_GRID}"
+_MSG_CONVERT_3D = "Converting 3D geometries to 2D"
 
 app = typer.Typer(help="Load spatial data into PostGIS database")
 
@@ -208,6 +210,60 @@ class SpatialDataLoader:
                 layer=config.get("layer"),  # Optional layer name for GeoDatabase files
             )
 
+    @staticmethod
+    def _clean_coeff_columns(gdf: gpd.GeoDataFrame, coeff_columns: list[str]) -> None:
+        """Convert coefficient columns to numeric, coercing errors to NaN (SQL NULL)."""
+        for col in coeff_columns:
+            if col in gdf.columns:
+                gdf[col] = pd.to_numeric(gdf[col], errors="coerce")
+                print(f"  {col}: {gdf[col].isna().sum()} null values after cleaning")
+
+    @staticmethod
+    def _normalise_gdf(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """Ensure CRS is EPSG:27700 and geometries are 2D."""
+        if gdf.crs is None:
+            print(_MSG_NO_CRS)
+            gdf = gdf.set_crs(CRS_BRITISH_NATIONAL_GRID)
+        elif gdf.crs.to_epsg() != 27700:
+            print(f"Reprojecting from {gdf.crs} to EPSG:27700")
+            gdf = gdf.to_crs(CRS_BRITISH_NATIONAL_GRID)
+        if gdf.geometry.has_z.any():
+            print(_MSG_CONVERT_3D)
+            gdf.geometry = gdf.geometry.apply(
+                lambda geom: shapely.force_2d(geom) if geom else geom
+            )
+        return gdf
+
+    def _apply_sample_mode(self, gdf: gpd.GeoDataFrame) -> tuple[gpd.GeoDataFrame, int]:
+        """Apply sample limit if enabled and return (gdf, total_features)."""
+        if self.sample_mode and len(gdf) > self.sample_limit:
+            print(f"Sample mode: using {self.sample_limit} of {len(gdf)} features")
+            gdf = gdf.head(self.sample_limit)
+        total_features = len(gdf)
+        print(f"Loaded {total_features} features")
+        return gdf, total_features
+
+    @staticmethod
+    def _build_base_clean_gdf(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """Build a clean GeoDataFrame with id, version, name and JSONB attributes."""
+        name_col = _find_name_column(gdf)
+        attribute_columns = [col for col in gdf.columns if col != "geometry"]
+
+        clean_gdf = gpd.GeoDataFrame(geometry=gdf.geometry, crs=gdf.crs)
+        clean_gdf["id"] = [uuid4() for _ in range(len(clean_gdf))]
+        clean_gdf["version"] = 1
+        clean_gdf["name"] = gdf[name_col].astype(str) if name_col else None
+
+        if attribute_columns:
+            records = gdf[attribute_columns].to_dict("records")
+            clean_gdf["attributes"] = [
+                json.dumps(clean_nan_values(rec)) for rec in records
+            ]
+        else:
+            clean_gdf["attributes"] = None
+
+        return clean_gdf
+
     def load_coefficient_layer(self) -> None:
         """Load coefficient layer (5.4M polygons) using to_postgis() method."""
         if not self.coefficient_gpkg.exists():
@@ -216,32 +272,11 @@ class SpatialDataLoader:
 
         print(f"Loading coefficients from {self.coefficient_gpkg.name}...")
 
-        # Read spatial data
         gdf = gpd.read_file(self.coefficient_gpkg, layer=self.coefficient_layer)
-
-        # Ensure CRS is EPSG:27700
-        if gdf.crs is None:
-            print("No CRS found, assuming EPSG:27700")
-            gdf = gdf.set_crs(CRS_BRITISH_NATIONAL_GRID)
-        elif gdf.crs.to_epsg() != 27700:
-            print(f"Reprojecting from {gdf.crs} to EPSG:27700")
-            gdf = gdf.to_crs(CRS_BRITISH_NATIONAL_GRID)
-
-        # Force 2D geometries (remove Z dimension if present)
-        if gdf.geometry.has_z.any():
-            print("Converting 3D geometries to 2D")
-            gdf.geometry = gdf.geometry.apply(
-                lambda geom: shapely.force_2d(geom) if geom else geom
-            )
-
-        # Sample mode: take first N records
-        if self.sample_mode and len(gdf) > self.sample_limit:
-            print(f"Sample mode: using {self.sample_limit} of {len(gdf)} features")
-            gdf = gdf.head(self.sample_limit)
+        gdf = self._normalise_gdf(gdf)
+        gdf, total_features = self._apply_sample_mode(gdf)
 
         total_features = len(gdf)
-        print(f"Loaded {total_features} features")
-
         # Prepare DataFrame for CoefficientLayer model
         # Keep only columns that match the model fields
         expected_columns = [
@@ -296,11 +331,7 @@ class SpatialDataLoader:
             "n_resi_coeff",
             "p_resi_coeff",
         ]
-        for col in coeff_columns:
-            if col in gdf.columns:
-                # Convert to numeric, coercing errors to NaN, then to None for SQL NULL
-                gdf[col] = pd.to_numeric(gdf[col], errors="coerce")
-                print(f"  {col}: {gdf[col].isna().sum()} null values after cleaning")
+        self._clean_coeff_columns(gdf, coeff_columns)
 
         # Add UUID and version columns
         gdf["id"] = [uuid4() for _ in range(len(gdf))]
@@ -354,59 +385,14 @@ class SpatialDataLoader:
 
         print(f"Loading {layer_name} from {file_path.name}...")
 
-        # Read spatial data
         gdf = (
             gpd.read_file(file_path, layer=layer) if layer else gpd.read_file(file_path)
         )
+        gdf = self._normalise_gdf(gdf)
+        gdf, total_features = self._apply_sample_mode(gdf)
 
-        # Ensure CRS is EPSG:27700
-        if gdf.crs is None:
-            print("No CRS found, assuming EPSG:27700")
-            gdf = gdf.set_crs(CRS_BRITISH_NATIONAL_GRID)
-        elif gdf.crs.to_epsg() != 27700:
-            print(f"Reprojecting from {gdf.crs} to EPSG:27700")
-            gdf = gdf.to_crs(CRS_BRITISH_NATIONAL_GRID)
-
-        # Force 2D geometries (remove Z dimension if present)
-        if gdf.geometry.has_z.any():
-            print("Converting 3D geometries to 2D")
-            gdf.geometry = gdf.geometry.apply(
-                lambda geom: shapely.force_2d(geom) if geom else geom
-            )
-
-        # Sample mode: take first N records
-        if self.sample_mode and len(gdf) > self.sample_limit:
-            print(f"Sample mode: using {self.sample_limit} of {len(gdf)} features")
-            gdf = gdf.head(self.sample_limit)
-
-        total_features = len(gdf)
-        print(f"Loaded {total_features} features")
-
-        # Prepare DataFrame for SpatialLayer model
-        name_col = _find_name_column(gdf)
-
-        # Create clean DataFrame with required columns
-        clean_gdf = gpd.GeoDataFrame(geometry=gdf.geometry, crs=gdf.crs)
-        clean_gdf["id"] = [uuid4() for _ in range(len(clean_gdf))]
+        clean_gdf = self._build_base_clean_gdf(gdf)
         clean_gdf["layer_type"] = layer_type.name
-        clean_gdf["version"] = 1
-
-        if name_col:
-            clean_gdf["name"] = gdf[name_col].astype(str)
-        else:
-            clean_gdf["name"] = None
-
-        # Store all non-geometry columns as JSONB attributes
-        # This preserves all source attributes for flexible querying
-        attribute_columns = [col for col in gdf.columns if col != "geometry"]
-        if attribute_columns:
-            # Use to_dict('records') instead of iterrows() for faster extraction
-            records = gdf[attribute_columns].to_dict("records")
-            clean_gdf["attributes"] = [
-                json.dumps(clean_nan_values(rec)) for rec in records
-            ]
-        else:
-            clean_gdf["attributes"] = None
 
         # Clear existing data for this layer type
         with self.repository.session() as session:
@@ -452,42 +438,9 @@ class SpatialDataLoader:
         print(f"Loading edp_boundaries from {self.edp_boundary_gpkg.name}...")
 
         gdf = gpd.read_file(self.edp_boundary_gpkg, layer=self.edp_boundary_layer)
-
-        if gdf.crs is None:
-            print("No CRS found, assuming EPSG:27700")
-            gdf = gdf.set_crs(CRS_BRITISH_NATIONAL_GRID)
-        elif gdf.crs.to_epsg() != 27700:
-            print(f"Reprojecting from {gdf.crs} to EPSG:27700")
-            gdf = gdf.to_crs(CRS_BRITISH_NATIONAL_GRID)
-
-        if gdf.geometry.has_z.any():
-            print("Converting 3D geometries to 2D")
-            gdf.geometry = gdf.geometry.apply(
-                lambda geom: shapely.force_2d(geom) if geom else geom
-            )
-
-        if self.sample_mode and len(gdf) > self.sample_limit:
-            print(f"Sample mode: using {self.sample_limit} of {len(gdf)} features")
-            gdf = gdf.head(self.sample_limit)
-
-        total_features = len(gdf)
-        print(f"Loaded {total_features} features")
-
-        name_col = _find_name_column(gdf)
-        attribute_columns = [col for col in gdf.columns if col != "geometry"]
-
-        clean_gdf = gpd.GeoDataFrame(geometry=gdf.geometry, crs=gdf.crs)
-        clean_gdf["id"] = [uuid4() for _ in range(len(clean_gdf))]
-        clean_gdf["version"] = 1
-        clean_gdf["name"] = gdf[name_col].astype(str) if name_col else None
-
-        if attribute_columns:
-            records = gdf[attribute_columns].to_dict("records")
-            clean_gdf["attributes"] = [
-                json.dumps(clean_nan_values(rec)) for rec in records
-            ]
-        else:
-            clean_gdf["attributes"] = None
+        gdf = self._normalise_gdf(gdf)
+        gdf, total_features = self._apply_sample_mode(gdf)
+        clean_gdf = self._build_base_clean_gdf(gdf)
 
         with self.repository.session() as session:
             deleted = session.execute(delete(EdpBoundaryLayer))
