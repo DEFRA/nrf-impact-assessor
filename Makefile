@@ -19,7 +19,7 @@ format: ## Format code and auto-fix lint issues
 # ---------------------------------------------------------------------------
 # Database migrations
 # ---------------------------------------------------------------------------
-DB_MIGRATE_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost
+DB_MIGRATE_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5434
 
 db-migrate: ## Apply all pending Alembic migrations
 	$(DB_MIGRATE_ENV) uv run alembic upgrade head
@@ -30,7 +30,7 @@ db-rollback: ## Rollback the last Alembic migration
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
-LOAD_DATA_ENV = PYTHONPATH=. DB_IAM_AUTHENTICATION=false DB_HOST=localhost
+LOAD_DATA_ENV = PYTHONPATH=. DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5434
 
 load-data: ## Load all reference data into PostGIS (destructive)
 	$(LOAD_DATA_ENV) uv run python scripts/load_data.py
