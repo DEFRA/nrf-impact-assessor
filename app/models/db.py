@@ -29,6 +29,25 @@ class Base(DeclarativeBase):
     """Base class for all database models."""
 
 
+class SpatialLayerMixin:
+    """Shared columns for spatial layers with name and JSONB attributes."""
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, index=True)
+
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="GEOMETRY", srid=27700, spatial_index=True),
+        nullable=False,
+    )
+
+    name: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    attributes: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class CoefficientLayer(Base):
     """Dedicated model for coefficient polygons (5.4M records)."""
 
@@ -61,7 +80,7 @@ class CoefficientLayer(Base):
         return f"<CoefficientLayer(id={self.id}, crome_id={self.crome_id})>"
 
 
-class SpatialLayer(Base):
+class SpatialLayer(SpatialLayerMixin, Base):
     """Unified model for supporting spatial data (catchments, boundaries)."""
 
     __tablename__ = "spatial_layer"
@@ -70,28 +89,24 @@ class SpatialLayer(Base):
         {"schema": "nrf_reference"},
     )
 
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     layer_type: Mapped[SpatialLayerType] = mapped_column(
         Enum(SpatialLayerType, name="spatial_layer_type", schema="nrf_reference"),
         nullable=False,
         index=True,
     )
-    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, index=True)
-
-    geometry: Mapped[Any] = mapped_column(
-        Geometry(geometry_type="GEOMETRY", srid=27700, spatial_index=True),
-        nullable=False,
-    )
-
-    name: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
-    attributes: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
 
     def __repr__(self) -> str:
         return f"<SpatialLayer(id={self.id}, layer_type={self.layer_type}, name={self.name})>"
+
+
+class EdpBoundaryLayer(SpatialLayerMixin, Base):
+    """Dedicated model for EDP boundary polygons."""
+
+    __tablename__ = "edp_boundary_layer"
+    __table_args__ = {"schema": "nrf_reference"}
+
+    def __repr__(self) -> str:
+        return f"<EdpBoundaryLayer(id={self.id}, name={self.name})>"
 
 
 class LookupTable(Base):
