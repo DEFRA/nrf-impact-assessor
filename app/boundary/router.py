@@ -29,7 +29,13 @@ router = APIRouter()
 _config = ApiServerConfig()
 _max_upload_bytes = _config.max_upload_bytes
 
-_SUPPORTED_EXTENSIONS = {".zip", ".geojson", ".json", ".kml", ".shp"}
+_EXTENSION_TO_SAFE_FILENAME = {
+    ".zip": "upload.zip",
+    ".geojson": "upload.geojson",
+    ".json": "upload.json",
+    ".kml": "upload.kml",
+    ".shp": "upload.shp",
+}
 
 # ---------------------------------------------------------------------------
 # Lazy-initialised repository singleton
@@ -66,7 +72,8 @@ def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFr
         HTTPException: If the file format is unsupported or unreadable.
     """
     suffix = Path(filename).suffix.lower()
-    if suffix not in _SUPPORTED_EXTENSIONS:
+    safe_filename = _EXTENSION_TO_SAFE_FILENAME.get(suffix)
+    if safe_filename is None:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -75,7 +82,7 @@ def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFr
             ),
         )
 
-    saved_path = tmpdir / f"upload{suffix}"
+    saved_path = tmpdir / safe_filename
     saved_path.write_bytes(content)
 
     if suffix == ".zip":
