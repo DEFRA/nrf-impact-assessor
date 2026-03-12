@@ -43,7 +43,7 @@ def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFr
         HTTPException: If the file format is unsupported or unreadable.
     """
     suffix = Path(filename).suffix.lower()
-    saved_path = tmpdir / filename
+    saved_path = tmpdir / f"upload{suffix}"
     saved_path.write_bytes(content)
 
     if suffix == ".zip":

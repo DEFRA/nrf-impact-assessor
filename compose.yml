@@ -2,8 +2,8 @@ services:
   localstack:
     image: localstack/localstack:4.12.0
     ports:
-      - "4566:4566" # LocalStack Gateway
-      - "4510-4559:4510-4559" # external services port range
+      - "4567:4566" # LocalStack Gateway (remapped to avoid conflict with backend)
+      - "4610-4659:4510-4559" # external services port range
     env_file:
       - "compose/aws.env"
     environment:
@@ -27,7 +27,7 @@ services:
     networks:
       - cdp-tenant
     ports:
-      - "27017:27017"
+      - "27018:27017"
     volumes:
       - mongodb-data:/data
     restart: always
@@ -38,7 +38,7 @@ services:
     # platform: linux/${DOCKER_DEFAULT_PLATFORM:-arm64}
     container_name: nrf-postgis
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_DB: nrf_impact
       POSTGRES_HOST_AUTH_METHOD: trust  # No password for local dev
