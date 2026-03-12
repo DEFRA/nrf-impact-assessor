@@ -1,7 +1,7 @@
 """Boundary checking endpoint.
 
 Accepts a geometry file (zip containing .shp/.prj, .geojson, or .kml)
-and returns the extracted geometry as GeoJSON.
+and checks whether the uploaded geometry intersects with EDP areas.
 """
 
 import json
@@ -11,10 +11,16 @@ import zipfile
 from pathlib import Path
 
 import geopandas as gpd
+from geoalchemy2.functions import ST_GeomFromText, ST_Intersects, ST_SetSRID
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 
-from app.config import ApiServerConfig
+from app.config import ApiServerConfig, DatabaseSettings
+from app.models.db import EdpBoundaryLayer
+from app.repositories.engine import create_db_engine
+from app.repositories.repository import Repository
+from app.spatial.utils import ensure_crs
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +30,23 @@ _config = ApiServerConfig()
 _max_upload_bytes = _config.max_upload_bytes
 
 _SUPPORTED_EXTENSIONS = {".zip", ".geojson", ".json", ".kml", ".shp"}
+
+# ---------------------------------------------------------------------------
+# Lazy-initialised repository singleton
+# ---------------------------------------------------------------------------
+_repository: Repository | None = None
+
+
+def _get_repository() -> Repository:
+    """Get or create the module-level Repository singleton."""
+    global _repository
+    if _repository is None:
+        logger.info("Initialising Repository for /check-boundary endpoint...")
+        db_settings = DatabaseSettings()
+        engine = create_db_engine(db_settings, pool_size=2, max_overflow=2)
+        _repository = Repository(engine)
+        logger.info("Repository initialised")
+    return _repository
 
 
 def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFrame:
@@ -93,6 +116,29 @@ def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
     )
 
 
+def _find_intersecting_edps(
+    gdf: gpd.GeoDataFrame, repository: Repository
+) -> list[dict]:
+    """Query PostGIS for EDP boundary areas that intersect the uploaded geometry."""
+    input_union = gdf.union_all()
+    input_wkt = input_union.wkt
+
+    stmt = select(
+        EdpBoundaryLayer.name,
+        EdpBoundaryLayer.attributes,
+    ).where(
+        ST_Intersects(
+            EdpBoundaryLayer.geometry,
+            ST_SetSRID(ST_GeomFromText(input_wkt), 27700),
+        )
+    )
+
+    with repository.session() as session:
+        rows = session.execute(stmt).fetchall()
+
+    return [{"name": row.name, "attributes": row.attributes} for row in rows]
+
+
 @router.post(
     "/check-boundary",
     responses={
@@ -101,12 +147,14 @@ def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
     },
 )
 async def check_boundary(geometry_file: UploadFile):
-    """Accept a geometry file and return the extracted geometry as GeoJSON.
+    """Check whether an uploaded geometry intersects with EDP areas.
 
     Supported formats:
     - .zip containing .shp and .prj files
     - .geojson or .json
     - .kml
+
+    Returns the uploaded geometry as GeoJSON along with any intersecting EDP areas.
     """
     content = await geometry_file.read(_max_upload_bytes + 1)
     if len(content) > _max_upload_bytes:
@@ -120,7 +168,15 @@ async def check_boundary(geometry_file: UploadFile):
 
     with tempfile.TemporaryDirectory() as tmpdir:
         gdf = _read_geometry(content, filename, Path(tmpdir))
+        gdf = ensure_crs(gdf)
+
+        repository = _get_repository()
+        intersecting_edps = _find_intersecting_edps(gdf, repository)
 
         geojson = json.loads(gdf.to_json())
 
-    return JSONResponse(content=geojson)
+    return JSONResponse(content={
+        "geometry": geojson,
+        "intersecting_edps": intersecting_edps,
+        "intersects_edp": len(intersecting_edps) > 0,
+    })

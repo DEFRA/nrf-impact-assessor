@@ -2,6 +2,7 @@
 
 import json
 from io import BytesIO
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -43,9 +44,23 @@ def _make_geojson_bytes(
     return json.dumps(geojson).encode()
 
 
+def _mock_no_edp_intersections(gdf, repository):
+    """Mock that returns no intersecting EDPs."""
+    return []
+
+
+def _mock_edp_intersections(gdf, repository):
+    """Mock that returns intersecting EDPs."""
+    return [
+        {"name": "Norfolk EDP 1", "attributes": {"region": "norfolk"}},
+        {"name": "Norfolk EDP 2", "attributes": {"region": "norfolk"}},
+    ]
+
+
 class TestCheckBoundaryGeoJSON:
     """Tests for POST /check-boundary with GeoJSON files."""
 
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_valid_geojson_returns_feature_collection(self, client):
         content = _make_geojson_bytes()
         response = client.post(
@@ -61,10 +76,11 @@ class TestCheckBoundaryGeoJSON:
 
         assert response.status_code == 200
         body = response.json()
-        assert body["type"] == "FeatureCollection"
-        assert len(body["features"]) == 1
-        assert body["features"][0]["geometry"]["type"] == "Polygon"
+        assert body["geometry"]["type"] == "FeatureCollection"
+        assert len(body["geometry"]["features"]) == 1
+        assert body["geometry"]["features"][0]["geometry"]["type"] == "Polygon"
 
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_json_extension_accepted(self, client):
         content = _make_geojson_bytes()
         response = client.post(
@@ -79,8 +95,9 @@ class TestCheckBoundaryGeoJSON:
         )
 
         assert response.status_code == 200
-        assert response.json()["type"] == "FeatureCollection"
+        assert response.json()["geometry"]["type"] == "FeatureCollection"
 
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_multiple_features_returned(self, client):
         geojson = {
             "type": "FeatureCollection",
@@ -116,7 +133,7 @@ class TestCheckBoundaryGeoJSON:
         )
 
         assert response.status_code == 200
-        assert len(response.json()["features"]) == 2
+        assert len(response.json()["geometry"]["features"]) == 2
 
     def test_invalid_geojson_returns_400(self, client):
         response = client.post(
@@ -165,3 +182,65 @@ class TestCheckBoundaryGeoJSON:
 
         assert response.status_code == 413
         assert "File too large" in response.json()["detail"]
+
+
+class TestCheckBoundaryEdpIntersection:
+    """Tests for EDP intersection logic in the response."""
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_no_intersections_returns_empty_list(self, client):
+        content = _make_geojson_bytes()
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "boundary.geojson",
+                    BytesIO(content),
+                    "application/json",
+                )
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["intersects_edp"] is False
+        assert body["intersecting_edps"] == []
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    def test_intersections_returns_edp_details(self, client):
+        content = _make_geojson_bytes()
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "boundary.geojson",
+                    BytesIO(content),
+                    "application/json",
+                )
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["intersects_edp"] is True
+        assert len(body["intersecting_edps"]) == 2
+        assert body["intersecting_edps"][0]["name"] == "Norfolk EDP 1"
+        assert body["intersecting_edps"][1]["name"] == "Norfolk EDP 2"
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    def test_response_contains_all_expected_keys(self, client):
+        content = _make_geojson_bytes()
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "boundary.geojson",
+                    BytesIO(content),
+                    "application/json",
+                )
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body.keys()) == {"geometry", "intersecting_edps", "intersects_edp"}
