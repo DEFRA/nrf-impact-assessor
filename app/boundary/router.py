@@ -11,9 +11,9 @@ import zipfile
 from pathlib import Path
 
 import geopandas as gpd
-from geoalchemy2.functions import ST_GeomFromText, ST_Intersects, ST_SetSRID
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+from geoalchemy2.functions import ST_GeomFromText, ST_Intersects, ST_SetSRID
 from sqlalchemy import select
 
 from app.config import ApiServerConfig, DatabaseSettings
@@ -105,10 +105,7 @@ def _read_geometry(content: bytes, file_type: _FileType, tmpdir: Path) -> gpd.Ge
     saved_path = tmpdir / file_type.safe_filename
     saved_path.write_bytes(content)
 
-    if file_type.is_zip:
-        read_path = _extract_zip(saved_path, tmpdir)
-    else:
-        read_path = saved_path
+    read_path = _extract_zip(saved_path, tmpdir) if file_type.is_zip else saved_path
 
     try:
         if file_type.driver:
