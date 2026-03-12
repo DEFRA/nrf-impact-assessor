@@ -66,14 +66,7 @@ def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFr
         HTTPException: If the file format is unsupported or unreadable.
     """
     suffix = Path(filename).suffix.lower()
-    saved_path = tmpdir / f"upload{suffix}"
-    saved_path.write_bytes(content)
-
-    if suffix == ".zip":
-        read_path = _extract_zip(saved_path, tmpdir)
-    elif suffix in (".geojson", ".json", ".shp", ".kml"):
-        read_path = saved_path
-    else:
+    if suffix not in _SUPPORTED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -81,6 +74,14 @@ def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFr
                 "Use .shp, .zip, .geojson, .json, or .kml"
             ),
         )
+
+    saved_path = tmpdir / f"upload{suffix}"
+    saved_path.write_bytes(content)
+
+    if suffix == ".zip":
+        read_path = _extract_zip(saved_path, tmpdir)
+    else:
+        read_path = saved_path
 
     try:
         if suffix == ".kml":
