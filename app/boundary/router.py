@@ -8,6 +8,7 @@ import json
 import logging
 import tempfile
 import zipfile
+from io import BytesIO
 from pathlib import Path
 
 import geopandas as gpd
@@ -47,46 +48,37 @@ def _get_repository() -> Repository:
     return _repository
 
 
-def _save_upload(content: bytes, suffix: str, tmpdir: Path) -> tuple[Path, str | None]:
-    """Save uploaded bytes to a safe path using only literal filenames.
+_SUPPORTED_EXTENSIONS = frozenset({".zip", ".geojson", ".json", ".kml", ".shp"})
 
-    Each branch uses a hardcoded filename literal so no user-controlled
-    data flows into the filesystem path.
 
-    Returns:
-        Tuple of (path to read, optional geopandas driver name).
+def _validate_extension(filename: str) -> str:
+    """Validate the file extension and return it.
 
-    Raises:
-        HTTPException: If the suffix is not supported.
+    Only used for control flow (comparisons), never in path construction.
     """
-    if suffix == ".zip":
-        saved = tmpdir / "upload.zip"  # noqa: S105
-        saved.write_bytes(content)
-        return _extract_zip(saved, tmpdir), None
-    if suffix == ".geojson":
-        saved = tmpdir / "upload.geojson"
-        saved.write_bytes(content)
-        return saved, None
-    if suffix == ".json":
-        saved = tmpdir / "upload.json"
-        saved.write_bytes(content)
-        return saved, None
-    if suffix == ".kml":
-        saved = tmpdir / "upload.kml"
-        saved.write_bytes(content)
-        return saved, "KML"
-    if suffix == ".shp":
-        saved = tmpdir / "upload.shp"
-        saved.write_bytes(content)
-        return saved, None
+    suffix = Path(filename).suffix.lower()
+    if suffix not in _SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported file format: {suffix}. "
+                "Use .shp, .zip, .geojson, .json, or .kml"
+            ),
+        )
+    return suffix
 
-    raise HTTPException(
-        status_code=400,
-        detail=(
-            f"Unsupported file format: {suffix}. "
-            "Use .shp, .zip, .geojson, .json, or .kml"
-        ),
-    )
+
+def _write_to_temp(content: bytes, tmpdir: Path, suffix: str) -> Path:
+    """Write content to a system-generated temporary file.
+
+    Uses tempfile.NamedTemporaryFile so the path is entirely OS-generated
+    with no user-controlled data in the filename.
+    """
+    with tempfile.NamedTemporaryFile(
+        dir=tmpdir, suffix=suffix, delete=False
+    ) as tmp:
+        tmp.write(content)
+        return Path(tmp.name)
 
 
 def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFrame:
@@ -105,11 +97,22 @@ def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFr
     Raises:
         HTTPException: If the file format is unsupported or unreadable.
     """
-    suffix = Path(filename).suffix.lower()
-    read_path, driver = _save_upload(content, suffix, tmpdir)
+    ext = _validate_extension(filename)
 
     try:
-        return gpd.read_file(read_path, driver=driver) if driver else gpd.read_file(read_path)
+        if ext in (".geojson", ".json"):
+            return gpd.read_file(BytesIO(content))
+        if ext == ".kml":
+            return gpd.read_file(BytesIO(content), driver="KML")
+        if ext == ".zip":
+            zip_path = _write_to_temp(content, tmpdir, ".zip")
+            read_path = _extract_zip(zip_path, tmpdir)
+            return gpd.read_file(read_path)
+        # .shp
+        shp_path = _write_to_temp(content, tmpdir, ".shp")
+        return gpd.read_file(shp_path)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=400, detail=f"Failed to read geometry file: {e}"
