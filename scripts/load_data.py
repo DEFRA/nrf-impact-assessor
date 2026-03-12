@@ -43,12 +43,14 @@ from settings import ScriptSettings
 from sqlalchemy import delete, func, select
 
 from app.config import DatabaseSettings
-from app.models.db import CoefficientLayer, LookupTable, SpatialLayer
+from app.models.db import CoefficientLayer, EdpBoundaryLayer, LookupTable, SpatialLayer
 from app.models.enums import SpatialLayerType
 from app.repositories.engine import create_db_engine
 from app.repositories.repository import Repository
 
 CRS_BRITISH_NATIONAL_GRID = "EPSG:27700"
+_MSG_NO_CRS = f"No CRS found, assuming {CRS_BRITISH_NATIONAL_GRID}"
+_MSG_CONVERT_3D = "Converting 3D geometries to 2D"
 
 app = typer.Typer(help="Load spatial data into PostGIS database")
 
@@ -137,12 +139,15 @@ class SpatialDataLoader:
         self.gcn_ponds_layer = settings.gcn_ponds_layer
         self.edp_edges_gdb = settings.edp_edges_gdb_path
         self.edp_edges_layer = settings.edp_edges_layer
+        self.edp_boundary_gpkg = settings.edp_boundary_gpkg_path
+        self.edp_boundary_layer = settings.edp_boundary_layer
 
     def load_all(self) -> None:
         """Load all reference data layers and lookups."""
         print("Loading all data...")
         self.load_spatial_layers()
         self.load_coefficient_layer()
+        self.load_edp_boundaries()
         self.load_lookup_tables()
         print("All data loaded successfully!")
 
@@ -205,6 +210,60 @@ class SpatialDataLoader:
                 layer=config.get("layer"),  # Optional layer name for GeoDatabase files
             )
 
+    @staticmethod
+    def _clean_coeff_columns(gdf: gpd.GeoDataFrame, coeff_columns: list[str]) -> None:
+        """Convert coefficient columns to numeric, coercing errors to NaN (SQL NULL)."""
+        for col in coeff_columns:
+            if col in gdf.columns:
+                gdf[col] = pd.to_numeric(gdf[col], errors="coerce")
+                print(f"  {col}: {gdf[col].isna().sum()} null values after cleaning")
+
+    @staticmethod
+    def _normalise_gdf(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """Ensure CRS is EPSG:27700 and geometries are 2D."""
+        if gdf.crs is None:
+            print(_MSG_NO_CRS)
+            gdf = gdf.set_crs(CRS_BRITISH_NATIONAL_GRID)
+        elif gdf.crs.to_epsg() != 27700:
+            print(f"Reprojecting from {gdf.crs} to EPSG:27700")
+            gdf = gdf.to_crs(CRS_BRITISH_NATIONAL_GRID)
+        if gdf.geometry.has_z.any():
+            print(_MSG_CONVERT_3D)
+            gdf.geometry = gdf.geometry.apply(
+                lambda geom: shapely.force_2d(geom) if geom else geom
+            )
+        return gdf
+
+    def _apply_sample_mode(self, gdf: gpd.GeoDataFrame) -> tuple[gpd.GeoDataFrame, int]:
+        """Apply sample limit if enabled and return (gdf, total_features)."""
+        if self.sample_mode and len(gdf) > self.sample_limit:
+            print(f"Sample mode: using {self.sample_limit} of {len(gdf)} features")
+            gdf = gdf.head(self.sample_limit)
+        total_features = len(gdf)
+        print(f"Loaded {total_features} features")
+        return gdf, total_features
+
+    @staticmethod
+    def _build_base_clean_gdf(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """Build a clean GeoDataFrame with id, version, name and JSONB attributes."""
+        name_col = _find_name_column(gdf)
+        attribute_columns = [col for col in gdf.columns if col != "geometry"]
+
+        clean_gdf = gpd.GeoDataFrame(geometry=gdf.geometry, crs=gdf.crs)
+        clean_gdf["id"] = [uuid4() for _ in range(len(clean_gdf))]
+        clean_gdf["version"] = 1
+        clean_gdf["name"] = gdf[name_col].astype(str) if name_col else None
+
+        if attribute_columns:
+            records = gdf[attribute_columns].to_dict("records")
+            clean_gdf["attributes"] = [
+                json.dumps(clean_nan_values(rec)) for rec in records
+            ]
+        else:
+            clean_gdf["attributes"] = None
+
+        return clean_gdf
+
     def load_coefficient_layer(self) -> None:
         """Load coefficient layer (5.4M polygons) using to_postgis() method."""
         if not self.coefficient_gpkg.exists():
@@ -213,32 +272,11 @@ class SpatialDataLoader:
 
         print(f"Loading coefficients from {self.coefficient_gpkg.name}...")
 
-        # Read spatial data
         gdf = gpd.read_file(self.coefficient_gpkg, layer=self.coefficient_layer)
-
-        # Ensure CRS is EPSG:27700
-        if gdf.crs is None:
-            print("No CRS found, assuming EPSG:27700")
-            gdf = gdf.set_crs(CRS_BRITISH_NATIONAL_GRID)
-        elif gdf.crs.to_epsg() != 27700:
-            print(f"Reprojecting from {gdf.crs} to EPSG:27700")
-            gdf = gdf.to_crs(CRS_BRITISH_NATIONAL_GRID)
-
-        # Force 2D geometries (remove Z dimension if present)
-        if gdf.geometry.has_z.any():
-            print("Converting 3D geometries to 2D")
-            gdf.geometry = gdf.geometry.apply(
-                lambda geom: shapely.force_2d(geom) if geom else geom
-            )
-
-        # Sample mode: take first N records
-        if self.sample_mode and len(gdf) > self.sample_limit:
-            print(f"Sample mode: using {self.sample_limit} of {len(gdf)} features")
-            gdf = gdf.head(self.sample_limit)
+        gdf = self._normalise_gdf(gdf)
+        gdf, total_features = self._apply_sample_mode(gdf)
 
         total_features = len(gdf)
-        print(f"Loaded {total_features} features")
-
         # Prepare DataFrame for CoefficientLayer model
         # Keep only columns that match the model fields
         expected_columns = [
@@ -293,11 +331,7 @@ class SpatialDataLoader:
             "n_resi_coeff",
             "p_resi_coeff",
         ]
-        for col in coeff_columns:
-            if col in gdf.columns:
-                # Convert to numeric, coercing errors to NaN, then to None for SQL NULL
-                gdf[col] = pd.to_numeric(gdf[col], errors="coerce")
-                print(f"  {col}: {gdf[col].isna().sum()} null values after cleaning")
+        self._clean_coeff_columns(gdf, coeff_columns)
 
         # Add UUID and version columns
         gdf["id"] = [uuid4() for _ in range(len(gdf))]
@@ -351,59 +385,14 @@ class SpatialDataLoader:
 
         print(f"Loading {layer_name} from {file_path.name}...")
 
-        # Read spatial data
         gdf = (
             gpd.read_file(file_path, layer=layer) if layer else gpd.read_file(file_path)
         )
+        gdf = self._normalise_gdf(gdf)
+        gdf, total_features = self._apply_sample_mode(gdf)
 
-        # Ensure CRS is EPSG:27700
-        if gdf.crs is None:
-            print("No CRS found, assuming EPSG:27700")
-            gdf = gdf.set_crs(CRS_BRITISH_NATIONAL_GRID)
-        elif gdf.crs.to_epsg() != 27700:
-            print(f"Reprojecting from {gdf.crs} to EPSG:27700")
-            gdf = gdf.to_crs(CRS_BRITISH_NATIONAL_GRID)
-
-        # Force 2D geometries (remove Z dimension if present)
-        if gdf.geometry.has_z.any():
-            print("Converting 3D geometries to 2D")
-            gdf.geometry = gdf.geometry.apply(
-                lambda geom: shapely.force_2d(geom) if geom else geom
-            )
-
-        # Sample mode: take first N records
-        if self.sample_mode and len(gdf) > self.sample_limit:
-            print(f"Sample mode: using {self.sample_limit} of {len(gdf)} features")
-            gdf = gdf.head(self.sample_limit)
-
-        total_features = len(gdf)
-        print(f"Loaded {total_features} features")
-
-        # Prepare DataFrame for SpatialLayer model
-        name_col = _find_name_column(gdf)
-
-        # Create clean DataFrame with required columns
-        clean_gdf = gpd.GeoDataFrame(geometry=gdf.geometry, crs=gdf.crs)
-        clean_gdf["id"] = [uuid4() for _ in range(len(clean_gdf))]
+        clean_gdf = self._build_base_clean_gdf(gdf)
         clean_gdf["layer_type"] = layer_type.name
-        clean_gdf["version"] = 1
-
-        if name_col:
-            clean_gdf["name"] = gdf[name_col].astype(str)
-        else:
-            clean_gdf["name"] = None
-
-        # Store all non-geometry columns as JSONB attributes
-        # This preserves all source attributes for flexible querying
-        attribute_columns = [col for col in gdf.columns if col != "geometry"]
-        if attribute_columns:
-            # Use to_dict('records') instead of iterrows() for faster extraction
-            records = gdf[attribute_columns].to_dict("records")
-            clean_gdf["attributes"] = [
-                json.dumps(clean_nan_values(rec)) for rec in records
-            ]
-        else:
-            clean_gdf["attributes"] = None
 
         # Clear existing data for this layer type
         with self.repository.session() as session:
@@ -436,6 +425,43 @@ class SpatialDataLoader:
                 .select_from(SpatialLayer)
                 .where(SpatialLayer.layer_type == layer_type)
             )
+            print(f"Verified {count} records in database")
+
+    def load_edp_boundaries(self) -> None:
+        """Load EDP boundary polygons into dedicated edp_boundary_layer table."""
+        if not self.edp_boundary_gpkg.exists():
+            print(
+                f"Skipping edp_boundaries: File not found at {self.edp_boundary_gpkg}"
+            )
+            return
+
+        print(f"Loading edp_boundaries from {self.edp_boundary_gpkg.name}...")
+
+        gdf = gpd.read_file(self.edp_boundary_gpkg, layer=self.edp_boundary_layer)
+        gdf = self._normalise_gdf(gdf)
+        gdf, total_features = self._apply_sample_mode(gdf)
+        clean_gdf = self._build_base_clean_gdf(gdf)
+
+        with self.repository.session() as session:
+            deleted = session.execute(delete(EdpBoundaryLayer))
+            session.commit()
+            if deleted.rowcount > 0:
+                print(f"Deleted {deleted.rowcount} existing records")
+
+        print(f"Loading {total_features} features to PostGIS...")
+        clean_gdf.to_postgis(
+            name="edp_boundary_layer",
+            con=self.repository.engine,
+            schema="nrf_reference",
+            if_exists="append",
+            index=False,
+            chunksize=5000,
+        )
+
+        print(f"Successfully loaded {total_features} records")
+
+        with self.repository.session() as session:
+            count = session.scalar(select(func.count()).select_from(EdpBoundaryLayer))
             print(f"Verified {count} records in database")
 
     def load_lookup_tables(self) -> None:
@@ -540,6 +566,19 @@ class SpatialDataLoader:
             print(f"Error loading {table_name}: {e}")
 
 
+def _load_selected_layers(loader: "SpatialDataLoader", layer: list[str]) -> None:
+    """Load the specific layers requested, routing each to its dedicated loader."""
+    regular_layers = [
+        name for name in layer if name not in ("coefficients", "edp_boundaries")
+    ]
+    if regular_layers:
+        loader.load_spatial_layers(layer_types=regular_layers)
+    if "coefficients" in layer:
+        loader.load_coefficient_layer()
+    if "edp_boundaries" in layer:
+        loader.load_edp_boundaries()
+
+
 def _validate_names(names: list[str] | None, valid: list[str], kind: str) -> None:
     """Exit with an error if any name is not in the valid set."""
     if names:
@@ -590,7 +629,7 @@ def main(
         typer.Option(
             help="Specific spatial layer(s) to load. Can be specified multiple times. "
             "Choices: wwtw_catchments, lpa_boundaries, nn_catchments, subcatchments, coefficients, "
-            "gcn_risk_zones, gcn_ponds, edp_edges"
+            "gcn_risk_zones, gcn_ponds, edp_edges, edp_boundaries"
         ),
     ] = None,
     lookup: Annotated[
@@ -619,6 +658,7 @@ def main(
         "gcn_risk_zones",
         "gcn_ponds",
         "edp_edges",
+        "edp_boundaries",
     ]
     valid_lookups = ["wwtw_lookup", "rates_lookup"]
     _validate_names(layer, valid_layers, "layer")
@@ -655,17 +695,7 @@ def main(
         else:
             # Load specific items
             if layer:
-                # Separate coefficient loading from other spatial layers
-                regular_layers = [
-                    layer_name for layer_name in layer if layer_name != "coefficients"
-                ]
-                load_coefficients = "coefficients" in layer
-
-                if regular_layers:
-                    loader.load_spatial_layers(layer_types=regular_layers)
-
-                if load_coefficients:
-                    loader.load_coefficient_layer()
+                _load_selected_layers(loader, layer)
 
             if lookup:
                 # Load specific lookups - need to update load_lookup_tables to accept filter
