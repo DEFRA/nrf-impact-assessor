@@ -29,13 +29,44 @@ router = APIRouter()
 _config = ApiServerConfig()
 _max_upload_bytes = _config.max_upload_bytes
 
-_EXTENSION_TO_SAFE_FILENAME = {
-    ".zip": "upload.zip",
-    ".geojson": "upload.geojson",
-    ".json": "upload.json",
-    ".kml": "upload.kml",
-    ".shp": "upload.shp",
+class _FileType:
+    """Encapsulates a validated file type with hardcoded safe filename."""
+
+    def __init__(self, safe_filename: str, is_zip: bool = False, driver: str | None = None):
+        self.safe_filename = safe_filename
+        self.is_zip = is_zip
+        self.driver = driver
+
+
+_SUPPORTED_TYPES: dict[str, _FileType] = {
+    ".zip": _FileType("upload.zip", is_zip=True),
+    ".geojson": _FileType("upload.geojson"),
+    ".json": _FileType("upload.json"),
+    ".kml": _FileType("upload.kml", driver="KML"),
+    ".shp": _FileType("upload.shp"),
 }
+
+
+def _resolve_file_type(filename: str) -> _FileType:
+    """Resolve a user-provided filename to a validated file type.
+
+    Returns a FileType with a hardcoded safe filename, breaking
+    any data-flow link between user input and the filesystem path.
+
+    Raises:
+        HTTPException: If the file extension is not supported.
+    """
+    suffix = Path(filename).suffix.lower()
+    file_type = _SUPPORTED_TYPES.get(suffix)
+    if file_type is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported file format: {suffix}. "
+                "Use .shp, .zip, .geojson, .json, or .kml"
+            ),
+        )
+    return file_type
 
 # ---------------------------------------------------------------------------
 # Lazy-initialised repository singleton
@@ -55,44 +86,33 @@ def _get_repository() -> Repository:
     return _repository
 
 
-def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFrame:
+def _read_geometry(content: bytes, file_type: _FileType, tmpdir: Path) -> gpd.GeoDataFrame:
     """Read a geometry file from uploaded bytes into a GeoDataFrame.
 
     Supports .geojson, .json, .shp, .kml, and .zip (containing .shp or .geojson).
 
     Args:
         content: Raw file bytes.
-        filename: Original filename (used for extension detection).
+        file_type: Validated file type (from _resolve_file_type).
         tmpdir: Temporary directory to write files into.
 
     Returns:
         GeoDataFrame with the uploaded geometries.
 
     Raises:
-        HTTPException: If the file format is unsupported or unreadable.
+        HTTPException: If the file is unreadable.
     """
-    suffix = Path(filename).suffix.lower()
-    safe_filename = _EXTENSION_TO_SAFE_FILENAME.get(suffix)
-    if safe_filename is None:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Unsupported file format: {suffix}. "
-                "Use .shp, .zip, .geojson, .json, or .kml"
-            ),
-        )
-
-    saved_path = tmpdir / safe_filename
+    saved_path = tmpdir / file_type.safe_filename
     saved_path.write_bytes(content)
 
-    if suffix == ".zip":
+    if file_type.is_zip:
         read_path = _extract_zip(saved_path, tmpdir)
     else:
         read_path = saved_path
 
     try:
-        if suffix == ".kml":
-            return gpd.read_file(read_path, driver="KML")
+        if file_type.driver:
+            return gpd.read_file(read_path, driver=file_type.driver)
         return gpd.read_file(read_path)
     except Exception as e:
         raise HTTPException(
@@ -173,9 +193,10 @@ async def check_boundary(geometry_file: UploadFile):
         )
 
     filename = geometry_file.filename or "input.geojson"
+    file_type = _resolve_file_type(filename)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        gdf = _read_geometry(content, filename, Path(tmpdir))
+        gdf = _read_geometry(content, file_type, Path(tmpdir))
         gdf = ensure_crs(gdf)
 
         repository = _get_repository()
