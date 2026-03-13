@@ -360,6 +360,11 @@ class ApiServerConfig(BaseSettings):
         ge=60,
         description="Time-to-live for /assess job results before cleanup (seconds)",
     )
+    max_upload_bytes: int = Field(
+        default=2 * 1024 * 1024,
+        ge=1,
+        description="Maximum file upload size in bytes (default: 2 MB)",
+    )
 
 
 class DebugConfig:
