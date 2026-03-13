@@ -230,6 +230,34 @@ class TestCheckBoundaryGeoJSON:
         assert "Please ensure your boundary file" in detail
 
 
+    def test_shapefile_zip_missing_companion_files_returns_400(self, client):
+        """A zip with only .shp (no .dbf/.shx) should return 400."""
+        import zipfile
+
+        # Create a zip containing only a .shp file (no companions)
+        zip_buf = BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as zf:
+            zf.writestr("boundary.shp", b"fake shapefile content")
+        zip_buf.seek(0)
+
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "incomplete.zip",
+                    zip_buf,
+                    "application/zip",
+                )
+            },
+        )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "missing required companion files" in detail
+        assert ".dbf" in detail
+        assert ".shx" in detail
+
+
 class TestCheckBoundaryEdpIntersection:
     """Tests for EDP intersection logic in the response."""
 

@@ -1,6 +1,6 @@
 """Boundary checking endpoint.
 
-Accepts a geometry file (zip containing .shp/.prj, .geojson, or .kml)
+Accepts a geometry file (.geojson, .kml, or .zip containing shapefile components)
 and checks whether the uploaded geometry intersects with EDP areas.
 """
 
@@ -48,7 +48,7 @@ def _get_repository() -> Repository:
     return _repository
 
 
-_SUPPORTED_EXTENSIONS = frozenset({".zip", ".geojson", ".json", ".kml", ".shp"})
+_SUPPORTED_EXTENSIONS = frozenset({".zip", ".geojson", ".json", ".kml"})
 
 
 def _validate_extension(filename: str) -> str:
@@ -62,7 +62,7 @@ def _validate_extension(filename: str) -> str:
             status_code=400,
             detail=(
                 f"Unsupported file format: {suffix}. "
-                "Use .shp, .zip, .geojson, .json, or .kml"
+                "Use .zip, .geojson, .json, or .kml"
             ),
         )
     return suffix
@@ -84,7 +84,7 @@ def _write_to_temp(content: bytes, tmpdir: Path, suffix: str) -> Path:
 def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFrame:
     """Read a geometry file from uploaded bytes into a GeoDataFrame.
 
-    Supports .geojson, .json, .shp, .kml, and .zip (containing .shp or .geojson).
+    Supports .geojson, .json, .kml, and .zip (containing .shp, .geojson, or .kml).
 
     Args:
         content: Raw file bytes.
@@ -108,9 +108,6 @@ def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFr
             zip_path = _write_to_temp(content, tmpdir, ".zip")
             read_path = _extract_zip(zip_path, tmpdir)
             return gpd.read_file(read_path)
-        # .shp
-        shp_path = _write_to_temp(content, tmpdir, ".shp")
-        return gpd.read_file(shp_path)
     except HTTPException:
         raise
     except Exception as e:
@@ -137,7 +134,24 @@ def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
     kml_files = list(extract_dir.glob("**/*.kml"))
 
     if shp_files:
-        return shp_files[0]
+        shp_path = shp_files[0]
+        stem = shp_path.stem
+        shp_dir = shp_path.parent
+        missing = [
+            ext
+            for ext in (".dbf", ".shx")
+            if not (shp_dir / f"{stem}{ext}").exists()
+        ]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Shapefile is missing required companion files: "
+                    f"{', '.join(missing)}. "
+                    "A zip must contain .shp, .dbf, and .shx files."
+                ),
+            )
+        return shp_path
     if geojson_files:
         return geojson_files[0]
     if kml_files:
@@ -184,7 +198,7 @@ async def check_boundary(geometry_file: UploadFile):
     """Check whether an uploaded geometry intersects with EDP areas.
 
     Supported formats:
-    - .zip containing .shp and .prj files
+    - .zip containing .shp (with companion .dbf, .shx, .prj files), .geojson, or .kml
     - .geojson or .json
     - .kml
 
