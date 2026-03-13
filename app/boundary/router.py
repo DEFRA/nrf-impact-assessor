@@ -189,7 +189,13 @@ def _find_intersecting_edps(
     with repository.session() as session:
         rows = session.execute(stmt).fetchall()
 
-    return [{"name": row.name, "attributes": row.attributes} for row in rows]
+    return [
+        {
+            "label": (row.attributes or {}).get("Label"),
+            "n2k_site_name": (row.attributes or {}).get("N2K_Site_N"),
+        }
+        for row in rows
+    ]
 
 
 @router.post(
