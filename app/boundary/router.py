@@ -171,6 +171,7 @@ def _find_intersecting_edps(
     responses={
         400: {"description": "Invalid or unreadable geometry file"},
         413: {"description": "File too large"},
+        422: {"description": "Boundary file has no CRS defined"},
     },
 )
 async def check_boundary(geometry_file: UploadFile):
@@ -195,7 +196,27 @@ async def check_boundary(geometry_file: UploadFile):
 
     with tempfile.TemporaryDirectory() as tmpdir:
         gdf = _read_geometry(content, filename, Path(tmpdir))
-        gdf = ensure_crs(gdf)
+
+        # GeoJSON (RFC 7946) and KML (OGC spec) mandate WGS84 —
+        # safe to assume EPSG:4326 when no CRS is present.
+        ext = Path(filename).suffix.lower()
+        if gdf.crs is None and ext in (".geojson", ".json", ".kml"):
+            gdf = gdf.set_crs("EPSG:4326")
+
+        try:
+            gdf = ensure_crs(gdf)
+        except ValueError:
+            detail = (
+                "The uploaded boundary file has no coordinate reference system (CRS) "
+                "defined."
+            )
+            if ext in (".shp", ".zip"):
+                detail += " Shapefiles require a .prj file to specify the CRS."
+            detail += (
+                " Please ensure your boundary file has the appropriate"
+                " Coordinate Reference System defined."
+            )
+            raise HTTPException(status_code=422, detail=detail)
 
         repository = _get_repository()
         intersecting_edps = _find_intersecting_edps(gdf, repository)

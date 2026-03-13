@@ -184,6 +184,52 @@ class TestCheckBoundaryGeoJSON:
         assert "File too large" in response.json()["detail"]
 
 
+    def test_shapefile_without_crs_returns_422(self, client):
+        """A .shp without a .prj has no CRS — should return 422 with helpful message."""
+        import geopandas as gpd
+        import tempfile
+        import zipfile
+        from pathlib import Path
+        from shapely.geometry import Polygon
+
+        # Create a shapefile without a .prj file
+        gdf = gpd.GeoDataFrame(
+            {"id": [1]},
+            geometry=[Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])],
+            crs=None,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            shp_path = Path(tmpdir) / "no_crs.shp"
+            gdf.to_file(shp_path)
+            # Remove .prj to ensure no CRS
+            for prj in Path(tmpdir).glob("*.prj"):
+                prj.unlink()
+
+            # Zip the shapefile components
+            zip_buf = BytesIO()
+            with zipfile.ZipFile(zip_buf, "w") as zf:
+                for f in Path(tmpdir).glob("no_crs.*"):
+                    zf.write(f, f.name)
+            zip_buf.seek(0)
+
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "no_crs.zip",
+                    zip_buf,
+                    "application/zip",
+                )
+            },
+        )
+
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert "coordinate reference system" in detail.lower()
+        assert ".prj" in detail
+        assert "Please ensure your boundary file" in detail
+
+
 class TestCheckBoundaryEdpIntersection:
     """Tests for EDP intersection logic in the response."""
 
