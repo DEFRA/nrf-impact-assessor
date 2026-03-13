@@ -48,7 +48,13 @@ def _get_repository() -> Repository:
     return _repository
 
 
-_SUPPORTED_EXTENSIONS = frozenset({".zip", ".geojson", ".json", ".kml"})
+_EXT_GEOJSON = ".geojson"
+_EXT_JSON = ".json"
+_EXT_KML = ".kml"
+_EXT_ZIP = ".zip"
+_GEOJSON_EXTENSIONS = frozenset({_EXT_GEOJSON, _EXT_JSON})
+_WGS84_EXTENSIONS = frozenset({_EXT_GEOJSON, _EXT_JSON, _EXT_KML})
+_SUPPORTED_EXTENSIONS = frozenset({_EXT_ZIP, _EXT_GEOJSON, _EXT_JSON, _EXT_KML})
 
 
 def _validate_extension(filename: str) -> str:
@@ -100,12 +106,12 @@ def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFr
     ext = _validate_extension(filename)
 
     try:
-        if ext in (".geojson", ".json"):
+        if ext in _GEOJSON_EXTENSIONS:
             return gpd.read_file(BytesIO(content))
-        if ext == ".kml":
+        if ext == _EXT_KML:
             return gpd.read_file(BytesIO(content), driver="KML")
-        if ext == ".zip":
-            zip_path = _write_to_temp(content, tmpdir, ".zip")
+        if ext == _EXT_ZIP:
+            zip_path = _write_to_temp(content, tmpdir, _EXT_ZIP)
             read_path = _extract_zip(zip_path, tmpdir)
             return gpd.read_file(read_path)
     except HTTPException:
@@ -220,7 +226,7 @@ async def check_boundary(geometry_file: UploadFile):
         # GeoJSON (RFC 7946) and KML (OGC spec) mandate WGS84 —
         # safe to assume EPSG:4326 when no CRS is present.
         ext = Path(filename).suffix.lower()
-        if gdf.crs is None and ext in (".geojson", ".json", ".kml"):
+        if gdf.crs is None and ext in _WGS84_EXTENSIONS:
             gdf = gdf.set_crs("EPSG:4326")
 
         try:
@@ -230,7 +236,7 @@ async def check_boundary(geometry_file: UploadFile):
                 "The uploaded boundary file has no coordinate reference system (CRS) "
                 "defined."
             )
-            if ext in (".shp", ".zip"):
+            if ext == _EXT_ZIP:
                 detail += " Shapefiles require a .prj file to specify the CRS."
             detail += (
                 " Please ensure your boundary file has the appropriate"
