@@ -124,6 +124,12 @@ def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
     extract_dir = tmpdir / "extracted"
     extract_dir.mkdir()
     with zipfile.ZipFile(zip_path, "r") as zf:
+        for member in zf.infolist():
+            member_path = (extract_dir / member.filename).resolve()
+            if not member_path.is_relative_to(extract_dir.resolve()):
+                raise HTTPException(
+                    status_code=400, detail="Malicious zip entry detected"
+                )
         zf.extractall(extract_dir)
 
     shp_files = list(extract_dir.glob("**/*.shp"))
