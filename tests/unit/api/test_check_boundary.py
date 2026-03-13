@@ -186,10 +186,11 @@ class TestCheckBoundaryGeoJSON:
 
     def test_shapefile_without_crs_returns_422(self, client):
         """A .shp without a .prj has no CRS — should return 422 with helpful message."""
-        import geopandas as gpd
         import tempfile
         import zipfile
         from pathlib import Path
+
+        import geopandas as gpd
         from shapely.geometry import Polygon
 
         # Create a shapefile without a .prj file

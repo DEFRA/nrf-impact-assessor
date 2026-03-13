@@ -242,7 +242,7 @@ async def check_boundary(geometry_file: UploadFile):
                 " Please ensure your boundary file has the appropriate"
                 " Coordinate Reference System defined."
             )
-            raise HTTPException(status_code=422, detail=detail)
+            raise HTTPException(status_code=422, detail=detail) from None
 
         repository = _get_repository()
         intersecting_edps = _find_intersecting_edps(gdf, repository)
