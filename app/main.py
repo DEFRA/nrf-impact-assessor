@@ -12,6 +12,7 @@ from app.common.tracing import TraceIdMiddleware
 from app.config import ApiServerConfig, config
 from app.example.router import router as example_router
 from app.health.router import router as health_router
+from app.tiles.router import router as tiles_router
 
 logger = getLogger(__name__)
 
@@ -40,6 +41,7 @@ app.include_router(health_router)
 app.include_router(example_router)
 app.include_router(assess_router)
 app.include_router(boundary_router)
+app.include_router(tiles_router)
 
 if ApiServerConfig().testing_enabled:
     from app.test.router import router as test_router

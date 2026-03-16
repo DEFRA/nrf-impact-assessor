@@ -183,7 +183,6 @@ class TestCheckBoundaryGeoJSON:
         assert response.status_code == 413
         assert "File too large" in response.json()["detail"]
 
-
     def test_shapefile_without_crs_returns_422(self, client):
         """A .shp without a .prj has no CRS — should return 422 with helpful message."""
         import tempfile
@@ -229,7 +228,6 @@ class TestCheckBoundaryGeoJSON:
         assert "coordinate reference system" in detail.lower()
         assert ".prj" in detail
         assert "Please ensure your boundary file" in detail
-
 
     def test_shapefile_zip_missing_companion_files_returns_400(self, client):
         """A zip with only .shp (no .dbf/.shx) should return 400."""

@@ -28,6 +28,9 @@
     }
   },
   "loggers": {
+    "uvicorn.access": {
+      "filters": ["healthcheck_filter"]
+    }
   },
   "root": {
       "level": "INFO",
