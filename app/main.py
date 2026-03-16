@@ -55,6 +55,7 @@ def main() -> None:  # pragma: no cover
         "app.main:app",
         host=config.host,
         port=config.port,
+        workers=config.workers,
         log_config=config.log_config,
     )
 
