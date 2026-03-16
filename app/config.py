@@ -20,6 +20,7 @@ class AppConfig(BaseSettings):
     http_proxy: HttpUrl | None = None
     enable_metrics: bool = False
     tracing_header: str = "x-cdp-request-id"
+    workers: int = 1
 
 
 config = AppConfig()

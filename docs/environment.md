@@ -21,6 +21,7 @@ This document describes all environment variables used by the application and it
 | `HTTP_PROXY` | `None` | Outbound HTTP proxy URL |
 | `ENABLE_METRICS` | `false` | Enable CloudWatch EMF metrics emission |
 | `TRACING_HEADER` | `x-cdp-request-id` | Header name used for request tracing |
+| `WORKERS` | `1` | Number of uvicorn worker processes |
 
 ---
 
