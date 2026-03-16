@@ -367,6 +367,26 @@ class ApiServerConfig(BaseSettings):
     )
 
 
+class TileServerConfig(BaseSettings):
+    """Configuration for the XYZ vector tile endpoint."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="TILE_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    cache_max_size: int = Field(default=1000)
+    cache_ttl_seconds: int = Field(default=3600)
+    version_ttl_seconds: int = Field(default=300)
+    min_zoom: int = Field(default=0)
+    max_zoom: int = Field(default=22)
+    db_pool_size: int = Field(default=5)
+    db_max_overflow: int = Field(default=5)
+
+
 class DebugConfig:
     """Debug output configuration.
 

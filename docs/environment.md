@@ -35,6 +35,22 @@ This document describes all environment variables used by the application and it
 
 ---
 
+## Tile Server (`app/config.py` — `TileServerConfig`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `TILE_CACHE_MAX_SIZE` | `1000` | Maximum number of tiles held in the in-process LRU cache |
+| `TILE_CACHE_TTL_SECONDS` | `3600` | Seconds before a cached tile is considered stale |
+| `TILE_VERSION_TTL_SECONDS` | `300` | Seconds before the cached layer version is re-queried from the database |
+| `TILE_MIN_ZOOM` | `0` | Minimum zoom level accepted by `GET /tiles/...` (inclusive) |
+| `TILE_MAX_ZOOM` | `22` | Maximum zoom level accepted by `GET /tiles/...` (inclusive) |
+| `TILE_DB_POOL_SIZE` | `5` | SQLAlchemy connection pool size for tile queries |
+| `TILE_DB_MAX_OVERFLOW` | `5` | Maximum overflow connections above pool size |
+
+See [tile-server.md](tile-server.md) for full documentation.
+
+---
+
 ## AWS / LocalStack (`compose/aws.env`)
 
 Used by both the application and the LocalStack container. Safe to commit — values are for local development only.

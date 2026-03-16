@@ -77,8 +77,7 @@ def _validate_extension(filename: str) -> str:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Unsupported file format: {suffix}. "
-                "Use .zip, .geojson, .json, or .kml"
+                f"Unsupported file format: {suffix}. Use .zip, .geojson, .json, or .kml"
             ),
         )
     return suffix
@@ -90,9 +89,7 @@ def _write_to_temp(content: bytes, tmpdir: Path, suffix: str) -> Path:
     Uses tempfile.NamedTemporaryFile so the path is entirely OS-generated
     with no user-controlled data in the filename.
     """
-    with tempfile.NamedTemporaryFile(
-        dir=tmpdir, suffix=suffix, delete=False
-    ) as tmp:
+    with tempfile.NamedTemporaryFile(dir=tmpdir, suffix=suffix, delete=False) as tmp:
         tmp.write(content)
         return Path(tmp.name)
 
@@ -154,9 +151,7 @@ def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
         stem = shp_path.stem
         shp_dir = shp_path.parent
         missing = [
-            ext
-            for ext in (".dbf", ".shx")
-            if not (shp_dir / f"{stem}{ext}").exists()
+            ext for ext in (".dbf", ".shx") if not (shp_dir / f"{stem}{ext}").exists()
         ]
         if missing:
             raise HTTPException(
@@ -293,8 +288,10 @@ async def check_boundary(
 
         geojson = json.loads(gdf.to_json())
 
-    return JSONResponse(content={
-        "geometry": geojson,
-        "intersecting_edps": intersecting_edps,
-        "intersects_edp": len(intersecting_edps) > 0,
-    })
+    return JSONResponse(
+        content={
+            "geometry": geojson,
+            "intersecting_edps": intersecting_edps,
+            "intersects_edp": len(intersecting_edps) > 0,
+        }
+    )
