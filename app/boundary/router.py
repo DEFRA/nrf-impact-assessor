@@ -10,11 +10,21 @@ import tempfile
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from typing import Annotated
 
 import geopandas as gpd
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
-from geoalchemy2.functions import ST_GeomFromText, ST_Intersects, ST_SetSRID
+from geoalchemy2.functions import (
+    ST_Area,
+    ST_AsGeoJSON,
+    ST_CollectionExtract,
+    ST_GeomFromText,
+    ST_Intersection,
+    ST_Intersects,
+    ST_SetSRID,
+    ST_Transform,
+)
 from sqlalchemy import select
 
 from app.config import ApiServerConfig, DatabaseSettings
@@ -170,32 +180,53 @@ def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
 
 
 def _find_intersecting_edps(
-    gdf: gpd.GeoDataFrame, repository: Repository
+    gdf: gpd.GeoDataFrame, repository: Repository, output_srid: int = 4326
 ) -> list[dict]:
     """Query PostGIS for EDP boundary areas that intersect the uploaded geometry."""
     input_union = gdf.union_all()
     input_wkt = input_union.wkt
+    input_area_sqm = input_union.area
+
+    input_geom = ST_SetSRID(ST_GeomFromText(input_wkt), 27700)
+    intersection = ST_CollectionExtract(
+        ST_Intersection(EdpBoundaryLayer.geometry, input_geom), 3
+    )
 
     stmt = select(
         EdpBoundaryLayer.name,
         EdpBoundaryLayer.attributes,
+        ST_AsGeoJSON(
+            ST_Transform(EdpBoundaryLayer.geometry, output_srid)
+        ).label("edp_geojson"),
+        ST_AsGeoJSON(ST_Transform(intersection, output_srid)).label(
+            "intersection_geojson"
+        ),
+        ST_Area(intersection).label("intersection_area_sqm"),
     ).where(
         ST_Intersects(
             EdpBoundaryLayer.geometry,
-            ST_SetSRID(ST_GeomFromText(input_wkt), 27700),
+            input_geom,
         )
     )
 
     with repository.session() as session:
         rows = session.execute(stmt).fetchall()
 
-    return [
-        {
+    results = []
+    for row in rows:
+        area_sqm = row.intersection_area_sqm or 0.0
+        results.append({
             "label": (row.attributes or {}).get("Label"),
             "n2k_site_name": (row.attributes or {}).get("N2K_Site_N"),
-        }
-        for row in rows
-    ]
+            "edp_geometry": json.loads(row.edp_geojson),
+            "intersection_geometry": json.loads(row.intersection_geojson),
+            "overlap_area_ha": round(area_sqm / 10000.0, 4),
+            "overlap_area_sqm": round(area_sqm, 2),
+            "overlap_percentage": round(
+                (area_sqm / input_area_sqm) * 100, 2
+            ) if input_area_sqm > 0 else 0.0,
+        })
+    return results
 
 
 @router.post(
@@ -206,7 +237,10 @@ def _find_intersecting_edps(
         422: {"description": "Boundary file has no CRS defined"},
     },
 )
-async def check_boundary(geometry_file: UploadFile):
+async def check_boundary(
+    geometry_file: UploadFile,
+    proj: Annotated[str, Query(description="Output projection (e.g. 'EPSG:4326')")] = "EPSG:4326",
+):
     """Check whether an uploaded geometry intersects with EDP areas.
 
     Supported formats:
@@ -251,7 +285,11 @@ async def check_boundary(geometry_file: UploadFile):
             raise HTTPException(status_code=422, detail=detail) from None
 
         repository = _get_repository()
-        intersecting_edps = _find_intersecting_edps(gdf, repository)
+        output_srid = int(proj.split(":")[1])
+        intersecting_edps = _find_intersecting_edps(gdf, repository, output_srid)
+
+        gdf = gdf.to_crs(proj)
+        gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
 
         geojson = json.loads(gdf.to_json())
 

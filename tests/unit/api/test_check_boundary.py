@@ -44,16 +44,44 @@ def _make_geojson_bytes(
     return json.dumps(geojson).encode()
 
 
-def _mock_no_edp_intersections(gdf, repository):
+def _mock_no_edp_intersections(gdf, repository, output_srid=4326):
     """Mock that returns no intersecting EDPs."""
     return []
 
 
-def _mock_edp_intersections(gdf, repository):
+def _mock_edp_intersections(gdf, repository, output_srid=4326):
     """Mock that returns intersecting EDPs."""
     return [
-        {"name": "Norfolk EDP 1", "attributes": {"region": "norfolk"}},
-        {"name": "Norfolk EDP 2", "attributes": {"region": "norfolk"}},
+        {
+            "label": "Norfolk EDP 1",
+            "n2k_site_name": "Site A",
+            "edp_geometry": {
+                "type": "Polygon",
+                "coordinates": [[[-1.6, 51.9], [-1.3, 51.9], [-1.3, 52.2], [-1.6, 52.2], [-1.6, 51.9]]],
+            },
+            "intersection_geometry": {
+                "type": "Polygon",
+                "coordinates": [[[-1.5, 52.0], [-1.4, 52.0], [-1.4, 52.1], [-1.5, 52.1], [-1.5, 52.0]]],
+            },
+            "overlap_area_ha": 0.5,
+            "overlap_area_sqm": 5000.0,
+            "overlap_percentage": 25.0,
+        },
+        {
+            "label": "Norfolk EDP 2",
+            "n2k_site_name": "Site B",
+            "edp_geometry": {
+                "type": "Polygon",
+                "coordinates": [[[-1.4, 51.9], [-1.1, 51.9], [-1.1, 52.2], [-1.4, 52.2], [-1.4, 51.9]]],
+            },
+            "intersection_geometry": {
+                "type": "Polygon",
+                "coordinates": [[[-1.3, 52.0], [-1.2, 52.0], [-1.2, 52.1], [-1.3, 52.1], [-1.3, 52.0]]],
+            },
+            "overlap_area_ha": 0.3,
+            "overlap_area_sqm": 3000.0,
+            "overlap_percentage": 15.0,
+        },
     ]
 
 
@@ -79,6 +107,25 @@ class TestCheckBoundaryGeoJSON:
         assert body["geometry"]["type"] == "FeatureCollection"
         assert len(body["geometry"]["features"]) == 1
         assert body["geometry"]["features"][0]["geometry"]["type"] == "Polygon"
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_properties_are_stripped_from_features(self, client):
+        """User-supplied properties should be removed to avoid leaking PII."""
+        content = _make_geojson_bytes()
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "boundary.geojson",
+                    BytesIO(content),
+                    "application/json",
+                )
+            },
+        )
+
+        assert response.status_code == 200
+        feature = response.json()["geometry"]["features"][0]
+        assert feature["properties"] == {}
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_json_extension_accepted(self, client):
@@ -259,6 +306,112 @@ class TestCheckBoundaryGeoJSON:
         assert ".shx" in detail
 
 
+class TestCheckBoundaryProjection:
+    """Tests for the proj query parameter."""
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_proj_parameter_reprojects_output(self, client):
+        """When proj=EPSG:4326 is passed, geometry should be returned in WGS84."""
+        # Use BNG coordinates (EPSG:27700) with explicit CRS
+        content = _make_geojson_bytes(
+            coordinates=[
+                [
+                    [400000, 100000],
+                    [400100, 100000],
+                    [400100, 100100],
+                    [400000, 100100],
+                    [400000, 100000],
+                ]
+            ],
+            crs="urn:ogc:def:crs:EPSG::27700",
+        )
+        response = client.post(
+            "/check-boundary?proj=EPSG:4326",
+            files={
+                "geometry_file": (
+                    "boundary.geojson",
+                    BytesIO(content),
+                    "application/json",
+                )
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        coords = body["geometry"]["features"][0]["geometry"]["coordinates"][0]
+        # All coordinates should be WGS84 range (lng -180..180, lat -90..90)
+        for lng, lat in coords:
+            assert -180 <= lng <= 180, f"longitude {lng} out of WGS84 range"
+            assert -90 <= lat <= 90, f"latitude {lat} out of WGS84 range"
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_default_proj_returns_wgs84(self, client):
+        """Without explicit proj parameter, geometry defaults to WGS84 (EPSG:4326)."""
+        content = _make_geojson_bytes(
+            coordinates=[
+                [
+                    [400000, 100000],
+                    [400100, 100000],
+                    [400100, 100100],
+                    [400000, 100100],
+                    [400000, 100000],
+                ]
+            ],
+            crs="urn:ogc:def:crs:EPSG::27700",
+        )
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "boundary.geojson",
+                    BytesIO(content),
+                    "application/json",
+                )
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        coords = body["geometry"]["features"][0]["geometry"]["coordinates"][0]
+        # Default is EPSG:4326 so coordinates should be WGS84 range
+        for lng, lat in coords:
+            assert -180 <= lng <= 180, f"longitude {lng} out of WGS84 range"
+            assert -90 <= lat <= 90, f"latitude {lat} out of WGS84 range"
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_proj_27700_returns_bng(self, client):
+        """When proj=EPSG:27700 is passed, geometry stays in BNG."""
+        content = _make_geojson_bytes(
+            coordinates=[
+                [
+                    [400000, 100000],
+                    [400100, 100000],
+                    [400100, 100100],
+                    [400000, 100100],
+                    [400000, 100000],
+                ]
+            ],
+            crs="urn:ogc:def:crs:EPSG::27700",
+        )
+        response = client.post(
+            "/check-boundary?proj=EPSG:27700",
+            files={
+                "geometry_file": (
+                    "boundary.geojson",
+                    BytesIO(content),
+                    "application/json",
+                )
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        coords = body["geometry"]["features"][0]["geometry"]["coordinates"][0]
+        # Coordinates should be in BNG range (large values)
+        for e, n in coords:
+            assert abs(e) > 180 or abs(n) > 180, "Expected BNG coordinates"
+
+
 class TestCheckBoundaryEdpIntersection:
     """Tests for EDP intersection logic in the response."""
 
@@ -299,8 +452,12 @@ class TestCheckBoundaryEdpIntersection:
         body = response.json()
         assert body["intersects_edp"] is True
         assert len(body["intersecting_edps"]) == 2
-        assert body["intersecting_edps"][0]["name"] == "Norfolk EDP 1"
-        assert body["intersecting_edps"][1]["name"] == "Norfolk EDP 2"
+        assert body["intersecting_edps"][0]["label"] == "Norfolk EDP 1"
+        assert body["intersecting_edps"][1]["label"] == "Norfolk EDP 2"
+        assert body["intersecting_edps"][0]["overlap_area_ha"] == pytest.approx(0.5)
+        assert body["intersecting_edps"][0]["overlap_percentage"] == pytest.approx(25.0)
+        assert body["intersecting_edps"][0]["intersection_geometry"]["type"] == "Polygon"
+        assert body["intersecting_edps"][0]["edp_geometry"]["type"] == "Polygon"
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
     def test_response_contains_all_expected_keys(self, client):
