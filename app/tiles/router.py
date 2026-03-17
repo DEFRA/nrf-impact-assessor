@@ -278,9 +278,7 @@ def get_tile(request: Request, layer: str, z: int, x: int, y: int) -> Response:
         version = _edp_version_cache[0] if _edp_version_cache else 1
     else:
         version = _version_cache.get(TILE_LAYERS[layer], (1, 0.0))[0]
-    etag = hashlib.md5(  # noqa: S324
-        f"{layer}:{z}:{x}:{y}:{version}".encode()
-    ).hexdigest()
+    etag = hashlib.sha256(f"{layer}:{z}:{x}:{y}:{version}".encode()).hexdigest()
     quoted_etag = f'"{etag}"'
 
     if request.headers.get("if-none-match") == quoted_etag:
