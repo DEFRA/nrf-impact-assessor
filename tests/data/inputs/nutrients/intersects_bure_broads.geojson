@@ -1,0 +1,23 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Test site inside Bure Broads and Marshes EDP"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [1.2669, 52.7879],
+            [1.2669, 52.7885],
+            [1.2640, 52.7885],
+            [1.2640, 52.7879],
+            [1.2669, 52.7879]
+          ]
+        ]
+      }
+    }
+  ]
+}
