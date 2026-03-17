@@ -80,9 +80,13 @@ The database connection is read from the standard application environment variab
 
 ## Usage
 
+All commands below are available as `make` targets or as direct `uv run` invocations.
+
 ### Load all data
 
 ```bash
+make load-data
+# equivalent:
 uv run python scripts/load_data.py
 ```
 
@@ -91,14 +95,15 @@ Loads all spatial layers, the coefficient layer, EDP boundaries, and all lookup 
 ### Load specific layers
 
 ```bash
-# Load a single layer
+make load-data-layer LAYER=nn_catchments
+# equivalent:
 uv run python scripts/load_data.py --layer nn_catchments
 
-# Load multiple layers
+# multiple layers (direct invocation only):
 uv run python scripts/load_data.py --layer wwtw_catchments --layer lpa_boundaries
 ```
 
-Valid `--layer` values:
+Valid `--layer` / `LAYER` values:
 
 | Value | Description | DB Table |
 |---|---|---|
@@ -115,10 +120,12 @@ Valid `--layer` values:
 ### Load specific lookup tables
 
 ```bash
+make load-data-lookup LOOKUP=wwtw_lookup
+# equivalent:
 uv run python scripts/load_data.py --lookup wwtw_lookup
 ```
 
-Valid `--lookup` values:
+Valid `--lookup` / `LOOKUP` values:
 
 | Value | Description | Source SQLite table |
 |---|---|---|
@@ -130,6 +137,8 @@ Valid `--lookup` values:
 ### Load sample data only
 
 ```bash
+make load-data-sample
+# equivalent:
 uv run python scripts/load_data.py --sample
 ```
 
@@ -243,6 +252,77 @@ JSONB-based lookup tables.
 
 ---
 
+## Backup & Restore
+
+> **Take a backup before running any load command.** The load script is destructive — it deletes existing rows for each layer before inserting new data.
+
+All backup targets write compressed `.sql.gz` files to `./backups/` by default. The output directory can be overridden with `BACKUP_DIR=<path>`.
+
+### Per-table backup (recommended before a load)
+
+Produces one `.sql.gz` file per `nrf_reference` table, timestamped together so they can be restored as a set.
+
+```bash
+make db-backup-tables
+# output:
+#   backups/nrf_reference_spatial_layer_20260316_120000.sql.gz
+#   backups/nrf_reference_coefficient_layer_20260316_120000.sql.gz
+#   backups/nrf_reference_edp_boundary_layer_20260316_120000.sql.gz
+#   backups/nrf_reference_lookup_table_20260316_120000.sql.gz
+```
+
+### Full database backup
+
+Single `.sql.gz` containing the entire `nrf_impact` database (schema + data + custom types + grants).
+
+```bash
+make db-backup
+
+# Custom output directory:
+make db-backup BACKUP_DIR=~/my-backups
+```
+
+### Schema-only backup
+
+DDL only — tables, enums (including `spatial_layer_type`), indexes, and grants. No row data.
+
+```bash
+make db-backup-schema
+```
+
+### Cluster-level roles and grants
+
+Captures PostgreSQL roles and server-level grants that `pg_dump` does not include.
+
+```bash
+make db-backup-globals
+```
+
+### Restore
+
+```bash
+# Restore a single table backup:
+make db-restore BACKUP_FILE=./backups/nrf_reference_spatial_layer_20260316_120000.sql.gz
+
+# Restore a full database backup:
+make db-restore BACKUP_FILE=./backups/nrf_impact_20260316_120000.sql.gz
+```
+
+Restore pipes the decompressed SQL through `psql` into the running container. Run `docker compose up postgres` first if the container is not already up.
+
+### Backup file naming
+
+| Target | File pattern |
+|---|---|
+| `db-backup-tables` | `backups/nrf_reference_<table>_<YYYYMMDD_HHMMSS>.sql.gz` |
+| `db-backup` | `backups/nrf_impact_<YYYYMMDD_HHMMSS>.sql.gz` |
+| `db-backup-schema` | `backups/nrf_impact_schema_<YYYYMMDD_HHMMSS>.sql.gz` |
+| `db-backup-globals` | `backups/nrf_impact_globals_<YYYYMMDD_HHMMSS>.sql.gz` |
+
+All files within a single `make` invocation share the same timestamp, making it straightforward to identify backups taken together.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -254,6 +334,8 @@ JSONB-based lookup tables.
 | `relation "nrf_reference.spatial_layer" does not exist` | Migrations have not been applied | Run `uv run alembic upgrade head` |
 | Load completes but row count is 0 | Source file is empty or CRS mismatch caused all geometries to be dropped | Open the source file in QGIS to verify it contains data; check CRS |
 | Coefficient load is very slow | ~5.4M polygons is expected to take several minutes | This is normal; use `--sample` for quick tests |
+| `db-backup-tables` produces empty files | Container not running or DB name wrong | Confirm `docker compose up postgres` is running and `nrf-postgis` is the container name |
+| `zcat: can't stat` on restore | Wrong path passed to `BACKUP_FILE` | Use the full or relative path, e.g. `make db-restore BACKUP_FILE=./backups/foo.sql.gz` |
 
 ---
 

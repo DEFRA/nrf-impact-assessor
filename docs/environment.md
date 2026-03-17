@@ -2,7 +2,7 @@
 
 This document describes all environment variables used by the application and its local development stack.
 
-> **Secrets** — variables marked `secret` must never be committed to version control. Set them in `compose/secrets.env`, which is excluded from git.
+> **Secrets** — `compose/secrets.env` is gitignored and must never be committed. Run `make secrets-init` to generate it with a random password. Do not hand-edit placeholder values into this file.
 
 ---
 
@@ -74,16 +74,27 @@ Used by both the application and the LocalStack container. Safe to commit — va
 
 ## Secrets (`compose/secrets.env`)
 
-This file is **gitignored** and must be created manually. Copy the template below and fill in real values.
+This file is **gitignored** and must never be committed. It is generated from `compose/secrets.template`.
+
+**First-time setup — generate a random password automatically:**
 
 ```bash
-# compose/secrets.env — do not commit
-METRICS_DB_PASSWORD=<your-password>
+make secrets-init
+```
+
+This creates `compose/secrets.env` with a cryptographically random 32-character password derived from `openssl rand`. It is a no-op if the file already exists, so it is safe to run repeatedly.
+
+To regenerate (e.g. after a password rotation):
+
+```bash
+rm compose/secrets.env && make secrets-init
 ```
 
 | Variable | Description |
 |---|---|
-| `METRICS_DB_PASSWORD` | Password for the TimescaleDB `metrics` user. Used by TimescaleDB, Vector, and Grafana. |
+| `METRICS_DB_PASSWORD` | Password for the TimescaleDB `metrics` user. Used by TimescaleDB, Vector, and Grafana. Must not be empty or set to the placeholder value `change_me` — `make monitoring-up` enforces this. |
+
+> **`API_TESTING_ENABLED` does not belong here.** It is a non-secret application flag already set to `"true"` in `compose.yml` for the `service` container. See the API Server section above.
 
 ---
 
