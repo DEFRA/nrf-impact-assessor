@@ -11,6 +11,8 @@ import zipfile
 from io import BytesIO
 from pathlib import Path
 
+from typing import Annotated
+
 import geopandas as gpd
 from fastapi import APIRouter, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
@@ -238,7 +240,7 @@ def _find_intersecting_edps(
 )
 async def check_boundary(
     geometry_file: UploadFile,
-    proj: str = Query("EPSG:4326", description="Output projection (e.g. 'EPSG:4326')"),
+    proj: Annotated[str, Query(description="Output projection (e.g. 'EPSG:4326')")] = "EPSG:4326",
 ):
     """Check whether an uploaded geometry intersects with EDP areas.
 

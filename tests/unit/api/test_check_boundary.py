@@ -454,8 +454,8 @@ class TestCheckBoundaryEdpIntersection:
         assert len(body["intersecting_edps"]) == 2
         assert body["intersecting_edps"][0]["label"] == "Norfolk EDP 1"
         assert body["intersecting_edps"][1]["label"] == "Norfolk EDP 2"
-        assert body["intersecting_edps"][0]["overlap_area_ha"] == 0.5
-        assert body["intersecting_edps"][0]["overlap_percentage"] == 25.0
+        assert body["intersecting_edps"][0]["overlap_area_ha"] == pytest.approx(0.5)
+        assert body["intersecting_edps"][0]["overlap_percentage"] == pytest.approx(25.0)
         assert body["intersecting_edps"][0]["intersection_geometry"]["type"] == "Polygon"
         assert body["intersecting_edps"][0]["edp_geometry"]["type"] == "Polygon"
 
