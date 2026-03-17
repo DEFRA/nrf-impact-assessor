@@ -57,11 +57,27 @@ def _mock_edp_intersections(gdf, repository, output_srid=4326):
             "n2k_site_name": "Site A",
             "edp_geometry": {
                 "type": "Polygon",
-                "coordinates": [[[-1.6, 51.9], [-1.3, 51.9], [-1.3, 52.2], [-1.6, 52.2], [-1.6, 51.9]]],
+                "coordinates": [
+                    [
+                        [-1.6, 51.9],
+                        [-1.3, 51.9],
+                        [-1.3, 52.2],
+                        [-1.6, 52.2],
+                        [-1.6, 51.9],
+                    ]
+                ],
             },
             "intersection_geometry": {
                 "type": "Polygon",
-                "coordinates": [[[-1.5, 52.0], [-1.4, 52.0], [-1.4, 52.1], [-1.5, 52.1], [-1.5, 52.0]]],
+                "coordinates": [
+                    [
+                        [-1.5, 52.0],
+                        [-1.4, 52.0],
+                        [-1.4, 52.1],
+                        [-1.5, 52.1],
+                        [-1.5, 52.0],
+                    ]
+                ],
             },
             "overlap_area_ha": 0.5,
             "overlap_area_sqm": 5000.0,
@@ -72,11 +88,27 @@ def _mock_edp_intersections(gdf, repository, output_srid=4326):
             "n2k_site_name": "Site B",
             "edp_geometry": {
                 "type": "Polygon",
-                "coordinates": [[[-1.4, 51.9], [-1.1, 51.9], [-1.1, 52.2], [-1.4, 52.2], [-1.4, 51.9]]],
+                "coordinates": [
+                    [
+                        [-1.4, 51.9],
+                        [-1.1, 51.9],
+                        [-1.1, 52.2],
+                        [-1.4, 52.2],
+                        [-1.4, 51.9],
+                    ]
+                ],
             },
             "intersection_geometry": {
                 "type": "Polygon",
-                "coordinates": [[[-1.3, 52.0], [-1.2, 52.0], [-1.2, 52.1], [-1.3, 52.1], [-1.3, 52.0]]],
+                "coordinates": [
+                    [
+                        [-1.3, 52.0],
+                        [-1.2, 52.0],
+                        [-1.2, 52.1],
+                        [-1.3, 52.1],
+                        [-1.3, 52.0],
+                    ]
+                ],
             },
             "overlap_area_ha": 0.3,
             "overlap_area_sqm": 3000.0,
@@ -454,7 +486,9 @@ class TestCheckBoundaryEdpIntersection:
         assert body["intersecting_edps"][1]["label"] == "Norfolk EDP 2"
         assert body["intersecting_edps"][0]["overlap_area_ha"] == pytest.approx(0.5)
         assert body["intersecting_edps"][0]["overlap_percentage"] == pytest.approx(25.0)
-        assert body["intersecting_edps"][0]["intersection_geometry"]["type"] == "Polygon"
+        assert (
+            body["intersecting_edps"][0]["intersection_geometry"]["type"] == "Polygon"
+        )
         assert body["intersecting_edps"][0]["edp_geometry"]["type"] == "Polygon"
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)

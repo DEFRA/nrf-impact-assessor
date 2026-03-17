@@ -6,8 +6,10 @@ help: ## Show this help
 # ---------------------------------------------------------------------------
 # Development
 # ---------------------------------------------------------------------------
-test: ## Run unit tests
-	uv run pytest tests/ app/ -v
+TEST_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5434
+
+test: ## Run all tests (unit + integration); requires postgres container on port 5434
+	$(TEST_ENV) uv run pytest tests/ app/ -v
 
 lint: ## Run linter
 	uv run ruff check .

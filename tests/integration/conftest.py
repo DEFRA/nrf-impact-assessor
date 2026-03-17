@@ -26,8 +26,13 @@ def test_engine() -> Engine:
     3. Returns engine for test use
     4. Drops database after all tests complete
     """
-    admin_db_url = "postgresql://postgres@localhost:5432/postgres"  # NOSONAR
-    test_db_url = "postgresql://postgres@localhost:5432/test_nrf_impact"  # NOSONAR
+    from app.config import DatabaseSettings
+
+    db = DatabaseSettings()
+    admin_db_url = f"postgresql://{db.user}@{db.host}:{db.port}/postgres"  # NOSONAR
+    test_db_url = (
+        f"postgresql://{db.user}@{db.host}:{db.port}/test_nrf_impact"  # NOSONAR
+    )
 
     # Connect to default postgres database to create test database
     admin_engine = create_engine(admin_db_url)
@@ -61,6 +66,8 @@ def test_engine() -> Engine:
     # This ensures tests use the same migration logic as production
     alembic_ini = Path(__file__).parent.parent.parent / "alembic.ini"
     env = {
+        "DB_HOST": db.host,
+        "DB_PORT": str(db.port),
         "DB_DATABASE": "test_nrf_impact",
         "DB_IAM_AUTHENTICATION": "false",
         "DB_LOCAL_PASSWORD": "",
