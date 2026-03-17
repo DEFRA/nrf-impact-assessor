@@ -1,0 +1,23 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Test site in central London - no EDP intersection"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-0.1270, 51.5040],
+            [-0.1270, 51.5048],
+            [-0.1290, 51.5048],
+            [-0.1290, 51.5040],
+            [-0.1270, 51.5040]
+          ]
+        ]
+      }
+    }
+  ]
+}

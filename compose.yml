@@ -84,7 +84,7 @@ services:
       API_TESTING_ENABLED: "true"   # Enable API testing in development environment
     develop:
       watch:
-        - action: sync
+        - action: sync+restart
           path: ./app
           target: /home/nonroot/app
           ignore:
