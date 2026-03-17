@@ -190,9 +190,9 @@ def _find_intersecting_edps(
     stmt = select(
         EdpBoundaryLayer.name,
         EdpBoundaryLayer.attributes,
-        ST_AsGeoJSON(
-            ST_Transform(EdpBoundaryLayer.geometry, output_srid)
-        ).label("edp_geojson"),
+        ST_AsGeoJSON(ST_Transform(EdpBoundaryLayer.geometry, output_srid)).label(
+            "edp_geojson"
+        ),
         ST_AsGeoJSON(ST_Transform(intersection, output_srid)).label(
             "intersection_geojson"
         ),
@@ -210,17 +210,19 @@ def _find_intersecting_edps(
     results = []
     for row in rows:
         area_sqm = row.intersection_area_sqm or 0.0
-        results.append({
-            "label": (row.attributes or {}).get("Label"),
-            "n2k_site_name": (row.attributes or {}).get("N2K_Site_N"),
-            "edp_geometry": json.loads(row.edp_geojson),
-            "intersection_geometry": json.loads(row.intersection_geojson),
-            "overlap_area_ha": round(area_sqm / 10000.0, 4),
-            "overlap_area_sqm": round(area_sqm, 2),
-            "overlap_percentage": round(
-                (area_sqm / input_area_sqm) * 100, 2
-            ) if input_area_sqm > 0 else 0.0,
-        })
+        results.append(
+            {
+                "label": (row.attributes or {}).get("Label"),
+                "n2k_site_name": (row.attributes or {}).get("N2K_Site_N"),
+                "edp_geometry": json.loads(row.edp_geojson),
+                "intersection_geometry": json.loads(row.intersection_geojson),
+                "overlap_area_ha": round(area_sqm / 10000.0, 4),
+                "overlap_area_sqm": round(area_sqm, 2),
+                "overlap_percentage": round((area_sqm / input_area_sqm) * 100, 2)
+                if input_area_sqm > 0
+                else 0.0,
+            }
+        )
     return results
 
 
@@ -234,7 +236,9 @@ def _find_intersecting_edps(
 )
 async def check_boundary(
     geometry_file: UploadFile,
-    proj: Annotated[str, Query(description="Output projection (e.g. 'EPSG:4326')")] = "EPSG:4326",
+    proj: Annotated[
+        str, Query(description="Output projection (e.g. 'EPSG:4326')")
+    ] = "EPSG:4326",
 ):
     """Check whether an uploaded geometry intersects with EDP areas.
 
