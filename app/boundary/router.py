@@ -10,7 +10,6 @@ import tempfile
 import zipfile
 from io import BytesIO
 from pathlib import Path
-
 from typing import Annotated
 
 import geopandas as gpd
