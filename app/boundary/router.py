@@ -77,8 +77,7 @@ def _validate_extension(filename: str) -> str:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Unsupported file format: {suffix}. "
-                "Use .zip, .geojson, .json, or .kml"
+                f"Unsupported file format: {suffix}. Use .zip, .geojson, .json, or .kml"
             ),
         )
     return suffix
@@ -90,9 +89,7 @@ def _write_to_temp(content: bytes, tmpdir: Path, suffix: str) -> Path:
     Uses tempfile.NamedTemporaryFile so the path is entirely OS-generated
     with no user-controlled data in the filename.
     """
-    with tempfile.NamedTemporaryFile(
-        dir=tmpdir, suffix=suffix, delete=False
-    ) as tmp:
+    with tempfile.NamedTemporaryFile(dir=tmpdir, suffix=suffix, delete=False) as tmp:
         tmp.write(content)
         return Path(tmp.name)
 
@@ -154,9 +151,7 @@ def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
         stem = shp_path.stem
         shp_dir = shp_path.parent
         missing = [
-            ext
-            for ext in (".dbf", ".shx")
-            if not (shp_dir / f"{stem}{ext}").exists()
+            ext for ext in (".dbf", ".shx") if not (shp_dir / f"{stem}{ext}").exists()
         ]
         if missing:
             raise HTTPException(
@@ -195,9 +190,9 @@ def _find_intersecting_edps(
     stmt = select(
         EdpBoundaryLayer.name,
         EdpBoundaryLayer.attributes,
-        ST_AsGeoJSON(
-            ST_Transform(EdpBoundaryLayer.geometry, output_srid)
-        ).label("edp_geojson"),
+        ST_AsGeoJSON(ST_Transform(EdpBoundaryLayer.geometry, output_srid)).label(
+            "edp_geojson"
+        ),
         ST_AsGeoJSON(ST_Transform(intersection, output_srid)).label(
             "intersection_geojson"
         ),
@@ -215,17 +210,19 @@ def _find_intersecting_edps(
     results = []
     for row in rows:
         area_sqm = row.intersection_area_sqm or 0.0
-        results.append({
-            "label": (row.attributes or {}).get("Label"),
-            "n2k_site_name": (row.attributes or {}).get("N2K_Site_N"),
-            "edp_geometry": json.loads(row.edp_geojson),
-            "intersection_geometry": json.loads(row.intersection_geojson),
-            "overlap_area_ha": round(area_sqm / 10000.0, 4),
-            "overlap_area_sqm": round(area_sqm, 2),
-            "overlap_percentage": round(
-                (area_sqm / input_area_sqm) * 100, 2
-            ) if input_area_sqm > 0 else 0.0,
-        })
+        results.append(
+            {
+                "label": (row.attributes or {}).get("Label"),
+                "n2k_site_name": (row.attributes or {}).get("N2K_Site_N"),
+                "edp_geometry": json.loads(row.edp_geojson),
+                "intersection_geometry": json.loads(row.intersection_geojson),
+                "overlap_area_ha": round(area_sqm / 10000.0, 4),
+                "overlap_area_sqm": round(area_sqm, 2),
+                "overlap_percentage": round((area_sqm / input_area_sqm) * 100, 2)
+                if input_area_sqm > 0
+                else 0.0,
+            }
+        )
     return results
 
 
@@ -239,7 +236,9 @@ def _find_intersecting_edps(
 )
 async def check_boundary(
     geometry_file: UploadFile,
-    proj: Annotated[str, Query(description="Output projection (e.g. 'EPSG:4326')")] = "EPSG:4326",
+    proj: Annotated[
+        str, Query(description="Output projection (e.g. 'EPSG:4326')")
+    ] = "EPSG:4326",
 ):
     """Check whether an uploaded geometry intersects with EDP areas.
 
@@ -293,8 +292,10 @@ async def check_boundary(
 
         geojson = json.loads(gdf.to_json())
 
-    return JSONResponse(content={
-        "geometry": geojson,
-        "intersecting_edps": intersecting_edps,
-        "intersects_edp": len(intersecting_edps) > 0,
-    })
+    return JSONResponse(
+        content={
+            "geometry": geojson,
+            "intersecting_edps": intersecting_edps,
+            "intersects_edp": len(intersecting_edps) > 0,
+        }
+    )

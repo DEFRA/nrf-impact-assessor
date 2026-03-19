@@ -203,3 +203,4 @@ coverage*
 scripts/.env.local
 
 iat_input
+/backups/
