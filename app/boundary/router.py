@@ -35,6 +35,40 @@ from app.spatial.utils import ensure_crs
 
 logger = logging.getLogger(__name__)
 
+_VALID_GEOM_TYPES = {"Polygon", "MultiPolygon"}
+
+
+def _validate_geometry(gdf: gpd.GeoDataFrame) -> None:
+    """Validate geometry data, raising HTTPException on invalid input.
+
+    Checks for unsupported geometry types, null geometries,
+    and invalid geometries (e.g. self-intersections, figure-of-8 shapes).
+    """
+    geom_types = set(gdf.geometry.geom_type.unique())
+    invalid_types = geom_types - _VALID_GEOM_TYPES
+    if invalid_types:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid geometry types found: {', '.join(invalid_types)}. "
+                "Expected: Polygon or MultiPolygon"
+            ),
+        )
+
+    null_count = gdf.geometry.isna().sum()
+    if null_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Found {null_count} null geometries",
+        )
+
+    invalid_count = (~gdf.geometry.is_valid).sum()
+    if invalid_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The uploaded boundary contains invalid geometry (self-intersecting or overlapping lines). Please correct the file and try again.",
+        )
+
 router = APIRouter()
 
 _config = ApiServerConfig()
@@ -282,6 +316,8 @@ async def check_boundary(
                 " Coordinate Reference System defined."
             )
             raise HTTPException(status_code=422, detail=detail) from None
+
+        _validate_geometry(gdf)
 
         repository = _get_repository()
         output_srid = int(proj.split(":")[1])

@@ -336,6 +336,48 @@ class TestCheckBoundaryGeoJSON:
         assert ".shx" in detail
 
 
+class TestCheckBoundaryGeometryValidation:
+    """Tests for geometry validation in POST /check-boundary."""
+
+    def test_self_intersecting_polygon_returns_400(self, client):
+        """A bowtie/figure-of-8 polygon should be rejected."""
+        content = _make_geojson_bytes(
+            coordinates=[[[0, 0], [1, 1], [1, 0], [0, 1], [0, 0]]]
+        )
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "self-intersecting.geojson",
+                    BytesIO(content),
+                    "application/json",
+                )
+            },
+        )
+
+        assert response.status_code == 400
+        assert "invalid geometry" in response.json()["detail"].lower()
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_valid_polygon_passes_validation(self, client):
+        """A valid polygon should pass geometry validation."""
+        content = _make_geojson_bytes(
+            coordinates=[[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]
+        )
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "valid.geojson",
+                    BytesIO(content),
+                    "application/json",
+                )
+            },
+        )
+
+        assert response.status_code == 200
+
+
 class TestCheckBoundaryProjection:
     """Tests for the proj query parameter."""
 
