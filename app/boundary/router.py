@@ -66,7 +66,7 @@ def _validate_geometry(gdf: gpd.GeoDataFrame) -> None:
     if invalid_count > 0:
         raise HTTPException(
             status_code=400,
-            detail=f"The uploaded boundary contains invalid geometry (self-intersecting or overlapping lines). Please correct the file and try again.",
+            detail="The uploaded boundary contains invalid geometry (self-intersecting or overlapping lines). Please correct the file and try again.",
         )
 
 router = APIRouter()
