@@ -38,36 +38,32 @@ logger = logging.getLogger(__name__)
 _VALID_GEOM_TYPES = {"Polygon", "MultiPolygon"}
 
 
-def _validate_geometry(gdf: gpd.GeoDataFrame) -> None:
-    """Validate geometry data, raising HTTPException on invalid input.
+def _validate_geometry(gdf: gpd.GeoDataFrame) -> str | None:
+    """Validate geometry data, returning an error message on invalid input.
 
     Checks for unsupported geometry types, null geometries,
     and invalid geometries (e.g. self-intersections, figure-of-8 shapes).
+
+    Returns:
+        Error message string if validation fails, or None if valid.
     """
     geom_types = set(gdf.geometry.geom_type.unique())
     invalid_types = geom_types - _VALID_GEOM_TYPES
     if invalid_types:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Invalid geometry types found: {', '.join(invalid_types)}. "
-                "Expected: Polygon or MultiPolygon"
-            ),
+        return (
+            f"Invalid geometry types found: {', '.join(invalid_types)}. "
+            "Expected: Polygon or MultiPolygon"
         )
 
     null_count = gdf.geometry.isna().sum()
     if null_count > 0:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Found {null_count} null geometries",
-        )
+        return f"Found {null_count} null geometries"
 
     invalid_count = (~gdf.geometry.is_valid).sum()
     if invalid_count > 0:
-        raise HTTPException(
-            status_code=400,
-            detail="The uploaded boundary contains invalid geometry (self-intersecting or overlapping lines). Please correct the file and try again.",
-        )
+        return "The uploaded boundary contains invalid geometry (self-intersecting or overlapping lines). Please correct the file and try again."
+
+    return None
 
 router = APIRouter()
 
@@ -317,7 +313,20 @@ async def check_boundary(
             )
             raise HTTPException(status_code=422, detail=detail) from None
 
-        _validate_geometry(gdf)
+        validation_error = _validate_geometry(gdf)
+
+        if validation_error:
+            gdf = gdf.to_crs(proj)
+            gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
+            geojson = json.loads(gdf.to_json())
+
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": validation_error,
+                    "geometry": geojson,
+                },
+            )
 
         repository = _get_repository()
         output_srid = int(proj.split(":")[1])

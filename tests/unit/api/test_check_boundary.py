@@ -339,8 +339,8 @@ class TestCheckBoundaryGeoJSON:
 class TestCheckBoundaryGeometryValidation:
     """Tests for geometry validation in POST /check-boundary."""
 
-    def test_self_intersecting_polygon_returns_400(self, client):
-        """A bowtie/figure-of-8 polygon should be rejected."""
+    def test_self_intersecting_polygon_returns_400_with_geometry(self, client):
+        """A bowtie/figure-of-8 polygon should be rejected but include parsed geometry."""
         content = _make_geojson_bytes(
             coordinates=[[[0, 0], [1, 1], [1, 0], [0, 1], [0, 0]]]
         )
@@ -356,7 +356,10 @@ class TestCheckBoundaryGeometryValidation:
         )
 
         assert response.status_code == 400
-        assert "invalid geometry" in response.json()["detail"].lower()
+        body = response.json()
+        assert "invalid geometry" in body["error"].lower()
+        assert body["geometry"]["type"] == "FeatureCollection"
+        assert len(body["geometry"]["features"]) == 1
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_valid_polygon_passes_validation(self, client):
