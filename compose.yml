@@ -76,6 +76,7 @@ services:
       - "compose/secrets.env"
     environment:
       PORT: ${PORT:-8085}
+      GIT_HASH: ${GIT_HASH:-unknown}
       AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-http://localstack:4566}
       MONGO_URI: ${MONGO_URI:-mongodb://mongodb:27017/}
       HOST: ${HOST:-0.0.0.0}

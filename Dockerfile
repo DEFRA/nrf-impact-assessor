@@ -57,7 +57,9 @@ RUN --mount=type=cache,target=/home/nonroot/.cache/uv,uid=1000,gid=1000 \
     uv sync --locked --compile-bytecode --link-mode=copy --no-dev
 
 ARG PORT
+ARG GIT_HASH=unknown
 ENV PORT=${PORT}
+ENV GIT_HASH=${GIT_HASH}
 EXPOSE ${PORT}
 
 CMD [ "-m", "app.main" ]
