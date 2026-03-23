@@ -199,6 +199,7 @@ compose/secrets.env
 
 coverage*
 /.claude/settings.local.json
+.git-hash
 
 scripts/.env.local
 
