@@ -1,6 +1,6 @@
 """Unit tests for Nutrient assessment module."""
 
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import geopandas as gpd
 import pandas as pd
@@ -331,7 +331,13 @@ def mock_repository(
     sample_wwtw_lookup,
 ):
     """Create a mock repository that returns sample data based on the query."""
-    repo = Mock()
+    repo = MagicMock()
+
+    # Configure session() context manager for _resolve_versions / _load_lookup
+    mock_session = MagicMock()
+    mock_session.execute.return_value.fetchall.return_value = []
+    mock_session.execute.return_value.fetchone.return_value = (1,)
+    repo.session.return_value.__enter__.return_value = mock_session
 
     def execute_query_side_effect(stmt, as_gdf=False):
         compiled_params = stmt.compile().params
@@ -417,9 +423,9 @@ def test_run_assessment_basic(sample_rlb, mock_repository):
     assert "p_total" in result_df.columns
     assert "dev_area_ha" in result_df.columns
 
-    # Verify repository was called (execute_query for version lookups + lookups,
-    # batch_majority_overlap_postgis for spatial, land_use_intersection_postgis for land use)
-    assert mock_repository.execute_query.call_count >= 4
+    # Verify repository was called (execute_query for lookup data fetches;
+    # version lookups now use session() directly)
+    assert mock_repository.execute_query.call_count >= 2
     assert mock_repository.batch_majority_overlap_postgis.call_count == 1
     assert mock_repository.land_use_intersection_postgis.call_count == 1
 
