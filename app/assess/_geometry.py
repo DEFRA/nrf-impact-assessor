@@ -30,13 +30,25 @@ def read_geometry_from_upload(
         HTTPException: If the file format is unsupported or unreadable.
     """
     suffix = Path(filename).suffix.lower()
-    saved_path = tmpdir / filename
+    # Use a fixed, safe filename — never use the caller-supplied name as a path
+    # component to prevent path traversal (e.g. "../../etc/passwd").
+    saved_path = tmpdir / f"upload{suffix}"
     saved_path.write_bytes(content)
 
     if suffix == ".zip":
         extract_dir = tmpdir / "extracted"
         extract_dir.mkdir()
         with zipfile.ZipFile(saved_path, "r") as zf:
+            # Validate every member before extraction (Zip Slip defence).
+            # Mirrors the check already present in boundary/router.py.
+            resolved_extract = extract_dir.resolve()
+            for member in zf.infolist():
+                member_path = (extract_dir / member.filename).resolve()
+                if not member_path.is_relative_to(resolved_extract):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid zip: entry would extract outside target directory",
+                    )
             zf.extractall(extract_dir)
         shp_files = list(extract_dir.glob("**/*.shp"))
         geojson_files = list(extract_dir.glob("**/*.geojson"))

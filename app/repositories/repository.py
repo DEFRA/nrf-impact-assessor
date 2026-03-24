@@ -33,6 +33,29 @@ def _coerce_param(value: Any) -> Any:
     return value.name if isinstance(value, PyEnum) else value
 
 
+_SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SAFE_QUALIFIED_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _assert_safe_identifier(value: str, label: str) -> None:
+    """Raise ValueError if value is not a safe SQL identifier.
+
+    Prevents SQL injection via caller-supplied field names interpolated
+    into text() queries. Allows only alphanumeric characters and underscores,
+    starting with a letter or underscore.
+    """
+    if not _SAFE_IDENTIFIER_RE.fullmatch(value):
+        msg = f"Unsafe SQL identifier for {label!r}: {value!r}. Only letters, digits, and underscores are permitted."
+        raise ValueError(msg)
+
+
+def _assert_safe_qualified(value: str, label: str) -> None:
+    """Raise ValueError if value is not a safe schema.table qualified name."""
+    if not _SAFE_QUALIFIED_RE.fullmatch(value):
+        msg = f"Unsafe qualified table name for {label!r}: {value!r}. Expected format: schema.table with only safe identifier characters."
+        raise ValueError(msg)
+
+
 def _sa_params(compiled_sql: str, params: dict, prefix: str = "") -> tuple[str, dict]:
     """Convert compiled %(name)s SQL to SQLAlchemy :name style with optional prefix.
 
@@ -45,7 +68,7 @@ def _sa_params(compiled_sql: str, params: dict, prefix: str = "") -> tuple[str, 
         renamed[new_name] = _coerce_param(params[m.group(1)])
         return f":{new_name}"
 
-    return re.sub(r'%\((\w+)\)s', repl, compiled_sql), renamed
+    return re.sub(r"%\((\w+)\)s", repl, compiled_sql), renamed
 
 
 class Repository:
@@ -127,11 +150,12 @@ class Repository:
             filter_str, filter_params = _sa_params(
                 str(compiled_filter), compiled_filter.params
             )
-            attr_str, attr_params = _sa_params(
-                str(compiled_attr), compiled_attr.params
-            )
+            attr_str, attr_params = _sa_params(str(compiled_attr), compiled_attr.params)
 
             sql_params = {**filter_params, **attr_params}
+
+            _assert_safe_identifier(output_field, "output_field")
+            _assert_safe_qualified(qualified, "qualified")
 
             filter_str = filter_str.replace(f"{qualified}.", "t.")
             attr_str = attr_str.replace(f"{qualified}.", "t.")
@@ -245,6 +269,9 @@ class Repository:
                 attr_str, attr_renamed = _sa_params(
                     str(compiled_attr), compiled_attr.params, prefix
                 )
+
+                _assert_safe_identifier(output_field, "output_field")
+                _assert_safe_qualified(qualified, "qualified")
 
                 filter_str = filter_str.replace(f"{qualified}.", "t.")
                 attr_str = attr_str.replace(f"{qualified}.", "t.")
