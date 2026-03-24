@@ -13,6 +13,7 @@ from app.config import ApiServerConfig, config
 from app.example.router import router as example_router
 from app.health.router import router as health_router
 from app.tiles.router import router as tiles_router
+from app.version.router import router as version_router
 
 logger = getLogger(__name__)
 
@@ -38,6 +39,7 @@ app.add_middleware(TraceIdMiddleware)
 
 # Setup Routes
 app.include_router(health_router)
+app.include_router(version_router)
 app.include_router(example_router)
 app.include_router(assess_router)
 app.include_router(boundary_router)

@@ -14,6 +14,7 @@ COPY --chown=nonroot:nonroot pyproject.toml .
 COPY --chown=nonroot:nonroot README.md .
 COPY --chown=nonroot:nonroot uv.lock .
 COPY --chown=nonroot:nonroot app/ ./app/
+COPY --chmod=444 .git-has[h] ./
 
 RUN --mount=type=cache,target=/home/nonroot/.cache/uv,uid=1000,gid=1000 \
     uv sync --locked --link-mode=copy
@@ -22,7 +23,9 @@ COPY --chown=nonroot:nonroot logging-dev.json .
 
 ARG PORT=8085
 ARG PORT_DEBUG=8086
+ARG GIT_HASH=unknown
 ENV PORT=${PORT}
+ENV GIT_HASH=${GIT_HASH}
 EXPOSE ${PORT} ${PORT_DEBUG}
 
 CMD [ "-m", "app.main" ]
@@ -49,6 +52,7 @@ COPY --from=development /home/nonroot/pyproject.toml .
 COPY --chown=nonroot:nonroot README.md .
 COPY --from=development /home/nonroot/uv.lock .
 COPY --from=development /home/nonroot/app ./app
+COPY --from=development --chmod=444 /home/nonroot/.git-has[h] ./
 
 COPY logging.json .
 
@@ -57,7 +61,9 @@ RUN --mount=type=cache,target=/home/nonroot/.cache/uv,uid=1000,gid=1000 \
     uv sync --locked --compile-bytecode --link-mode=copy --no-dev
 
 ARG PORT
+ARG GIT_HASH=unknown
 ENV PORT=${PORT}
+ENV GIT_HASH=${GIT_HASH}
 EXPOSE ${PORT}
 
 CMD [ "-m", "app.main" ]

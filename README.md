@@ -5,13 +5,22 @@ This is work-in-progress. See [To Do List](./TODO.md)
 - [nrf-impact-assessor](#nrf-impact-assessor)
   - [Requirements](#requirements)
     - [Python](#python)
+    - [Environment Variable Configuration](#environment-variable-configuration)
     - [Linting and Formatting](#linting-and-formatting)
+      - [Running Ruff](#running-ruff)
+      - [Pre-commit Hooks](#pre-commit-hooks)
+      - [VS Code Configuration](#vs-code-configuration)
+      - [Ruff Configuration](#ruff-configuration)
     - [Docker](#docker)
+  - [Makefile](#makefile)
   - [Local development](#local-development)
-    - [Setup & Configuration](#setup--configuration)
+    - [Setup \& Configuration](#setup--configuration)
     - [Development](#development)
+      - [Option 1: Startup script (preferred)](#option-1-startup-script-preferred)
+      - [Option 2: Taskipy command](#option-2-taskipy-command)
+      - [Docker Compose (manual)](#docker-compose-manual)
+      - [Monitoring Stack (opt-in)](#monitoring-stack-opt-in)
     - [Testing](#testing)
-    - [Production Mode](#production-mode)
   - [API endpoints](#api-endpoints)
   - [Custom Cloudwatch Metrics](#custom-cloudwatch-metrics)
   - [Pipelines](#pipelines)
@@ -169,14 +178,42 @@ See [Docs/environment.md](./Docs/environment.md) for a full reference of all env
 
 ### Development
 
-This app can be run locally by either using the Docker Compose project or via the provided script `scripts/start_dev_server.sh`.
+There are two ways to run the app locally.
 
-#### Using Docker Compose
+Both approaches inject `GIT_HASH` so the `/version` endpoint reports the current commit.
+
+#### Option 1: Startup script (preferred)
+
+The recommended way to run locally. This script checks Docker is running, starts dependent services, loads env files and secrets, then starts the app with hot-reload:
+
+```bash
+./scripts/start_dev_server.sh
+```
+
+The service will then run on `http://localhost:8085`.
+
+#### Option 2: Taskipy command
+
+Runs only the FastAPI application directly (no Docker, no dependent services). Use this when LocalStack, MongoDB and PostGIS are already running separately:
+
+```bash
+uv run task dev
+```
+
+#### Docker Compose (manual)
+
+You can also manage Docker Compose services directly:
 
 ```bash
 make up        # start core services (LocalStack, MongoDB, PostGIS)
 make logs      # tail service logs
 make rebuild   # rebuild and restart after code changes
+```
+
+Or directly:
+
+```bash
+docker compose --profile service up --build
 ```
 
 #### Monitoring Stack (opt-in)
@@ -190,33 +227,6 @@ make monitoring-down   # stop everything
 ```
 
 Once running, Grafana is available at `http://localhost:3000` (admin/admin).
-
-Or directly:
-
-```bash
-docker compose --profile service up --build
-```
-
-If you want to enable hot-reloading, you can press the `w` key once the compose project is running to enable `watch` mode.
-
-#### Using the provided script
-
-To run the application using the provided script, you can execute:
-
-```bash
-./scripts/start_dev_server.sh
-```
-
-This script will:
-
-- Check if Docker is running
-- Start dependent services with Docker Compose (Localstack, MongoDB)
-- Set up environment variables for local development
-- Load configuration from compose/aws.env and compose/secrets.env
-- Verify the Python virtual environment is set up
-- Start the FastAPI application with hot-reload enabled
-
-The service will then run on `http://localhost:8085`
 
 ### Testing
 

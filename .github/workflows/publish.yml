@@ -23,6 +23,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
+      - name: Set git hash
+        run: echo "${{ github.sha }}" > .git-hash
+
       - name: Build and Publish
         uses: DEFRA/cdp-build-action/build@main
         with:
