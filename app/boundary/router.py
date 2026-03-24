@@ -325,7 +325,7 @@ async def check_boundary(
                 status_code=400,
                 content={
                     "error": validation_error,
-                    "boundaryGeoJsonFull": geojson,
+                    "boundary_geojson_full": geojson,
                 },
             )
 
@@ -341,8 +341,8 @@ async def check_boundary(
 
     return JSONResponse(
         content={
-            "boundaryGeoJsonFull": geojson,
-            "boundaryGeometry": boundary_geometry,
-            "intersectingEdps": intersecting_edps,
+            "boundary_geojson_full": geojson,
+            "boundary_geometry": boundary_geometry,
+            "intersecting_edps": intersecting_edps,
         }
     )
