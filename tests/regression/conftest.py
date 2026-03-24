@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine
 
+from app.config import DatabaseSettings
 from app.repositories.repository import Repository
 
 
@@ -30,10 +31,14 @@ def production_repository() -> Repository:
     - Database migrations applied
     - Full reference data loaded via scripts/load_data.py
 
+    Connection is configured via DB_* environment variables (same as the app).
+    Defaults: host=localhost, port=5432, database=nrf_impact, user=postgres.
+
     Returns:
         Repository instance connected to nrf_impact database
     """
-    engine = create_engine("postgresql://postgres:password@localhost:5432/nrf_impact")
+    settings = DatabaseSettings()
+    engine = create_engine(settings.connection_url)
     return Repository(engine)
 
 

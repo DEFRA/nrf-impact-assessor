@@ -568,6 +568,11 @@ class NutrientAssessment:
         existing_round_cols = [col for col in round_cols if col in rlb_gdf.columns]
         rlb_gdf[existing_round_cols] = rlb_gdf[existing_round_cols].round(2)
 
+        logger.info(
+            "Totals per development:\n%s",
+            rlb_gdf[["rlb_id", *existing_round_cols]].to_string(index=False),
+        )
+
         return rlb_gdf
 
     def _filter_out_of_scope(self, rlb_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
