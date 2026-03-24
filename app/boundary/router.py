@@ -244,12 +244,12 @@ def _find_intersecting_edps(
         results.append(
             {
                 "label": (row.attributes or {}).get("Label"),
-                "n2k_site_name": (row.attributes or {}).get("N2K_Site_N"),
-                "edp_geometry": json.loads(row.edp_geojson),
-                "intersection_geometry": json.loads(row.intersection_geojson),
-                "overlap_area_ha": round(area_sqm / 10000.0, 4),
-                "overlap_area_sqm": round(area_sqm, 2),
-                "overlap_percentage": round((area_sqm / input_area_sqm) * 100, 2)
+                "n2kSiteName": (row.attributes or {}).get("N2K_Site_N"),
+                "edpGeometry": json.loads(row.edp_geojson),
+                "intersectionGeometry": json.loads(row.intersection_geojson),
+                "overlapAreaHa": round(area_sqm / 10000.0, 4),
+                "overlapAreaSqm": round(area_sqm, 2),
+                "overlapPercentage": round((area_sqm / input_area_sqm) * 100, 2)
                 if input_area_sqm > 0
                 else 0.0,
             }
@@ -325,7 +325,7 @@ async def check_boundary(
                 status_code=400,
                 content={
                     "error": validation_error,
-                    "boundary_geojson_full": geojson,
+                    "boundaryGeojsonFull": geojson,
                 },
             )
 
@@ -341,8 +341,8 @@ async def check_boundary(
 
     return JSONResponse(
         content={
-            "boundary_geojson_full": geojson,
-            "boundary_geometry": boundary_geometry,
-            "intersecting_edps": intersecting_edps,
+            "boundaryGeojsonFull": geojson,
+            "boundaryGeometry": boundary_geometry,
+            "intersectingEdps": intersecting_edps,
         }
     )
