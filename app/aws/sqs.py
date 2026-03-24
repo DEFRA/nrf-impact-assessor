@@ -92,6 +92,23 @@ class SQSClient:
 
         return results
 
+    def change_message_visibility(
+        self, receipt_handle: str, visibility_timeout: int
+    ) -> None:
+        """Extend the visibility timeout of an in-flight message.
+
+        Call periodically during long-running jobs to prevent SQS from
+        re-delivering the message before processing completes.
+        """
+        try:
+            self.sqs.change_message_visibility(
+                QueueUrl=self.queue_url,
+                ReceiptHandle=receipt_handle,
+                VisibilityTimeout=visibility_timeout,
+            )
+        except ClientError as e:
+            logger.warning(f"Failed to extend message visibility timeout: {e}")
+
     def delete_message(self, receipt_handle: str) -> None:
         """Delete message from queue after successful processing.
 
