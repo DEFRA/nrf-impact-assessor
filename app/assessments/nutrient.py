@@ -12,7 +12,7 @@ import time
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-from sqlalchemy import func, select, text
+from sqlalchemy import select, text
 
 from app.calculators import (
     apply_buffer,
@@ -22,7 +22,7 @@ from app.calculators import (
 )
 from app.config import CONSTANTS, AssessmentConfig, DebugConfig, RequiredColumns
 from app.debug import save_debug_gdf
-from app.models.db import CoefficientLayer, LookupTable, SpatialLayer
+from app.models.db import LookupTable, SpatialLayer
 from app.models.enums import SpatialLayerType
 from app.repositories.repository import Repository
 

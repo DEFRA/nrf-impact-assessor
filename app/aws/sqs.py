@@ -82,10 +82,7 @@ class SQSClient:
             except ValidationError as e:
                 logger.error(
                     f"Invalid job message format: {e}",
-                    extra={
-                        "message_id": raw_message.get("MessageId"),
-                        "body": body,
-                    },
+                    extra={"message_id": raw_message.get("MessageId")},
                 )
                 # Don't delete - let visibility timeout expire
                 # Message will retry and eventually move to DLQ after maxReceiveCount

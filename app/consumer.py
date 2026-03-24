@@ -115,9 +115,7 @@ def _with_visibility_heartbeat(fn, sqs_client, receipt_handle, visibility_timeou
     def _heartbeat():
         while not stop.wait(interval):
             sqs_client.change_message_visibility(receipt_handle, visibility_timeout)
-            logger.debug(
-                f"Extended SQS visibility timeout by {visibility_timeout}s"
-            )
+            logger.debug(f"Extended SQS visibility timeout by {visibility_timeout}s")
 
     thread = threading.Thread(target=_heartbeat, daemon=True)
     thread.start()
@@ -161,8 +159,8 @@ class SqsConsumer:
                 for job_message, receipt_handle in results:
                     logger.info(f"Processing job: {job_message.job_id}")
                     _with_visibility_heartbeat(
-                        lambda: self.orchestrator.process_job(
-                            job_message, job_message.assessment_type
+                        lambda msg=job_message: self.orchestrator.process_job(
+                            msg, msg.assessment_type
                         ),
                         self.sqs_client,
                         receipt_handle,

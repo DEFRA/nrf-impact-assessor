@@ -1,4 +1,4 @@
-.PHONY: help test lint format build up down logs rebuild health monitoring-up monitoring-down monitoring-logs load-data load-data-sample load-data-layer load-data-lookup db-migrate db-rollback db-backup db-backup-schema db-backup-globals db-backup-tables db-restore secrets-init _check-secrets
+.PHONY: help test lint format build up down logs rebuild health monitoring-up monitoring-down monitoring-logs load-data load-data-sample load-data-layer load-data-lookup db-migrate db-rollback db-backup db-backup-schema db-backup-globals db-backup-tables db-restore db-restore-tables secrets-init _check-secrets
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -54,14 +54,18 @@ db-backup-globals: ## Cluster-level roles and grants (.sql.gz via pg_dumpall)
 		| gzip > $(BACKUP_DIR)/$(DB_NAME)_globals_$(TS).sql.gz
 	@echo "Globals backup written to $(BACKUP_DIR)"
 
-db-backup-tables: ## Per-table backup — one .sql.gz per table in nrf_reference
+db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table in nrf_reference
 	@mkdir -p $(BACKUP_DIR)
+	@schema_out="$(BACKUP_DIR)/nrf_reference_schema_$(TS).sql.gz"; \
+	echo "  nrf_reference schema → $$schema_out"; \
+	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain \
+		--no-password --schema-only -n nrf_reference $(DB_NAME) | gzip > "$$schema_out"
 	@for table in $(DB_TABLES); do \
 		name=$$(echo $$table | tr '.' '_'); \
 		out="$(BACKUP_DIR)/$${name}_$(TS).sql.gz"; \
 		echo "  $$table → $$out"; \
 		docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain \
-			--no-password -t $$table $(DB_NAME) | gzip > "$$out"; \
+			--no-password --data-only -t $$table $(DB_NAME) | gzip > "$$out"; \
 	done
 	@echo "Per-table backups written to $(BACKUP_DIR)"
 
@@ -70,6 +74,23 @@ db-restore: ## Restore from .sql.gz backup: make db-restore BACKUP_FILE=./backup
 	@test -f "$(BACKUP_FILE)" || (echo "ERROR: file not found: $(BACKUP_FILE)"; exit 1)
 	zcat $(BACKUP_FILE) | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME)
 	@echo "Restore complete from $(BACKUP_FILE)"
+
+db-restore-tables: ## Restore per-table backup: apply schema grants then table data from BACKUP_DIR
+	@test -n "$(BACKUP_DIR)" || (echo "ERROR: set BACKUP_DIR=<path>"; exit 1)
+	@schema_file=$$(ls -t $(BACKUP_DIR)/nrf_reference_schema_*.sql.gz 2>/dev/null | head -1); \
+	if [ -z "$$schema_file" ]; then \
+		echo "ERROR: no nrf_reference_schema_*.sql.gz found in $(BACKUP_DIR)"; exit 1; \
+	fi; \
+	echo "Restoring schema grants from $$schema_file"; \
+	zcat "$$schema_file" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME)
+	@for table in $(DB_TABLES); do \
+		name=$$(echo $$table | tr '.' '_'); \
+		f=$$(ls -t $(BACKUP_DIR)/$${name}_*.sql.gz 2>/dev/null | head -1); \
+		if [ -z "$$f" ]; then echo "  WARNING: no backup found for $$table — skipping"; continue; fi; \
+		echo "  $$table ← $$f"; \
+		zcat "$$f" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME); \
+	done
+	@echo "Per-table restore complete from $(BACKUP_DIR)"
 
 # ---------------------------------------------------------------------------
 # Database migrations

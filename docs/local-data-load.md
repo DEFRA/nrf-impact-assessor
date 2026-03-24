@@ -260,11 +260,12 @@ All backup targets write compressed `.sql.gz` files to `./backups/` by default. 
 
 ### Per-table backup (recommended before a load)
 
-Produces one `.sql.gz` file per `nrf_reference` table, timestamped together so they can be restored as a set.
+Produces a schema file (DDL + grants) and one data-only `.sql.gz` file per `nrf_reference` table, all timestamped together so they can be restored as a set.
 
 ```bash
 make db-backup-tables
 # output:
+#   backups/nrf_reference_schema_20260316_120000.sql.gz        ← schema DDL + grants
 #   backups/nrf_reference_spatial_layer_20260316_120000.sql.gz
 #   backups/nrf_reference_coefficient_layer_20260316_120000.sql.gz
 #   backups/nrf_reference_edp_boundary_layer_20260316_120000.sql.gz
@@ -300,21 +301,28 @@ make db-backup-globals
 
 ### Restore
 
-```bash
-# Restore a single table backup:
-make db-restore BACKUP_FILE=./backups/nrf_reference_spatial_layer_20260316_120000.sql.gz
+**Per-table restore** — use `db-restore-tables` (not `db-restore`). It applies the schema file first (ensuring the `nrf_reference` schema, custom types, and grants exist) and then restores each table's data:
 
-# Restore a full database backup:
+```bash
+make db-restore-tables BACKUP_DIR=./backups
+```
+
+It picks the most recent `nrf_reference_schema_*.sql.gz` and `nrf_reference_<table>_*.sql.gz` files found in `BACKUP_DIR`. All files in the dir can coexist from multiple backup runs — the latest per name is used.
+
+**Full database restore** — for backups produced by `db-backup`:
+
+```bash
 make db-restore BACKUP_FILE=./backups/nrf_impact_20260316_120000.sql.gz
 ```
 
-Restore pipes the decompressed SQL through `psql` into the running container. Run `docker compose up postgres` first if the container is not already up.
+Both targets pipe the decompressed SQL through `psql` into the running container. Run `docker compose up db` first if the container is not already up.
 
 ### Backup file naming
 
 | Target | File pattern |
 |---|---|
-| `db-backup-tables` | `backups/nrf_reference_<table>_<YYYYMMDD_HHMMSS>.sql.gz` |
+| `db-backup-tables` | `backups/nrf_reference_schema_<YYYYMMDD_HHMMSS>.sql.gz` (schema + grants) |
+| `db-backup-tables` | `backups/nrf_reference_<table>_<YYYYMMDD_HHMMSS>.sql.gz` (data, one per table) |
 | `db-backup` | `backups/nrf_impact_<YYYYMMDD_HHMMSS>.sql.gz` |
 | `db-backup-schema` | `backups/nrf_impact_schema_<YYYYMMDD_HHMMSS>.sql.gz` |
 | `db-backup-globals` | `backups/nrf_impact_globals_<YYYYMMDD_HHMMSS>.sql.gz` |
@@ -334,8 +342,10 @@ All files within a single `make` invocation share the same timestamp, making it 
 | `relation "nrf_reference.spatial_layer" does not exist` | Migrations have not been applied | Run `uv run alembic upgrade head` |
 | Load completes but row count is 0 | Source file is empty or CRS mismatch caused all geometries to be dropped | Open the source file in QGIS to verify it contains data; check CRS |
 | Coefficient load is very slow | ~5.4M polygons is expected to take several minutes | This is normal; use `--sample` for quick tests |
-| `db-backup-tables` produces empty files | Container not running or DB name wrong | Confirm `docker compose up postgres` is running and `nrf-postgis` is the container name |
+| `db-backup-tables` produces empty files | Container not running or DB name wrong | Confirm `docker compose up db` is running and `nrf-postgis` is the container name |
 | `zcat: can't stat` on restore | Wrong path passed to `BACKUP_FILE` | Use the full or relative path, e.g. `make db-restore BACKUP_FILE=./backups/foo.sql.gz` |
+| GRANT errors after per-table restore | Used `db-restore` instead of `db-restore-tables` | Use `make db-restore-tables BACKUP_DIR=./backups` — it applies schema grants before data |
+| `no nrf_reference_schema_*.sql.gz found` | Backup was taken before the schema file was added | Re-take the backup with the current `db-backup-tables`, or manually restore globals + schema first |
 
 ---
 
