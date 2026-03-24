@@ -120,7 +120,7 @@ def _mock_edp_intersections(gdf, repository, output_srid=4326):
 class TestCheckBoundaryGeoJSON:
     """Tests for POST /check-boundary with GeoJSON files."""
 
-    @patch("app.boundary.router._find_intersectingEdps", _mock_no_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_valid_geojson_returns_feature_collection(self, client):
         content = _make_geojson_bytes()
         response = client.post(
@@ -142,7 +142,7 @@ class TestCheckBoundaryGeoJSON:
         assert "type" in body["boundaryGeometry"]
         assert "coordinates" in body["boundaryGeometry"]
 
-    @patch("app.boundary.router._find_intersectingEdps", _mock_no_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_properties_are_stripped_from_features(self, client):
         """User-supplied properties should be removed to avoid leaking PII."""
         content = _make_geojson_bytes()
@@ -161,7 +161,7 @@ class TestCheckBoundaryGeoJSON:
         feature = response.json()["boundaryGeojsonFull"]["features"][0]
         assert feature["properties"] == {}
 
-    @patch("app.boundary.router._find_intersectingEdps", _mock_no_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_json_extension_accepted(self, client):
         content = _make_geojson_bytes()
         response = client.post(
@@ -178,7 +178,7 @@ class TestCheckBoundaryGeoJSON:
         assert response.status_code == 200
         assert response.json()["boundaryGeojsonFull"]["type"] == "FeatureCollection"
 
-    @patch("app.boundary.router._find_intersectingEdps", _mock_no_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_multiple_features_returned(self, client):
         geojson = {
             "type": "FeatureCollection",
@@ -363,7 +363,7 @@ class TestCheckBoundaryGeometryValidation:
         assert body["boundaryGeojsonFull"]["type"] == "FeatureCollection"
         assert len(body["boundaryGeojsonFull"]["features"]) == 1
 
-    @patch("app.boundary.router._find_intersectingEdps", _mock_no_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_valid_polygon_passes_validation(self, client):
         """A valid polygon should pass geometry validation."""
         content = _make_geojson_bytes(
@@ -386,7 +386,7 @@ class TestCheckBoundaryGeometryValidation:
 class TestCheckBoundaryProjection:
     """Tests for the proj query parameter."""
 
-    @patch("app.boundary.router._find_intersectingEdps", _mock_no_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_proj_parameter_reprojects_output(self, client):
         """When proj=EPSG:4326 is passed, geometry should be returned in WGS84."""
         # Use BNG coordinates (EPSG:27700) with explicit CRS
@@ -421,7 +421,7 @@ class TestCheckBoundaryProjection:
             assert -180 <= lng <= 180, f"longitude {lng} out of WGS84 range"
             assert -90 <= lat <= 90, f"latitude {lat} out of WGS84 range"
 
-    @patch("app.boundary.router._find_intersectingEdps", _mock_no_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_default_proj_returns_wgs84(self, client):
         """Without explicit proj parameter, geometry defaults to WGS84 (EPSG:4326)."""
         content = _make_geojson_bytes(
@@ -455,7 +455,7 @@ class TestCheckBoundaryProjection:
             assert -180 <= lng <= 180, f"longitude {lng} out of WGS84 range"
             assert -90 <= lat <= 90, f"latitude {lat} out of WGS84 range"
 
-    @patch("app.boundary.router._find_intersectingEdps", _mock_no_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_proj_27700_returns_bng(self, client):
         """When proj=EPSG:27700 is passed, geometry stays in BNG."""
         content = _make_geojson_bytes(
@@ -492,7 +492,7 @@ class TestCheckBoundaryProjection:
 class TestCheckBoundaryEdpIntersection:
     """Tests for EDP intersection logic in the response."""
 
-    @patch("app.boundary.router._find_intersectingEdps", _mock_no_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_no_intersections_returns_empty_list(self, client):
         content = _make_geojson_bytes()
         response = client.post(
@@ -511,7 +511,7 @@ class TestCheckBoundaryEdpIntersection:
         assert len(body["intersectingEdps"]) == 0
         assert body["intersectingEdps"] == []
 
-    @patch("app.boundary.router._find_intersectingEdps", _mock_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
     def test_intersections_returns_edp_details(self, client):
         content = _make_geojson_bytes()
         response = client.post(
@@ -540,7 +540,7 @@ class TestCheckBoundaryEdpIntersection:
         assert "type" in body["boundaryGeometry"]
         assert "coordinates" in body["boundaryGeometry"]
 
-    @patch("app.boundary.router._find_intersectingEdps", _mock_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
     def test_response_contains_all_expected_keys(self, client):
         content = _make_geojson_bytes()
         response = client.post(
