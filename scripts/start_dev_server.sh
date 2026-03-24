@@ -20,6 +20,7 @@ echo "Waiting for services to be ready..."
 sleep 5
 
 # Set environment variables for local development
+export GIT_HASH=$(git rev-parse HEAD)
 export PORT=8085
 export AWS_ENDPOINT_URL=http://localhost:4566
 export MONGO_URI=mongodb://localhost:27017/

@@ -41,6 +41,5 @@ dev = [
 
 
 [tool.taskipy.tasks]
-compose-dev = "bash -c 'GIT_HASH=$(git rev-parse HEAD) docker compose --profile service up --build --watch'"
-dev = "bash -c 'export GIT_HASH=$(git rev-parse HEAD) MONGO_URI=${MONGO_URI:-mongodb://localhost:27018/} DB_HOST=${DB_HOST:-localhost} DB_PORT=${DB_PORT:-5434} && python -m app.main'"
+dev = "bash -c 'export GIT_HASH=$(git rev-parse HEAD) MONGO_URI=${MONGO_URI:-mongodb://localhost:27018/} DB_HOST=${DB_HOST:-localhost} DB_PORT=${DB_PORT:-5434} && uvicorn app.main:app --host 0.0.0.0 --port 8085 --reload'"
 format = "uv run ruff format . && uv run ruff check . --fix --exit-zero"
