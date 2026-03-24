@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Annotated
 
 import geopandas as gpd
+import shapely
 from fastapi import APIRouter, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 from geoalchemy2.functions import (
@@ -324,7 +325,7 @@ async def check_boundary(
                 status_code=400,
                 content={
                     "error": validation_error,
-                    "geometry": geojson,
+                    "boundaryGeoJsonFull": geojson,
                 },
             )
 
@@ -333,14 +334,15 @@ async def check_boundary(
         intersecting_edps = _find_intersecting_edps(gdf, repository, output_srid)
 
         gdf = gdf.to_crs(proj)
+        boundary_geometry = json.loads(shapely.to_geojson(gdf.union_all()))
         gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
 
         geojson = json.loads(gdf.to_json())
 
     return JSONResponse(
         content={
-            "geometry": geojson,
-            "intersecting_edps": intersecting_edps,
-            "intersects_edp": len(intersecting_edps) > 0,
+            "boundaryGeoJsonFull": geojson,
+            "boundaryGeometry": boundary_geometry,
+            "intersectingEdps": intersecting_edps,
         }
     )
