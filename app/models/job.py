@@ -30,7 +30,8 @@ class ImpactAssessmentJob(BaseModel):
     """
 
     job_id: str = Field(..., description="Unique job identifier")
-    s3_input_key: str = Field(..., description="S3 key to input shapefile zip")
+    s3_input_key: str | None = Field(default=None, description="S3 key to input shapefile zip")
+    geometry: str | None = Field(default=None, description="GeoJSON geometry string embedded in message")
     developer_email: EmailStr = Field(..., description="Developer's email address")
     submitted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     development_name: str = Field(

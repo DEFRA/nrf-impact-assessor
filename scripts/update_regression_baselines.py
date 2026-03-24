@@ -62,7 +62,9 @@ INTERNAL_TO_BASELINE_COLUMNS = {
 BASELINES = [
     {
         "name": "BnW_small_under_1_hectare",
-        "input": INPUTS_DIR / "BnW_small_under_1_hectare" / "BnW_small_under_1_hectare.shp",
+        "input": INPUTS_DIR
+        / "BnW_small_under_1_hectare"
+        / "BnW_small_under_1_hectare.shp",
         "output": EXPECTED_DIR / "BnW_small_under_1_hectare.csv",
         "unique_ref": "update_baseline_small",
     },
@@ -99,7 +101,9 @@ def main() -> None:
 
         df = dataframes["impact_summary"].rename(columns=INTERNAL_TO_BASELINE_COLUMNS)
         df.to_csv(output_path, index=False)
-        print(f"  OK    {output_path.relative_to(Path(__file__).parent.parent)} ({len(df)} rows)")
+        print(
+            f"  OK    {output_path.relative_to(Path(__file__).parent.parent)} ({len(df)} rows)"
+        )
 
     print("\nDone. Review the diff and commit to lock in the new PostGIS baseline.")
 

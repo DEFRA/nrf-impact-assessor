@@ -25,11 +25,8 @@ _VALID_BODY = {
 }
 
 
-def _make_aws_config(
-    bucket="nrf-inputs", queue="http://localhost:4566/000000000000/nrf-queue"
-):
+def _make_aws_config(queue="http://localhost:4566/000000000000/nrf-queue"):
     mock = MagicMock()
-    mock.s3_input_bucket = bucket
     mock.sqs_queue_url = queue
     mock.region = "eu-west-2"
     mock.endpoint_url = "http://localhost:4566"
@@ -44,14 +41,11 @@ def mock_aws_config():
 
 @pytest.fixture(autouse=True)
 def mock_boto3():
-    """Mock both S3 and SQS boto3 clients."""
-    mock_s3 = MagicMock()
+    """Mock SQS boto3 client."""
     mock_sqs = MagicMock()
     mock_sqs.send_message.return_value = {"MessageId": "mock-message-id-123"}
 
     def boto3_client_factory(service, **kwargs):
-        if service == "s3":
-            return mock_s3
         if service == "sqs":
             return mock_sqs
         return MagicMock()
@@ -59,7 +53,7 @@ def mock_boto3():
     with patch(
         "app.test.router.boto3.client", side_effect=boto3_client_factory
     ) as mock:
-        yield {"client": mock, "s3": mock_s3, "sqs": mock_sqs}
+        yield {"client": mock, "sqs": mock_sqs}
 
 
 class TestWktEnqueueEndpoint:
@@ -71,31 +65,26 @@ class TestWktEnqueueEndpoint:
         response = client.post("/test/enqueue", json=_VALID_BODY)
         body = response.json()
         assert "job_id" in body
-        assert "s3_key" in body
         assert "message_id" in body
         assert "note" in body
         assert body["message_id"] == "mock-message-id-123"
 
-    def test_s3_key_format(self):
-        response = client.post("/test/enqueue", json=_VALID_BODY)
-        s3_key = response.json()["s3_key"]
-        job_id = response.json()["job_id"]
-        assert s3_key == f"jobs/{job_id}/input.geojson"
-
-    def test_s3_put_object_called(self, mock_boto3):
+    def test_sqs_message_contains_geometry(self, mock_boto3):
         client.post("/test/enqueue", json=_VALID_BODY)
-        mock_boto3["s3"].put_object.assert_called_once()
-        call_kwargs = mock_boto3["s3"].put_object.call_args.kwargs
-        assert call_kwargs["Bucket"] == "nrf-inputs"
-        assert call_kwargs["Key"].endswith("/input.geojson")
-        assert isinstance(call_kwargs["Body"], bytes)
-
-    def test_geojson_bytes_are_valid(self, mock_boto3):
-        client.post("/test/enqueue", json=_VALID_BODY)
-        body_bytes = mock_boto3["s3"].put_object.call_args.kwargs["Body"]
-        geojson = json.loads(body_bytes)
+        mock_boto3["sqs"].send_message.assert_called_once()
+        call_kwargs = mock_boto3["sqs"].send_message.call_args.kwargs
+        message = json.loads(call_kwargs["MessageBody"])
+        assert message["geometry"] is not None
+        geojson = json.loads(message["geometry"])
         assert geojson["type"] == "FeatureCollection"
         assert len(geojson["features"]) == 1
+
+    def test_sqs_message_has_no_s3_key(self, mock_boto3):
+        client.post("/test/enqueue", json=_VALID_BODY)
+        message = json.loads(
+            mock_boto3["sqs"].send_message.call_args.kwargs["MessageBody"]
+        )
+        assert message.get("s3_input_key") is None
 
     def test_sqs_message_body_is_valid_job(self, mock_boto3):
         client.post("/test/enqueue", json=_VALID_BODY)
@@ -108,18 +97,13 @@ class TestWktEnqueueEndpoint:
         assert message["number_of_dwellings"] == 10
         assert message["developer_email"] == "test@example.com"
 
-    def test_job_id_consistent_across_s3_and_sqs(self, mock_boto3):
+    def test_job_id_consistent_in_message(self, mock_boto3):
         response = client.post("/test/enqueue", json=_VALID_BODY)
         job_id = response.json()["job_id"]
-
-        s3_key = mock_boto3["s3"].put_object.call_args.kwargs["Key"]
         message = json.loads(
             mock_boto3["sqs"].send_message.call_args.kwargs["MessageBody"]
         )
-
-        assert s3_key == f"jobs/{job_id}/input.geojson"
         assert message["job_id"] == job_id
-        assert message["s3_input_key"] == f"jobs/{job_id}/input.geojson"
 
     def test_note_contains_job_id(self):
         response = client.post("/test/enqueue", json=_VALID_BODY)
@@ -140,14 +124,6 @@ class TestWktEnqueueEndpoint:
         assert response.status_code == 400
         assert "Invalid WKT" in response.json()["detail"]
 
-    def test_missing_bucket_returns_400(self):
-        with patch(
-            "app.test.router.AWSConfig", return_value=_make_aws_config(bucket="")
-        ):
-            response = client.post("/test/enqueue", json=_VALID_BODY)
-        assert response.status_code == 400
-        assert "AWS_S3_INPUT_BUCKET" in response.json()["detail"]
-
     def test_missing_queue_url_returns_400(self):
         with patch(
             "app.test.router.AWSConfig", return_value=_make_aws_config(queue="")
@@ -155,17 +131,6 @@ class TestWktEnqueueEndpoint:
             response = client.post("/test/enqueue", json=_VALID_BODY)
         assert response.status_code == 400
         assert "AWS_SQS_QUEUE_URL" in response.json()["detail"]
-
-    def test_s3_failure_returns_502(self, mock_boto3):
-        from botocore.exceptions import ClientError
-
-        mock_boto3["s3"].put_object.side_effect = ClientError(
-            {"Error": {"Code": "NoSuchBucket", "Message": "bucket not found"}},
-            "PutObject",
-        )
-        response = client.post("/test/enqueue", json=_VALID_BODY)
-        assert response.status_code == 502
-        assert "S3 upload failed" in response.json()["detail"]
 
     def test_sqs_failure_returns_502(self, mock_boto3):
         from botocore.exceptions import ClientError
@@ -185,8 +150,10 @@ class TestWktEnqueueEndpoint:
             json={**_VALID_BODY, "wkt": wkt_wgs84, "crs": "EPSG:4326"},
         )
         assert response.status_code == 202
-        geojson = json.loads(mock_boto3["s3"].put_object.call_args.kwargs["Body"])
-        # GeoDataFrame.to_json() always outputs WGS84 for GeoJSON spec compliance
+        message = json.loads(
+            mock_boto3["sqs"].send_message.call_args.kwargs["MessageBody"]
+        )
+        geojson = json.loads(message["geometry"])
         assert geojson["type"] == "FeatureCollection"
 
     def test_default_developer_email(self, mock_boto3):
