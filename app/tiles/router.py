@@ -46,12 +46,14 @@ _repository_lock = threading.Lock()
 
 # Per-layer resolved version cache: SpatialLayerType → (version, expiry)
 _version_cache: dict[SpatialLayerType, tuple[int, float]] = {}
+_version_cache_lock = threading.Lock()
 
 # Version cache for edp_boundary_layer (single table, no layer_type key)
 _edp_version_cache: tuple[int, float] | None = None
 
 # In-process LRU tile cache: (layer_slug, z, x, y, version) → (bytes, expiry)
 _tile_cache: OrderedDict[tuple, tuple[bytes, float]] = OrderedDict()
+_tile_cache_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Prepared SQL (reusable text() clauses)
@@ -133,10 +135,11 @@ def _resolve_layer_version(layer_type: SpatialLayerType) -> int:
     """Return the current max version for the given layer, cached with TTL."""
     now = time.monotonic()
 
-    if layer_type in _version_cache:
-        version, expiry = _version_cache[layer_type]
-        if now < expiry:
-            return version
+    with _version_cache_lock:
+        if layer_type in _version_cache:
+            version, expiry = _version_cache[layer_type]
+            if now < expiry:
+                return version
 
     repo = _get_repository()
     with repo.engine.connect() as conn:
@@ -149,7 +152,8 @@ def _resolve_layer_version(layer_type: SpatialLayerType) -> int:
         ).fetchone()
 
     version = row[0] if row and row[0] is not None else 1
-    _version_cache[layer_type] = (version, now + _tile_config.version_ttl_seconds)
+    with _version_cache_lock:
+        _version_cache[layer_type] = (version, now + _tile_config.version_ttl_seconds)
     return version
 
 
@@ -158,10 +162,11 @@ def _resolve_edp_version() -> int:
     global _edp_version_cache
     now = time.monotonic()
 
-    if _edp_version_cache is not None:
-        version, expiry = _edp_version_cache
-        if now < expiry:
-            return version
+    with _version_cache_lock:
+        if _edp_version_cache is not None:
+            version, expiry = _edp_version_cache
+            if now < expiry:
+                return version
 
     repo = _get_repository()
     with repo.engine.connect() as conn:
@@ -170,7 +175,8 @@ def _resolve_edp_version() -> int:
         ).fetchone()
 
     version = row[0] if row and row[0] is not None else 1
-    _edp_version_cache = (version, now + _tile_config.version_ttl_seconds)
+    with _version_cache_lock:
+        _edp_version_cache = (version, now + _tile_config.version_ttl_seconds)
     return version
 
 
@@ -220,23 +226,25 @@ def _get_tile(layer_slug: str, z: int, x: int, y: int) -> bytes:
     cache_key = (layer_slug, z, x, y, version)
     now = time.monotonic()
 
-    if cache_key in _tile_cache:
-        tile_bytes, expiry = _tile_cache[cache_key]
-        if now < expiry:
-            _tile_cache.move_to_end(cache_key)
-            return tile_bytes
-        del _tile_cache[cache_key]
+    with _tile_cache_lock:
+        if cache_key in _tile_cache:
+            tile_bytes, expiry = _tile_cache[cache_key]
+            if now < expiry:
+                _tile_cache.move_to_end(cache_key)
+                return tile_bytes
+            del _tile_cache[cache_key]
 
     if layer_slug in EDP_TILE_LAYERS:
         tile_bytes = _query_edp_tile(z, x, y, layer_slug, version)
     else:
         tile_bytes = _query_tile(z, x, y, TILE_LAYERS[layer_slug], layer_slug, version)
 
-    # Evict oldest entry when at capacity
-    while len(_tile_cache) >= _tile_config.cache_max_size:
-        _tile_cache.popitem(last=False)
+    with _tile_cache_lock:
+        # Evict oldest entries when at capacity
+        while len(_tile_cache) >= _tile_config.cache_max_size:
+            _tile_cache.popitem(last=False)
+        _tile_cache[cache_key] = (tile_bytes, now + _tile_config.cache_ttl_seconds)
 
-    _tile_cache[cache_key] = (tile_bytes, now + _tile_config.cache_ttl_seconds)
     return tile_bytes
 
 

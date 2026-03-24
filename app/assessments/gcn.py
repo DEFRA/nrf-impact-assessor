@@ -78,13 +78,10 @@ class GcnAssessment:
             input_gdf=combined_extent,
             overlay_table=SpatialLayer,
             overlay_filter=(SpatialLayer.layer_type == SpatialLayerType.GCN_RISK_ZONES),
-            overlay_columns=["attributes"],
+            overlay_columns=[],
+            json_extracts={"attributes": ["RZ"]},
         )
 
-        if "attributes" in risk_zones_clipped.columns:
-            risk_zones_clipped["RZ"] = risk_zones_clipped["attributes"].apply(
-                lambda x: x.get("RZ") if x else None
-            )
         if "RZ" not in risk_zones_clipped.columns:
             msg = "Risk zones missing required 'RZ' attribute"
             raise ValueError(msg)
@@ -107,7 +104,7 @@ class GcnAssessment:
                 ponds["TmpImp"] = "F"
         else:
             logger.info("Loading national ponds with spatial filtering")
-            stmt = select(SpatialLayer).where(
+            stmt = select(SpatialLayer.geometry).where(
                 SpatialLayer.layer_type == SpatialLayerType.GCN_PONDS,
                 ST_Intersects(
                     SpatialLayer.geometry,

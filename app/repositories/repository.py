@@ -5,7 +5,9 @@ tables stored in PostGIS using SQLAlchemy 2.x query builder patterns.
 """
 
 import logging
+import re
 import time
+from enum import Enum as PyEnum
 from typing import Any
 
 import geopandas as gpd
@@ -18,6 +20,32 @@ from app.models.db import Base
 from app.models.enums import SpatialLayerType
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_param(value: Any) -> Any:
+    """Convert Python Enum instances to their .name string for psycopg2.
+
+    Compiled SQLAlchemy expressions store raw Python Enum objects in .params.
+    When passed via text() those bypass SQLAlchemy's TypeEngine, so psycopg2
+    receives the object directly and can't adapt it. The PostgreSQL ENUM type
+    uses UPPERCASE names (e.g. 'WWTW_CATCHMENTS'), matching .name.
+    """
+    return value.name if isinstance(value, PyEnum) else value
+
+
+def _sa_params(compiled_sql: str, params: dict, prefix: str = "") -> tuple[str, dict]:
+    """Convert compiled %(name)s SQL to SQLAlchemy :name style with optional prefix.
+
+    Returns the rewritten SQL and a dict of coerced parameter values.
+    """
+    renamed: dict[str, Any] = {}
+
+    def repl(m: re.Match) -> str:
+        new_name = f"{prefix}{m.group(1)}" if prefix else m.group(1)
+        renamed[new_name] = _coerce_param(params[m.group(1)])
+        return f":{new_name}"
+
+    return re.sub(r'%\((\w+)\)s', repl, compiled_sql), renamed
 
 
 class Repository:
@@ -94,12 +122,19 @@ class Repository:
             qualified = f"{schema}.{table_name}" if schema else table_name
 
             compiled_filter = overlay_filter.compile(dialect=session.bind.dialect)
-            filter_str = str(compiled_filter).replace(f"{qualified}.", "t.")
-            filter_params = dict(compiled_filter.params)
+            compiled_attr = overlay_attr.compile(dialect=session.bind.dialect)
 
-            attr_str = str(overlay_attr.compile(dialect=session.bind.dialect)).replace(
-                f"{qualified}.", "t."
+            filter_str, filter_params = _sa_params(
+                str(compiled_filter), compiled_filter.params
             )
+            attr_str, attr_params = _sa_params(
+                str(compiled_attr), compiled_attr.params
+            )
+
+            sql_params = {**filter_params, **attr_params}
+
+            filter_str = filter_str.replace(f"{qualified}.", "t.")
+            attr_str = attr_str.replace(f"{qualified}.", "t.")
 
             raw_sql = text(f"""
                 SELECT i.input_id, best.attr_val
@@ -114,7 +149,7 @@ class Repository:
                 ) best ON true
             """)
 
-            rows = session.execute(raw_sql, filter_params).fetchall()
+            rows = session.execute(raw_sql, sql_params).fetchall()
 
         df = pd.DataFrame(rows, columns=[input_id_col, output_field])
 
@@ -196,17 +231,26 @@ class Repository:
                 table_name = table.name
                 qualified = f"{schema}.{table_name}" if schema else table_name
 
+                # Compile without literal_binds — JSONB subscripts and some enum
+                # types don't support it. Prefix per lateral to avoid collisions
+                # (all assignments compile to the same param names).
                 compiled_filter = overlay_filter.compile(dialect=session.bind.dialect)
-                filter_str = str(compiled_filter).replace(f"{qualified}.", "t.")
-                # Prefix bind param names to avoid collisions across assignments
-                for param_name, param_value in compiled_filter.params.items():
-                    prefixed = f"lat{idx}_{param_name}"
-                    filter_str = filter_str.replace(f":{param_name}", f":{prefixed}")
-                    all_params[prefixed] = param_value
+                compiled_attr = overlay_attr.compile(dialect=session.bind.dialect)
 
-                attr_str = str(
-                    overlay_attr.compile(dialect=session.bind.dialect)
-                ).replace(f"{qualified}.", "t.")
+                prefix = f"lat{idx}_"
+
+                filter_str, filter_renamed = _sa_params(
+                    str(compiled_filter), compiled_filter.params, prefix
+                )
+                attr_str, attr_renamed = _sa_params(
+                    str(compiled_attr), compiled_attr.params, prefix
+                )
+
+                filter_str = filter_str.replace(f"{qualified}.", "t.")
+                attr_str = attr_str.replace(f"{qualified}.", "t.")
+
+                all_params.update(filter_renamed)
+                all_params.update(attr_renamed)
 
                 lateral_clauses.append(
                     f"LEFT JOIN LATERAL ("
@@ -315,19 +359,23 @@ class Repository:
             session.execute(text("CREATE INDEX ON _tmp_rlb USING GIST (geom)"))
             session.execute(text("ANALYZE _tmp_rlb"))
 
+            # ST_Area is computed directly in the subquery so only a float is
+            # returned up the stack — no intermediate geometry object is
+            # materialised and then discarded by the outer ST_Area call.
             raw_sql = text("""
                 SELECT rlb_id, dwellings, name, dwelling_category, source,
                        crome_id, lu_curr_n_coeff, lu_curr_p_coeff,
                        n_resi_coeff, p_resi_coeff, n2k_site_n,
-                       ST_Area(isect_geom) / 10000.0 AS area_in_nn_catchment_ha
+                       area_in_nn_catchment_ha
                 FROM (
                     SELECT
                         r.rlb_id, r.dwellings, r.name, r.dwelling_category, r.source,
                         c.crome_id, c.lu_curr_n_coeff, c.lu_curr_p_coeff,
                         c.n_resi_coeff, c.p_resi_coeff,
                         nn.attributes->>'N2K_Site_N' AS n2k_site_n,
-                        ST_Intersection(ST_Intersection(r.geom, c.geometry), nn.geometry)
-                            AS isect_geom
+                        ST_Area(
+                            ST_Intersection(ST_Intersection(r.geom, c.geometry), nn.geometry)
+                        ) / 10000.0 AS area_in_nn_catchment_ha
                     FROM _tmp_rlb r
                     JOIN nrf_reference.coefficient_layer c
                         ON c.version = :coeff_version
@@ -338,7 +386,7 @@ class Repository:
                         AND ST_Intersects(r.geom, nn.geometry)
                         AND ST_Intersects(c.geometry, nn.geometry)
                 ) sub
-                WHERE ST_Area(isect_geom) > 0
+                WHERE area_in_nn_catchment_ha > 0
             """)
 
             rows = session.execute(
@@ -372,8 +420,16 @@ class Repository:
         overlay_table: type[Base],
         overlay_filter: Any,
         overlay_columns: list[str],
+        json_extracts: dict[str, list[str]] | None = None,
     ) -> gpd.GeoDataFrame:
-        """Perform spatial intersection using PostGIS server-side."""
+        """Perform spatial intersection using PostGIS server-side.
+
+        Args:
+            json_extracts: Optional dict mapping a JSONB column name to a list of
+                keys to extract server-side, e.g. ``{"attributes": ["RZ", "NAME"]}``.
+                Each key is added as a column with the key name as alias, avoiding
+                a Python-side per-row ``apply`` on the full JSONB blob.
+        """
         from geoalchemy2.functions import (
             ST_GeomFromText,
             ST_Intersection,
@@ -385,6 +441,12 @@ class Repository:
         input_wkt = input_union.wkt
 
         overlay_cols = [getattr(overlay_table, col) for col in overlay_columns]
+
+        if json_extracts:
+            for col_name, keys in json_extracts.items():
+                col = getattr(overlay_table, col_name)
+                for key in keys:
+                    overlay_cols.append(col[key].astext.label(key))
 
         stmt = select(
             *overlay_cols,

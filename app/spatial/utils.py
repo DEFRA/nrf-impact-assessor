@@ -27,7 +27,9 @@ def apply_precision(
     gdf: gpd.GeoDataFrame,
     grid_size: float = 0.0001,
 ) -> gpd.GeoDataFrame:
-    """Apply precision model to geometries to match ArcGIS XY tolerance behavior."""
-    gdf = gdf.copy()
-    gdf["geometry"] = set_precision(gdf.geometry.values, grid_size=grid_size)
-    return gdf
+    """Apply precision model to geometries to match ArcGIS XY tolerance behavior.
+
+    Uses set_geometry() rather than a full DataFrame copy so only the geometry
+    array is replaced; all other column data is shared with the original.
+    """
+    return gdf.set_geometry(set_precision(gdf.geometry.values, grid_size=grid_size))

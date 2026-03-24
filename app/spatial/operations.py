@@ -7,7 +7,7 @@ This module provides common spatial operations used across assessments:
 """
 
 import geopandas as gpd
-from shapely import make_valid
+from shapely import make_valid, set_precision
 
 from app.spatial.utils import apply_precision
 
@@ -39,7 +39,10 @@ def spatial_join_intersect(
         left_precise, right_precise, how="intersection", keep_geom_type=False
     )
 
-    return apply_precision(result, grid_size=grid_size)
+    # result is freshly created by gpd.overlay — modify geometry in-place
+    # rather than going through set_geometry (which creates another new object)
+    result["geometry"] = set_precision(result.geometry.values, grid_size=grid_size)
+    return result
 
 
 def make_valid_geometries(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
