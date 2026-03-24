@@ -74,7 +74,10 @@ class TestPostAssess:
         assert "job_id" in body
         assert body["status"] == "pending"
         assert "access_token" in body
-        assert body["poll_url"] == f"/assess/{body['job_id']}?access_token={body['access_token']}"
+        assert (
+            body["poll_url"]
+            == f"/assess/{body['job_id']}?access_token={body['access_token']}"
+        )
 
     @patch("app.assess.router.run_assessment", side_effect=_fake_run_assessment)
     @patch("app.assess.router._get_repository", return_value=MagicMock())
