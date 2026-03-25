@@ -340,8 +340,10 @@ async def check_boundary(
         first_geom = polygons.geometry.iloc[0]
         authority, code = gdf.crs.to_authority()
         crs_urn = f"urn:ogc:def:crs:{authority}::{code}"
+        geom = first_geom.__geo_interface__
         boundary_geometry_original = {
-            **first_geom.__geo_interface__,
+            "type": geom["type"],
+            "coordinates": geom["coordinates"],
             "crs": {
                 "type": "name",
                 "properties": {"name": crs_urn},
