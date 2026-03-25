@@ -382,46 +382,11 @@ class TestCheckBoundaryGeometryValidation:
 
 
 class TestCheckBoundaryProjection:
-    """Tests for the proj query parameter."""
+    """Tests for output projection."""
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
-    def test_proj_parameter_reprojects_output(self, client):
-        """When proj=EPSG:4326 is passed, geometry should be returned in WGS84."""
-        # Use BNG coordinates (EPSG:27700) with explicit CRS
-        content = _make_geojson_bytes(
-            coordinates=[
-                [
-                    [400000, 100000],
-                    [400100, 100000],
-                    [400100, 100100],
-                    [400000, 100100],
-                    [400000, 100000],
-                ]
-            ],
-            crs="urn:ogc:def:crs:EPSG::27700",
-        )
-        response = client.post(
-            "/check-boundary?proj=EPSG:4326",
-            files={
-                "geometry_file": (
-                    "boundary.geojson",
-                    BytesIO(content),
-                    "application/json",
-                )
-            },
-        )
-
-        assert response.status_code == 200
-        body = response.json()
-        coords = body["boundaryGeometryWgs84"]["features"][0]["geometry"]["coordinates"][0]
-        # All coordinates should be WGS84 range (lng -180..180, lat -90..90)
-        for lng, lat in coords:
-            assert -180 <= lng <= 180, f"longitude {lng} out of WGS84 range"
-            assert -90 <= lat <= 90, f"latitude {lat} out of WGS84 range"
-
-    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
-    def test_default_proj_returns_wgs84(self, client):
-        """Without explicit proj parameter, geometry defaults to WGS84 (EPSG:4326)."""
+    def test_bng_input_reprojected_to_wgs84(self, client):
+        """BNG input geometry should be reprojected to WGS84 in boundaryGeometryWgs84."""
         content = _make_geojson_bytes(
             coordinates=[
                 [
@@ -448,14 +413,13 @@ class TestCheckBoundaryProjection:
         assert response.status_code == 200
         body = response.json()
         coords = body["boundaryGeometryWgs84"]["features"][0]["geometry"]["coordinates"][0]
-        # Default is EPSG:4326 so coordinates should be WGS84 range
         for lng, lat in coords:
             assert -180 <= lng <= 180, f"longitude {lng} out of WGS84 range"
             assert -90 <= lat <= 90, f"latitude {lat} out of WGS84 range"
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
-    def test_proj_27700_returns_bng(self, client):
-        """When proj=EPSG:27700 is passed, geometry stays in BNG."""
+    def test_original_geometry_preserves_input_crs(self, client):
+        """boundaryGeometryOriginal should keep the input CRS (BNG)."""
         content = _make_geojson_bytes(
             coordinates=[
                 [
@@ -469,7 +433,7 @@ class TestCheckBoundaryProjection:
             crs="urn:ogc:def:crs:EPSG::27700",
         )
         response = client.post(
-            "/check-boundary?proj=EPSG:27700",
+            "/check-boundary",
             files={
                 "geometry_file": (
                     "boundary.geojson",
@@ -481,8 +445,7 @@ class TestCheckBoundaryProjection:
 
         assert response.status_code == 200
         body = response.json()
-        coords = body["boundaryGeometryWgs84"]["features"][0]["geometry"]["coordinates"][0]
-        # Coordinates should be in BNG range (large values)
+        coords = body["boundaryGeometryOriginal"]["features"][0]["geometry"]["coordinates"][0]
         for e, n in coords:
             assert abs(e) > 180 or abs(n) > 180, "Expected BNG coordinates"
 

@@ -10,10 +10,8 @@ import tempfile
 import zipfile
 from io import BytesIO
 from pathlib import Path
-from typing import Annotated
-
 import geopandas as gpd
-from fastapi import APIRouter, HTTPException, Query, UploadFile
+from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from geoalchemy2.functions import (
     ST_Area,
@@ -266,9 +264,6 @@ def _find_intersecting_edps(
 )
 async def check_boundary(
     geometry_file: UploadFile,
-    proj: Annotated[
-        str, Query(description="Output projection (e.g. 'EPSG:4326')")
-    ] = "EPSG:4326",
 ):
     """Check whether an uploaded geometry intersects with EDP areas.
 
@@ -316,7 +311,7 @@ async def check_boundary(
         validation_error = _validate_geometry(gdf)
 
         if validation_error:
-            gdf = gdf.to_crs(proj)
+            gdf = gdf.to_crs("EPSG:4326")
             gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
             geojson = json.loads(gdf.to_json())
 
@@ -329,14 +324,15 @@ async def check_boundary(
             )
 
         repository = _get_repository()
-        output_srid = int(proj.split(":")[1])
-        intersecting_edps = _find_intersecting_edps(gdf, repository, output_srid)
+        intersecting_edps = _find_intersecting_edps(gdf, repository, output_srid=4326)
 
-        # Capture original CRS geometry before reprojecting
+        # Capture original CRS geometry before reprojecting.
+        # Strips all columns except geometry, removing any user-supplied properties
+        # as we don't to process Personal Identifiable Information (PII).
         gdf_original = gdf.drop(columns=gdf.columns.difference(["geometry"]))
         boundary_geometry_original = json.loads(gdf_original.to_json())
 
-        gdf = gdf.to_crs(proj)
+        gdf = gdf.to_crs("EPSG:4326")
         gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
         boundary_geometry_wgs84 = json.loads(gdf.to_json())
 
