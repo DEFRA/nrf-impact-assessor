@@ -329,9 +329,15 @@ async def check_boundary(
         repository = _get_repository()
         intersecting_edps = _find_intersecting_edps(gdf, repository, output_srid=4326)
 
-        # Extract the first polygon geometry, stripping user-supplied properties
-        # to avoid processing Personal Identifiable Information (PII).
-        first_geom = gdf.geometry.iloc[0]
+        # Extract the first Polygon/MultiPolygon geometry, stripping user-supplied
+        # properties to avoid processing Personal Identifiable Information (PII).
+        polygons = gdf[gdf.geometry.geom_type.isin(_VALID_GEOM_TYPES)]
+        if polygons.empty:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "No polygon geometry found in the uploaded file"},
+            )
+        first_geom = polygons.geometry.iloc[0]
         original_crs = str(gdf.crs)
         boundary_geometry_original = {
             "type": "Feature",
@@ -339,8 +345,8 @@ async def check_boundary(
             "properties": {"crs": original_crs},
         }
 
-        gdf = gdf.to_crs(_WGS84)
-        first_geom_wgs84 = gdf.geometry.iloc[0]
+        polygons = polygons.to_crs(_WGS84)
+        first_geom_wgs84 = polygons.geometry.iloc[0]
         boundary_geometry_wgs84 = first_geom_wgs84.__geo_interface__
 
     return JSONResponse(
