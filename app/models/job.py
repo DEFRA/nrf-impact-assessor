@@ -35,7 +35,7 @@ class ImpactAssessmentJob(BaseModel):
     )
     geometry: str | None = Field(
         default=None, description="GeoJSON geometry string embedded in message"
-    )geometry: str | None = Field(default=None, description="GeoJSON geometry string embedded in message")
+    )
     developer_email: EmailStr = Field(..., description="Developer's email address")
     submitted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     development_name: str = Field(
