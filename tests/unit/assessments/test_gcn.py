@@ -157,7 +157,7 @@ def mock_repository(sample_risk_zones, sample_ponds, sample_edp_edges):
         )
 
     def intersection_postgis_side_effect(
-        input_gdf, overlay_table, overlay_filter, overlay_columns
+        input_gdf, overlay_table, overlay_filter, overlay_columns, json_extracts=None
     ):
         layer_type = _extract_layer_type(overlay_filter)
         return _gdf_for_layer_type(

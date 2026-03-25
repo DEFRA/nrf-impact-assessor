@@ -6,12 +6,13 @@ provides data access through the repository.
 """
 
 import logging
+import threading
 import time
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-from sqlalchemy import func, select
+from sqlalchemy import select, text
 
 from app.calculators import (
     apply_buffer,
@@ -21,11 +22,20 @@ from app.calculators import (
 )
 from app.config import CONSTANTS, AssessmentConfig, DebugConfig, RequiredColumns
 from app.debug import save_debug_gdf
-from app.models.db import CoefficientLayer, LookupTable, SpatialLayer
+from app.models.db import LookupTable, SpatialLayer
 from app.models.enums import SpatialLayerType
 from app.repositories.repository import Repository
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Process-level lookup table cache
+# Lookup data (rates_lookup, wwtw_lookup) is static once loaded. Caching it
+# at module level avoids two round-trips + full JSONB deserialisation per job.
+# Key: (table_name, version) → pd.DataFrame
+# ---------------------------------------------------------------------------
+_lookup_cache: dict[tuple[str, int], pd.DataFrame] = {}
+_lookup_cache_lock = threading.Lock()
 
 
 class NutrientAssessment:
@@ -143,25 +153,81 @@ class NutrientAssessment:
 
         return rlb_gdf
 
+    def _resolve_versions(self) -> None:
+        """Fetch all required layer versions in two queries and populate the cache.
+
+        Replaces five sequential MAX(version) round-trips with:
+          1. One GROUP BY query covering all four spatial layer types
+          2. One query for the coefficient layer
+        Results are stored in self._version_cache for the lifetime of this instance.
+        """
+        if self._version_cache:
+            return  # already populated for this instance
+
+        with self.repository.session() as session:
+            # All spatial layer versions in one shot
+            rows = session.execute(
+                text(
+                    "SELECT layer_type::text, MAX(version) "
+                    "FROM nrf_reference.spatial_layer GROUP BY layer_type"
+                )
+            ).fetchall()
+            for layer_type_name, version in rows:
+                v = version if version is not None else 1
+                self._version_cache[f"spatial_{layer_type_name}"] = v
+
+            # Coefficient layer version
+            row = session.execute(
+                text("SELECT MAX(version) FROM nrf_reference.coefficient_layer")
+            ).fetchone()
+            v = row[0] if row and row[0] is not None else 1
+            self._version_cache["coefficient"] = v
+
+    def _load_lookup(self, name: str) -> pd.DataFrame:
+        """Return lookup table data as a DataFrame, using the process-level cache.
+
+        The cache is keyed by (name, version) so a new version automatically
+        causes a fresh load while the old version remains available if needed.
+        Lookup data is static once written, so there is no TTL.
+        """
+        # Resolve the latest version first (uses the batched version cache)
+        with self.repository.session() as session:
+            row = session.execute(
+                text(
+                    "SELECT MAX(version) FROM nrf_reference.lookup_table "
+                    "WHERE name = :name"
+                ),
+                {"name": name},
+            ).fetchone()
+        version = row[0] if row and row[0] is not None else 1
+
+        cache_key = (name, version)
+        with _lookup_cache_lock:
+            if cache_key in _lookup_cache:
+                return _lookup_cache[cache_key]
+
+        stmt = (
+            select(LookupTable)
+            .where(LookupTable.name == name, LookupTable.version == version)
+            .limit(1)
+        )
+        obj = self.repository.execute_query(stmt, as_gdf=False)[0]
+        df = pd.DataFrame(obj.data)
+
+        with _lookup_cache_lock:
+            _lookup_cache[cache_key] = df
+
+        return df
+
     def _resolve_latest_version(self, layer_type: SpatialLayerType) -> int:
-        """Fetch the latest version number for a spatial layer type (cached)."""
-        cache_key = f"spatial_{layer_type.name}"
-        if cache_key not in self._version_cache:
-            stmt = select(func.max(SpatialLayer.version)).where(
-                SpatialLayer.layer_type == layer_type
-            )
-            result = self.repository.execute_query(stmt, as_gdf=False)
-            self._version_cache[cache_key] = result[0] if result else 1
-        return self._version_cache[cache_key]
+        """Return the latest version for a spatial layer type (batch-fetched)."""
+        self._resolve_versions()
+        return self._version_cache.get(f"spatial_{layer_type.name}", 1)
 
     def _resolve_latest_coeff_version(self) -> int:
-        """Fetch the latest version number for the coefficient layer (cached)."""
-        cache_key = "coefficient"
-        if cache_key not in self._version_cache:
-            stmt = select(func.max(CoefficientLayer.version))
-            result = self.repository.execute_query(stmt, as_gdf=False)
-            self._version_cache[cache_key] = result[0] if result else 1
-        return self._version_cache[cache_key]
+        """Return the latest coefficient layer version (batch-fetched)."""
+        self._resolve_versions()
+        return self._version_cache.get("coefficient", 1)
 
     def _assign_spatial_features(self, rlb_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """Assign spatial features via batched majority overlap."""
@@ -354,15 +420,7 @@ class NutrientAssessment:
             rlb_gdf = rlb_gdf.loc[:, ~rlb_gdf.columns.duplicated()]
 
         t0 = time.perf_counter()
-        stmt = (
-            select(LookupTable)
-            .where(LookupTable.name == "rates_lookup")
-            .order_by(LookupTable.version.desc())
-            .limit(1)
-        )
-        rates_lookup_obj = self.repository.execute_query(stmt, as_gdf=False)[0]
-        rates_lookup = pd.DataFrame(rates_lookup_obj.data)
-
+        rates_lookup = self._load_lookup("rates_lookup")
         rates_lookup = rates_lookup[
             ["nn_catchment", "occupancy_rate", "water_usage_L_per_person_day"]
         ].drop_duplicates(subset=["nn_catchment"])
@@ -392,14 +450,7 @@ class NutrientAssessment:
         )
 
         t0 = time.perf_counter()
-        stmt = (
-            select(LookupTable)
-            .where(LookupTable.name == "wwtw_lookup")
-            .order_by(LookupTable.version.desc())
-            .limit(1)
-        )
-        wwtw_lookup_obj = self.repository.execute_query(stmt, as_gdf=False)[0]
-        wwtw_lookup = pd.DataFrame(wwtw_lookup_obj.data)
+        wwtw_lookup = self._load_lookup("wwtw_lookup")
 
         wwtw_lookup_cols = [
             "wwtw_code",
@@ -516,6 +567,11 @@ class NutrientAssessment:
         ]
         existing_round_cols = [col for col in round_cols if col in rlb_gdf.columns]
         rlb_gdf[existing_round_cols] = rlb_gdf[existing_round_cols].round(2)
+
+        logger.info(
+            "Totals per development:\n%s",
+            rlb_gdf[["rlb_id", *existing_round_cols]].to_string(index=False),
+        )
 
         return rlb_gdf
 

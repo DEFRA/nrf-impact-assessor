@@ -56,16 +56,28 @@ class S3Client:
         raise ValueError(msg)
 
     def _download_and_extract_shapefile_zip(self, s3_key: str, local_dir: Path) -> Path:
-        logger.info(f"Downloading shapefile ZIP from s3://{self.bucket_name}/{s3_key}")
+        key_prefix = "/".join(s3_key.split("/")[:2])
+        logger.info(
+            f"Downloading shapefile ZIP from s3://{self.bucket_name}/{key_prefix}/..."
+        )
 
         zip_path = local_dir / "input.zip"
         try:
             self.s3.download_file(self.bucket_name, s3_key, str(zip_path))
         except ClientError as e:
-            logger.error(f"Failed to download from S3: {e}")
+            logger.error(
+                f"Failed to download shapefile ZIP from S3: {e.response['Error']['Code']}"
+            )
             raise
 
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            # Validate every member before extraction (Zip Slip defence).
+            resolved_local = local_dir.resolve()
+            for member in zip_ref.infolist():
+                member_path = (local_dir / member.filename).resolve()
+                if not member_path.is_relative_to(resolved_local):
+                    msg = f"Invalid zip: entry '{member.filename}' would extract outside target directory"
+                    raise ValueError(msg)
             zip_ref.extractall(local_dir)
 
         shp_files = list(local_dir.glob("*.shp"))
@@ -80,7 +92,10 @@ class S3Client:
         return shp_path
 
     def _download_geojson(self, s3_key: str, local_dir: Path) -> Path:
-        logger.info(f"Downloading GeoJSON from s3://{self.bucket_name}/{s3_key}")
+        key_prefix = "/".join(s3_key.split("/")[:2])
+        logger.info(
+            f"Downloading GeoJSON from s3://{self.bucket_name}/{key_prefix}/..."
+        )
 
         suffix = Path(s3_key).suffix.lower()
         if suffix not in (".json", ".geojson"):
@@ -93,7 +108,9 @@ class S3Client:
         try:
             self.s3.download_file(self.bucket_name, s3_key, str(local_path))
         except ClientError as e:
-            logger.error(f"Failed to download from S3: {e}")
+            logger.error(
+                f"Failed to download GeoJSON from S3: {e.response['Error']['Code']}"
+            )
             raise
 
         logger.info(f"Downloaded GeoJSON: {local_path}")

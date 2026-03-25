@@ -264,6 +264,37 @@ class SpatialDataLoader:
 
         return clean_gdf
 
+    def _clear_load_verify(
+        self,
+        gdf: gpd.GeoDataFrame,
+        table_name: str,
+        total_features: int,
+        delete_stmt: Any,
+        count_stmt: Any,
+        chunksize: int = 5000,
+    ) -> None:
+        """Delete existing rows, load gdf to PostGIS, then verify the row count."""
+        with self.repository.session() as session:
+            deleted = session.execute(delete_stmt)
+            session.commit()
+            if deleted.rowcount > 0:
+                print(f"Deleted {deleted.rowcount} existing records")
+
+        print(f"Loading {total_features} features to PostGIS...")
+        gdf.to_postgis(
+            name=table_name,
+            con=self.repository.engine,
+            schema="nrf_reference",
+            if_exists="append",
+            index=False,
+            chunksize=chunksize,
+        )
+        print(f"Successfully loaded {total_features} records")
+
+        with self.repository.session() as session:
+            count = session.scalar(count_stmt)
+            print(f"Verified {count} records in database")
+
     def load_coefficient_layer(self) -> None:
         """Load coefficient layer (5.4M polygons) using to_postgis() method."""
         if not self.coefficient_gpkg.exists():
@@ -394,38 +425,15 @@ class SpatialDataLoader:
         clean_gdf = self._build_base_clean_gdf(gdf)
         clean_gdf["layer_type"] = layer_type.name
 
-        # Clear existing data for this layer type
-        with self.repository.session() as session:
-            deleted = session.execute(
-                delete(SpatialLayer).where(SpatialLayer.layer_type == layer_type)
-            )
-            session.commit()
-            if deleted.rowcount > 0:
-                print(f"Deleted {deleted.rowcount} existing records")
-
-        # Load to PostGIS using fast to_postgis()
-        print(f"Loading {total_features} features to PostGIS...")
-        engine = self.repository.engine
-
-        clean_gdf.to_postgis(
-            name="spatial_layer",
-            con=engine,
-            schema="nrf_reference",
-            if_exists="append",
-            index=False,
-            chunksize=5000,
+        self._clear_load_verify(
+            clean_gdf,
+            "spatial_layer",
+            total_features,
+            delete(SpatialLayer).where(SpatialLayer.layer_type == layer_type),
+            select(func.count())
+            .select_from(SpatialLayer)
+            .where(SpatialLayer.layer_type == layer_type),
         )
-
-        print(f"Successfully loaded {total_features} records")
-
-        # Verify insertion
-        with self.repository.session() as session:
-            count = session.scalar(
-                select(func.count())
-                .select_from(SpatialLayer)
-                .where(SpatialLayer.layer_type == layer_type)
-            )
-            print(f"Verified {count} records in database")
 
     def load_edp_boundaries(self) -> None:
         """Load EDP boundary polygons into dedicated edp_boundary_layer table."""
@@ -442,27 +450,13 @@ class SpatialDataLoader:
         gdf, total_features = self._apply_sample_mode(gdf)
         clean_gdf = self._build_base_clean_gdf(gdf)
 
-        with self.repository.session() as session:
-            deleted = session.execute(delete(EdpBoundaryLayer))
-            session.commit()
-            if deleted.rowcount > 0:
-                print(f"Deleted {deleted.rowcount} existing records")
-
-        print(f"Loading {total_features} features to PostGIS...")
-        clean_gdf.to_postgis(
-            name="edp_boundary_layer",
-            con=self.repository.engine,
-            schema="nrf_reference",
-            if_exists="append",
-            index=False,
-            chunksize=5000,
+        self._clear_load_verify(
+            clean_gdf,
+            "edp_boundary_layer",
+            total_features,
+            delete(EdpBoundaryLayer),
+            select(func.count()).select_from(EdpBoundaryLayer),
         )
-
-        print(f"Successfully loaded {total_features} records")
-
-        with self.repository.session() as session:
-            count = session.scalar(select(func.count()).select_from(EdpBoundaryLayer))
-            print(f"Verified {count} records in database")
 
     def load_lookup_tables(self) -> None:
         """Load lookup tables from SQLite database."""

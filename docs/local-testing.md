@@ -9,7 +9,7 @@ This guide explains how to test assessment logic locally without uploading files
 | Endpoint | What it tests | External deps |
 |---|---|---|
 | `POST /test/assess` | Assessment logic (DB queries, spatial calcs, calculators) | DB only |
-| `POST /test/enqueue` | Full SQS pipeline (S3 → SQS → consumer → orchestrator → runner) | DB + LocalStack + running consumer |
+| `POST /test/enqueue` | Full SQS pipeline (SQS → consumer → orchestrator → runner) | DB + LocalStack + running consumer |
 
 Both endpoints are **only available when `API_TESTING_ENABLED=true`** and are never mounted in production.
 
@@ -34,7 +34,7 @@ API_TESTING_ENABLED=true uv run python -m app.main
 
 All of the above, plus:
 
-- LocalStack running with S3 bucket and SQS queue provisioned
+- LocalStack running with SQS queue provisioned
 - SQS consumer running
 
 ```bash
@@ -147,7 +147,6 @@ curl -s -X POST http://localhost:8085/test/enqueue \
 ```json
 {
   "job_id": "...",
-  "s3_key": "jobs/.../input.geojson",
   "message_id": "...",
   "note": "Consumer will process on next poll. Watch worker logs for: 'Processing job: ...'"
 }
@@ -175,9 +174,8 @@ curl -s -X POST http://localhost:8085/test/enqueue \
 | Error | Cause | Fix |
 |---|---|---|
 | `404 Not Found` on `/test/assess` | Testing endpoints not mounted | Set `API_TESTING_ENABLED=true` and restart the server |
-| `400 AWS_S3_INPUT_BUCKET is not configured` | AWS env vars missing | Set `AWS_S3_INPUT_BUCKET`, `AWS_SQS_QUEUE_URL`, `AWS_ENDPOINT_URL` |
-| `502 S3 upload failed` | LocalStack not running or bucket not created | Run `docker compose up localstack` |
-| `502 SQS send failed` | LocalStack SQS queue not provisioned | Check LocalStack setup and queue URL |
+| `400 AWS_SQS_QUEUE_URL is not configured` | AWS env vars missing | Set `AWS_SQS_QUEUE_URL` and `AWS_ENDPOINT_URL` |
+| `502 SQS send failed` | LocalStack SQS queue not provisioned | Run `docker compose up localstack` and check queue URL |
 | `500 Assessment failed` | Assessment logic error | Check server logs for the full traceback |
 | Connection refused | API server not running | Start with `API_TESTING_ENABLED=true uv run python -m app.main` |
 
@@ -188,19 +186,16 @@ curl -s -X POST http://localhost:8085/test/enqueue \
 ```
 POST /test/enqueue
   ↓
-WKT → GeoDataFrame → GeoJSON bytes
-  ↓
-S3Client.put_object → LocalStack S3 (s3://nrf-inputs/jobs/{id}/input.geojson)
+WKT → GeoDataFrame → GeoJSON string (embedded in message)
   ↓
 SQSClient.send_message → LocalStack SQS
   ↓  (consumer polls on next cycle)
 SqsConsumer.receive_messages()
   ↓
 JobOrchestrator.process_job()
-  → S3Client.download_geometry_file()
   → GeometryValidator.validate()
   → _inject_job_data()
   → run_assessment()
 ```
 
-This path is identical to the production flow. Any failure in `orchestrator.py`, `aws/s3.py`, or `aws/sqs.py` will surface in the consumer logs.
+The geometry is carried directly in the SQS message body — no S3 upload or download required. Any failure in `orchestrator.py` or `aws/sqs.py` will surface in the consumer logs.

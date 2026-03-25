@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -38,7 +38,7 @@ router = APIRouter()
 _config = ApiServerConfig()
 _JOB_TTL_SECONDS = _config.assess_job_ttl_seconds
 _MAX_JOBS = 100
-_max_upload_bytes = 50 * 1024 * 1024  # 50 MB
+_max_upload_bytes = _config.max_upload_bytes
 
 # ---------------------------------------------------------------------------
 # Job store
@@ -48,6 +48,7 @@ _max_upload_bytes = 50 * 1024 * 1024  # 50 MB
 @dataclass
 class JobState:
     status: str  # pending | running | completed | failed
+    access_token: str = field(default_factory=lambda: str(uuid4()))
     created_at: float = field(default_factory=time.time)
     results: dict | None = None
     error: str | None = None
@@ -65,6 +66,7 @@ _background_tasks: set[asyncio.Task] = set()
 class AssessSubmitResponse(BaseModel):
     job_id: str
     status: str
+    access_token: str
     poll_url: str
 
 
@@ -231,7 +233,8 @@ async def submit_assessment(
     content = await geometry_file.read(_max_upload_bytes + 1)
     if len(content) > _max_upload_bytes:
         raise HTTPException(
-            status_code=413, detail="File too large. Maximum upload size is 50 MB."
+            status_code=413,
+            detail=f"File too large. Maximum upload size is {_max_upload_bytes // (1024 * 1024)} MB.",
         )
 
     job_id = str(uuid4())
@@ -253,12 +256,14 @@ async def submit_assessment(
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
+    access_token = _jobs[job_id].access_token
     return JSONResponse(
         status_code=202,
         content=AssessSubmitResponse(
             job_id=job_id,
             status="pending",
-            poll_url=f"/assess/{job_id}",
+            access_token=access_token,
+            poll_url=f"/assess/{job_id}?access_token={access_token}",
         ).model_dump(),
     )
 
@@ -266,14 +271,23 @@ async def submit_assessment(
 @router.get(
     "/assess/{job_id}",
     response_model=AssessStatusResponse,
-    responses={404: {"description": "Job not found"}},
+    responses={
+        404: {"description": "Job not found"},
+        403: {"description": "Invalid or missing access_token"},
+    },
 )
-async def get_assessment_status(job_id: str):
+async def get_assessment_status(
+    job_id: str,
+    access_token: Annotated[str, Query()] = "",
+):
     """Poll the status of a submitted assessment job."""
     if job_id not in _jobs:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
 
     state = _jobs[job_id]
+    if not access_token or access_token != state.access_token:
+        raise HTTPException(status_code=403, detail="Invalid or missing access_token")
+
     return AssessStatusResponse(
         job_id=job_id,
         status=state.status,

@@ -6,9 +6,10 @@ never available in production.
 Endpoints:
     POST /test/assess   - Run an assessment synchronously from a WKT geometry string.
                           No S3, no SQS, no polling — results returned immediately.
-    POST /test/enqueue  - Convert WKT to GeoJSON, upload to LocalStack S3, and send
-                          an SQS job message. The running consumer processes it on its
-                          next poll, exercising the full production pipeline.
+    POST /test/enqueue  - Convert WKT to GeoJSON and send an SQS job message with the
+                          geometry embedded in the message body. The running consumer
+                          processes it on its next poll, exercising the SQS pipeline
+                          without requiring S3.
 """
 
 import logging
@@ -145,7 +146,6 @@ class WktEnqueueResponse(BaseModel):
     """Response from POST /test/enqueue."""
 
     job_id: str
-    s3_key: str
     message_id: str
     note: str
 
@@ -289,27 +289,21 @@ def assess_from_wkt(request: WktAssessRequest) -> WktAssessResponse:
     status_code=202,
     responses={
         400: {"description": "Invalid WKT, assessment_type, or missing AWS config"},
-        502: {"description": "LocalStack S3/SQS not reachable"},
+        502: {"description": "LocalStack SQS not reachable"},
     },
 )
 def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
-    """Upload a WKT geometry to LocalStack S3 and enqueue an SQS job message.
+    """Enqueue an SQS job message with the geometry embedded in the message body.
 
-    The running SQS consumer picks up the message on its next poll and processes it
-    through the full production pipeline (orchestrator → S3 download → validate →
-    run_assessment). Use this to verify the end-to-end SQS code path locally.
+    The running SQS consumer picks up the message on its next poll and processes it.
+    The geometry is included directly in the message — no S3 upload required.
 
-    Requires LocalStack running with S3 bucket and SQS queue provisioned, and the
-    consumer running (docker-compose worker profile or `python -m app.consumer`).
+    Requires LocalStack running with SQS queue provisioned, and the consumer running
+    (docker-compose worker profile or `python -m app.consumer`).
     """
     assessment_type = _parse_assessment_type(request.assessment_type)
     aws = AWSConfig()
 
-    if not aws.s3_input_bucket:
-        raise HTTPException(
-            status_code=400,
-            detail="AWS_S3_INPUT_BUCKET is not configured. Set it to the LocalStack bucket name.",
-        )
     if not aws.sqs_queue_url:
         raise HTTPException(
             status_code=400,
@@ -319,35 +313,17 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
     gdf = _wkt_to_gdf(request.wkt, request.crs)
 
     job_id = str(uuid4())
-    s3_key = f"jobs/{job_id}/input.geojson"
-
-    geojson_bytes = gdf.to_json().encode()
+    geojson_str = gdf.to_json()
 
     client_kwargs: dict = {"region_name": aws.region}
     if aws.endpoint_url:
         client_kwargs["endpoint_url"] = aws.endpoint_url
 
-    s3 = boto3.client("s3", **client_kwargs)
     sqs = boto3.client("sqs", **client_kwargs)
-
-    try:
-        logger.info("Uploading GeoJSON to s3://%s/%s", aws.s3_input_bucket, s3_key)
-        s3.put_object(
-            Bucket=aws.s3_input_bucket,
-            Key=s3_key,
-            Body=geojson_bytes,
-            **({"ExpectedBucketOwner": aws.account_id} if aws.account_id else {}),
-        )
-    except ClientError as e:
-        logger.error("S3 upload failed: %s", e)
-        raise HTTPException(
-            status_code=502,
-            detail=f"S3 upload failed — is LocalStack running? ({e})",
-        ) from e
 
     job = ImpactAssessmentJob(
         job_id=job_id,
-        s3_input_key=s3_key,
+        geometry=geojson_str,
         developer_email=request.developer_email,
         submitted_at=datetime.now(UTC),
         assessment_type=assessment_type,
@@ -374,7 +350,6 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
 
     return WktEnqueueResponse(
         job_id=job_id,
-        s3_key=s3_key,
         message_id=message_id,
         note="Consumer will process on next poll. Watch worker logs for: 'Processing job: "
         + job_id

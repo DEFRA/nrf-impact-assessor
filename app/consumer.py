@@ -17,6 +17,7 @@ import logging.config
 import multiprocessing
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -101,12 +102,44 @@ def run_api_server(host: str, port: int) -> None:
     uvicorn.run("app.main:app", host=host, port=port, log_level="warning")
 
 
+def _with_visibility_heartbeat(fn, sqs_client, receipt_handle, visibility_timeout):
+    """Run fn() while periodically extending the SQS message visibility timeout.
+
+    Renews at 2/3 of the timeout so there is always a comfortable margin before
+    the window expires. Without this, any job exceeding visibility_timeout seconds
+    would be re-delivered by SQS and processed twice.
+    """
+    interval = max(30, visibility_timeout * 2 // 3)
+    stop = threading.Event()
+
+    def _heartbeat():
+        while not stop.wait(interval):
+            sqs_client.change_message_visibility(receipt_handle, visibility_timeout)
+            logger.debug(f"Extended SQS visibility timeout by {visibility_timeout}s")
+
+    thread = threading.Thread(target=_heartbeat, daemon=True)
+    thread.start()
+    try:
+        return fn()
+    finally:
+        stop.set()
+        thread.join(timeout=5)
+
+
 class SqsConsumer:
     """Long-running SQS consumer that polls for and processes jobs."""
 
-    def __init__(self, sqs_client: SQSClient, orchestrator: JobOrchestrator):
+    def __init__(
+        self,
+        sqs_client: SQSClient,
+        orchestrator: JobOrchestrator,
+        worker_config: WorkerConfig | None = None,
+    ):
         self.sqs_client = sqs_client
         self.orchestrator = orchestrator
+        self._visibility_timeout = (
+            worker_config.visibility_timeout if worker_config else 300
+        )
         self.running = True
 
         signal.signal(signal.SIGTERM, self._handle_sigterm)
@@ -125,11 +158,14 @@ class SqsConsumer:
 
                 for job_message, receipt_handle in results:
                     logger.info(f"Processing job: {job_message.job_id}")
-                    # Pass the assessment_type from the job message
-                    self.orchestrator.process_job(
-                        job_message, job_message.assessment_type
+                    _with_visibility_heartbeat(
+                        lambda msg=job_message: self.orchestrator.process_job(
+                            msg, msg.assessment_type
+                        ),
+                        self.sqs_client,
+                        receipt_handle,
+                        self._visibility_timeout,
                     )
-
                     self.sqs_client.delete_message(receipt_handle)
                     logger.info(
                         f"Job {job_message.job_id} processing complete, message deleted from queue"
@@ -235,7 +271,11 @@ def main():
             repository=repository,
         )
 
-        consumer = SqsConsumer(sqs_client=sqs_client, orchestrator=orchestrator)
+        consumer = SqsConsumer(
+            sqs_client=sqs_client,
+            orchestrator=orchestrator,
+            worker_config=worker_config,
+        )
         consumer.run()
 
     except Exception as e:

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.assess.router import JobState, _jobs
 from app.main import app
+from tests.unit.api.conftest import _make_geojson_bytes
 
 
 @pytest.fixture(autouse=True)
@@ -23,26 +24,6 @@ def _clear_jobs():
 @pytest.fixture
 def client():
     return TestClient(app)
-
-
-def _make_geojson_bytes() -> bytes:
-    """Create a minimal GeoJSON FeatureCollection as bytes."""
-    import json
-
-    geojson = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]],
-                },
-                "properties": {"name": "test"},
-            }
-        ],
-    }
-    return json.dumps(geojson).encode()
 
 
 def _fake_run_assessment():
@@ -73,7 +54,11 @@ class TestPostAssess:
         body = response.json()
         assert "job_id" in body
         assert body["status"] == "pending"
-        assert body["poll_url"] == f"/assess/{body['job_id']}"
+        assert "access_token" in body
+        assert (
+            body["poll_url"]
+            == f"/assess/{body['job_id']}?access_token={body['access_token']}"
+        )
 
     @patch("app.assess.router.run_assessment", side_effect=_fake_run_assessment)
     @patch("app.assess.router._get_repository", return_value=MagicMock())
@@ -88,12 +73,14 @@ class TestPostAssess:
             },
             data={"assessment_type": "nutrient"},
         )
-        job_id = response.json()["job_id"]
+        body = response.json()
+        job_id = body["job_id"]
+        access_token = body["access_token"]
 
         # Give the background task time to complete
         time.sleep(0.5)
 
-        status_resp = client.get(f"/assess/{job_id}")
+        status_resp = client.get(f"/assess/{job_id}?access_token={access_token}")
         assert status_resp.status_code == 200
         body = status_resp.json()
         assert body["status"] in ("pending", "running", "completed")
@@ -135,7 +122,8 @@ class TestGetAssess:
 
     def test_pending_job_returns_status(self, client):
         _jobs["test-123"] = JobState(status="pending")
-        response = client.get("/assess/test-123")
+        access_token = _jobs["test-123"].access_token
+        response = client.get(f"/assess/test-123?access_token={access_token}")
         assert response.status_code == 200
         body = response.json()
         assert body["job_id"] == "test-123"
@@ -148,7 +136,8 @@ class TestGetAssess:
             results={"summary": [{"col": 1}]},
             timing_s=3,
         )
-        response = client.get("/assess/test-456")
+        access_token = _jobs["test-456"].access_token
+        response = client.get(f"/assess/test-456?access_token={access_token}")
         assert response.status_code == 200
         body = response.json()
         assert body["status"] == "completed"
@@ -161,7 +150,8 @@ class TestGetAssess:
             error="Something went wrong",
             timing_s=1.0,
         )
-        response = client.get("/assess/test-789")
+        access_token = _jobs["test-789"].access_token
+        response = client.get(f"/assess/test-789?access_token={access_token}")
         assert response.status_code == 200
         body = response.json()
         assert body["status"] == "failed"
