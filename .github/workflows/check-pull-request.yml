@@ -40,7 +40,7 @@ jobs:
           exit $?
 
       - name: Verify git hash in Docker image
-        run: docker run --rm nrf-impact-assessor cat .git-hash
+        run: docker run --rm --entrypoint cat nrf-impact-assessor .git-hash
 
 #      - name: SonarCloud Scan
 #        if: github.actor != 'dependabot[bot]'
