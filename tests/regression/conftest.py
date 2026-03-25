@@ -5,6 +5,41 @@ Fixtures for regression tests that use the full production database.
 
 from pathlib import Path
 
+# Maps internal DataFrame column names to the legacy baseline CSV column names.
+# Kept in sync between the regression tests and the baseline update script.
+INTERNAL_TO_BASELINE_COLUMNS = {
+    "rlb_id": "RLB_ID",
+    "name": "Name",
+    "dwelling_category": "Dwel_Cat",
+    "source": "Source",
+    "dwellings": "Dwellings",
+    "dev_area_ha": "Dev_Area_Ha",
+    "area_in_nn_catchment_ha": "AreaInNNCatchment",
+    "nn_catchment": "NN_Catchment",
+    "majority_opcat_name": "Dev_SubCatchment",
+    "majority_name": "Majority_LPA",
+    "majority_wwtw_id": "Majority_WwTw_ID",
+    "wwtw_name": "WwTW_name",
+    "wwtw_subcatchment": "WwTw_SubCatchment",
+    "n_lu_uplift": "N_LU_Uplift",
+    "p_lu_uplift": "P_LU_Uplift",
+    "n_lu_post_suds": "N_LU_postSuDS",
+    "p_lu_post_suds": "P_LU_postSuDS",
+    "occupancy_rate": "Occ_Rate",
+    "water_usage_L_per_person_day": "Water_Usage_L_Day",
+    "daily_water_usage_L": "Litres_used",
+    "nitrogen_conc_2025_2030_mg_L": "Nitrogen_2025_2030",
+    "nitrogen_conc_2030_onwards_mg_L": "Nitrogen_2030_onwards",
+    "phosphorus_conc_2025_2030_mg_L": "Phosphorus_2025_2030",
+    "phosphorus_conc_2030_onwards_mg_L": "Phosphorus_2030_onwards",
+    "n_wwtw_temp": "N_WwTW_Temp",
+    "p_wwtw_temp": "P_WwTW_Temp",
+    "n_wwtw_perm": "N_WwTW_Perm",
+    "p_wwtw_perm": "P_WwTW_Perm",
+    "n_total": "N_Total",
+    "p_total": "P_Total",
+}
+
 import pytest
 from sqlalchemy import create_engine
 
