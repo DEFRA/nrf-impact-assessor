@@ -138,7 +138,10 @@ class TestCheckBoundaryGeoJSON:
         body = response.json()
         assert body["boundaryGeometryWgs84"]["type"] == "FeatureCollection"
         assert len(body["boundaryGeometryWgs84"]["features"]) == 1
-        assert body["boundaryGeometryWgs84"]["features"][0]["geometry"]["type"] == "Polygon"
+        assert (
+            body["boundaryGeometryWgs84"]["features"][0]["geometry"]["type"]
+            == "Polygon"
+        )
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_properties_are_stripped_from_features(self, client):
@@ -412,7 +415,9 @@ class TestCheckBoundaryProjection:
 
         assert response.status_code == 200
         body = response.json()
-        coords = body["boundaryGeometryWgs84"]["features"][0]["geometry"]["coordinates"][0]
+        coords = body["boundaryGeometryWgs84"]["features"][0]["geometry"][
+            "coordinates"
+        ][0]
         for lng, lat in coords:
             assert -180 <= lng <= 180, f"longitude {lng} out of WGS84 range"
             assert -90 <= lat <= 90, f"latitude {lat} out of WGS84 range"
@@ -445,7 +450,9 @@ class TestCheckBoundaryProjection:
 
         assert response.status_code == 200
         body = response.json()
-        coords = body["boundaryGeometryOriginal"]["features"][0]["geometry"]["coordinates"][0]
+        coords = body["boundaryGeometryOriginal"]["features"][0]["geometry"][
+            "coordinates"
+        ][0]
         for e, n in coords:
             assert abs(e) > 180 or abs(n) > 180, "Expected BNG coordinates"
 
@@ -492,9 +499,7 @@ class TestCheckBoundaryEdpIntersection:
         assert body["intersectingEdps"][1]["label"] == "Norfolk EDP 2"
         assert body["intersectingEdps"][0]["overlap_area_ha"] == pytest.approx(0.5)
         assert body["intersectingEdps"][0]["overlap_percentage"] == pytest.approx(25.0)
-        assert (
-            body["intersectingEdps"][0]["intersection_geometry"]["type"] == "Polygon"
-        )
+        assert body["intersectingEdps"][0]["intersection_geometry"]["type"] == "Polygon"
         assert body["intersectingEdps"][0]["edp_geometry"]["type"] == "Polygon"
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
@@ -513,4 +518,8 @@ class TestCheckBoundaryEdpIntersection:
 
         assert response.status_code == 200
         body = response.json()
-        assert set(body.keys()) == {"boundaryGeometryOriginal", "boundaryGeometryWgs84", "intersectingEdps"}
+        assert set(body.keys()) == {
+            "boundaryGeometryOriginal",
+            "boundaryGeometryWgs84",
+            "intersectingEdps",
+        }

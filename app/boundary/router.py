@@ -10,6 +10,7 @@ import tempfile
 import zipfile
 from io import BytesIO
 from pathlib import Path
+
 import geopandas as gpd
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
@@ -62,6 +63,7 @@ def _validate_geometry(gdf: gpd.GeoDataFrame) -> str | None:
         return "The uploaded boundary contains invalid geometry (self-intersecting or overlapping lines). Please correct the file and try again."
 
     return None
+
 
 router = APIRouter()
 
