@@ -271,7 +271,10 @@ async def submit_assessment(
 @router.get(
     "/assess/{job_id}",
     response_model=AssessStatusResponse,
-    responses={404: {"description": "Job not found"}},
+    responses={
+        404: {"description": "Job not found"},
+        403: {"description": "Invalid or missing access_token"},
+    },
 )
 async def get_assessment_status(
     job_id: str,

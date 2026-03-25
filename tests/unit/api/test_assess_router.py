@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.assess.router import JobState, _jobs
 from app.main import app
+from tests.unit.api.conftest import _make_geojson_bytes
 
 
 @pytest.fixture(autouse=True)
@@ -23,26 +24,6 @@ def _clear_jobs():
 @pytest.fixture
 def client():
     return TestClient(app)
-
-
-def _make_geojson_bytes() -> bytes:
-    """Create a minimal GeoJSON FeatureCollection as bytes."""
-    import json
-
-    geojson = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]],
-                },
-                "properties": {"name": "test"},
-            }
-        ],
-    }
-    return json.dumps(geojson).encode()
 
 
 def _fake_run_assessment():

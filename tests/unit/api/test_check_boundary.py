@@ -8,40 +8,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.unit.api.conftest import _make_geojson_bytes
 
 
 @pytest.fixture
 def client():
     return TestClient(app)
-
-
-def _make_geojson_bytes(
-    coordinates: list | None = None,
-    crs: str | None = None,
-) -> bytes:
-    """Create a minimal GeoJSON FeatureCollection as bytes."""
-    if coordinates is None:
-        coordinates = [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]
-
-    geojson = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": coordinates,
-                },
-                "properties": {"name": "test"},
-            }
-        ],
-    }
-    if crs:
-        geojson["crs"] = {
-            "type": "name",
-            "properties": {"name": crs},
-        }
-    return json.dumps(geojson).encode()
 
 
 def _mock_no_edp_intersections(gdf, repository, output_srid=4326):
