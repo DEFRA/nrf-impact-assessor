@@ -5,6 +5,12 @@ Fixtures for regression tests that use the full production database.
 
 from pathlib import Path
 
+import pytest
+from sqlalchemy import create_engine
+
+from app.config import DatabaseSettings
+from app.repositories.repository import Repository
+
 # Maps internal DataFrame column names to the legacy baseline CSV column names.
 # Kept in sync between the regression tests and the baseline update script.
 INTERNAL_TO_BASELINE_COLUMNS = {
@@ -39,12 +45,6 @@ INTERNAL_TO_BASELINE_COLUMNS = {
     "n_total": "N_Total",
     "p_total": "P_Total",
 }
-
-import pytest
-from sqlalchemy import create_engine
-
-from app.config import DatabaseSettings
-from app.repositories.repository import Repository
 
 
 @pytest.fixture
