@@ -10,10 +10,9 @@ import tempfile
 import zipfile
 from io import BytesIO
 from pathlib import Path
-from typing import Annotated
 
 import geopandas as gpd
-from fastapi import APIRouter, HTTPException, Query, UploadFile
+from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from geoalchemy2.functions import (
     ST_Area,
@@ -35,7 +34,8 @@ from app.spatial.utils import ensure_crs
 
 logger = logging.getLogger(__name__)
 
-_VALID_GEOM_TYPES = {"Polygon", "MultiPolygon"}
+_VALID_GEOM_TYPES = {"Polygon"}
+_WGS84 = "EPSG:4326"
 
 
 def _validate_geometry(gdf: gpd.GeoDataFrame) -> str | None:
@@ -52,7 +52,7 @@ def _validate_geometry(gdf: gpd.GeoDataFrame) -> str | None:
     if invalid_types:
         return (
             f"Invalid geometry types found: {', '.join(invalid_types)}. "
-            "Expected: Polygon or MultiPolygon"
+            "Only Polygon geometry is supported."
         )
 
     null_count = gdf.geometry.isna().sum()
@@ -64,6 +64,7 @@ def _validate_geometry(gdf: gpd.GeoDataFrame) -> str | None:
         return "The uploaded boundary contains invalid geometry (self-intersecting or overlapping lines). Please correct the file and try again."
 
     return None
+
 
 router = APIRouter()
 
@@ -266,9 +267,6 @@ def _find_intersecting_edps(
 )
 async def check_boundary(
     geometry_file: UploadFile,
-    proj: Annotated[
-        str, Query(description="Output projection (e.g. 'EPSG:4326')")
-    ] = "EPSG:4326",
 ):
     """Check whether an uploaded geometry intersects with EDP areas.
 
@@ -296,7 +294,7 @@ async def check_boundary(
         # safe to assume EPSG:4326 when no CRS is present.
         ext = Path(filename).suffix.lower()
         if gdf.crs is None and ext in _WGS84_EXTENSIONS:
-            gdf = gdf.set_crs("EPSG:4326")
+            gdf = gdf.set_crs(_WGS84)
 
         try:
             gdf = ensure_crs(gdf)
@@ -316,7 +314,7 @@ async def check_boundary(
         validation_error = _validate_geometry(gdf)
 
         if validation_error:
-            gdf = gdf.to_crs(proj)
+            gdf = gdf.to_crs(_WGS84)
             gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
             geojson = json.loads(gdf.to_json())
 
@@ -329,18 +327,32 @@ async def check_boundary(
             )
 
         repository = _get_repository()
-        output_srid = int(proj.split(":")[1])
-        intersecting_edps = _find_intersecting_edps(gdf, repository, output_srid)
+        intersecting_edps = _find_intersecting_edps(gdf, repository, output_srid=4326)
 
-        gdf = gdf.to_crs(proj)
-        gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
+        # Extract the first Polygon/MultiPolygon geometry, stripping user-supplied
+        # properties to avoid processing Personal Identifiable Information (PII).
+        polygons = gdf[gdf.geometry.geom_type.isin(_VALID_GEOM_TYPES)]
+        if polygons.empty:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "No polygon geometry found in the uploaded file"},
+            )
+        first_geom = polygons.geometry.iloc[0]
+        original_crs = str(gdf.crs)
+        boundary_geometry_original = {
+            "type": "Feature",
+            "geometry": first_geom.__geo_interface__,
+            "properties": {"crs": original_crs},
+        }
 
-        geojson = json.loads(gdf.to_json())
+        polygons = polygons.to_crs(_WGS84)
+        first_geom_wgs84 = polygons.geometry.iloc[0]
+        boundary_geometry_wgs84 = first_geom_wgs84.__geo_interface__
 
     return JSONResponse(
         content={
-            "geometry": geojson,
-            "intersecting_edps": intersecting_edps,
-            "intersects_edp": len(intersecting_edps) > 0,
+            "boundaryGeometryOriginal": boundary_geometry_original,
+            "boundaryGeometryWgs84": boundary_geometry_wgs84,
+            "intersectingEdps": intersecting_edps,
         }
     )

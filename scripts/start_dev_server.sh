@@ -27,6 +27,8 @@ export MONGO_URI=mongodb://localhost:27018/
 export ENV=dev
 export HOST=0.0.0.0
 export LOG_CONFIG=logging-dev.json
+export DB_IAM_AUTHENTICATION=false
+export DB_PORT=5434
 
 # Load application environment variables
 echo "Loading environment variables..."
