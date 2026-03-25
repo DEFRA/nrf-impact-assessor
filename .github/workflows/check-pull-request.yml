@@ -30,11 +30,17 @@ jobs:
           uv run ruff check
           uv run pytest
 
+      - name: Set git hash
+        run: echo "${{ github.sha }}" > .git-hash
+
       - name: Test Docker Image Build
         run: |
           set +e
           docker build --no-cache --tag nrf-impact-assessor .
           exit $?
+
+      - name: Verify git hash in Docker image
+        run: docker run --rm --entrypoint cat nrf-impact-assessor .git-hash
 
 #      - name: SonarCloud Scan
 #        if: github.actor != 'dependabot[bot]'
