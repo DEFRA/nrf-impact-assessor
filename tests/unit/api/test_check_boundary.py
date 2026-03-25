@@ -121,7 +121,7 @@ class TestCheckBoundaryGeoJSON:
     """Tests for POST /check-boundary with GeoJSON files."""
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
-    def test_valid_geojson_returns_feature_collection(self, client):
+    def test_valid_geojson_returns_polygon_geometry(self, client):
         content = _make_geojson_bytes()
         response = client.post(
             "/check-boundary",
@@ -136,16 +136,12 @@ class TestCheckBoundaryGeoJSON:
 
         assert response.status_code == 200
         body = response.json()
-        assert body["boundaryGeometryWgs84"]["type"] == "FeatureCollection"
-        assert len(body["boundaryGeometryWgs84"]["features"]) == 1
-        assert (
-            body["boundaryGeometryWgs84"]["features"][0]["geometry"]["type"]
-            == "Polygon"
-        )
+        assert body["boundaryGeometryWgs84"]["type"] == "Polygon"
+        assert len(body["boundaryGeometryWgs84"]["coordinates"]) >= 1
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
-    def test_properties_are_stripped_from_features(self, client):
-        """User-supplied properties should be removed to avoid leaking PII."""
+    def test_properties_are_not_included(self, client):
+        """User-supplied properties should not be present in bare geometry output."""
         content = _make_geojson_bytes()
         response = client.post(
             "/check-boundary",
@@ -159,8 +155,8 @@ class TestCheckBoundaryGeoJSON:
         )
 
         assert response.status_code == 200
-        feature = response.json()["boundaryGeometryWgs84"]["features"][0]
-        assert feature["properties"] == {}
+        geom = response.json()["boundaryGeometryWgs84"]
+        assert set(geom.keys()) == {"type", "coordinates"}
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_json_extension_accepted(self, client):
@@ -177,10 +173,11 @@ class TestCheckBoundaryGeoJSON:
         )
 
         assert response.status_code == 200
-        assert response.json()["boundaryGeometryWgs84"]["type"] == "FeatureCollection"
+        assert response.json()["boundaryGeometryWgs84"]["type"] == "Polygon"
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
-    def test_multiple_features_returned(self, client):
+    def test_multiple_features_returns_first_polygon(self, client):
+        """When input has multiple features, only the first polygon is returned."""
         geojson = {
             "type": "FeatureCollection",
             "features": [
@@ -215,7 +212,11 @@ class TestCheckBoundaryGeoJSON:
         )
 
         assert response.status_code == 200
-        assert len(response.json()["boundaryGeometryWgs84"]["features"]) == 2
+        body = response.json()
+        # Only the first polygon should be returned
+        assert body["boundaryGeometryWgs84"]["type"] == "Polygon"
+        assert body["boundaryGeometryOriginal"]["type"] == "Feature"
+        assert body["boundaryGeometryOriginal"]["geometry"]["type"] == "Polygon"
 
     def test_invalid_geojson_returns_400(self, client):
         response = client.post(
@@ -415,9 +416,7 @@ class TestCheckBoundaryProjection:
 
         assert response.status_code == 200
         body = response.json()
-        coords = body["boundaryGeometryWgs84"]["features"][0]["geometry"][
-            "coordinates"
-        ][0]
+        coords = body["boundaryGeometryWgs84"]["coordinates"][0]
         for lng, lat in coords:
             assert -180 <= lng <= 180, f"longitude {lng} out of WGS84 range"
             assert -90 <= lat <= 90, f"latitude {lat} out of WGS84 range"
@@ -450,11 +449,12 @@ class TestCheckBoundaryProjection:
 
         assert response.status_code == 200
         body = response.json()
-        coords = body["boundaryGeometryOriginal"]["features"][0]["geometry"][
-            "coordinates"
-        ][0]
+        original = body["boundaryGeometryOriginal"]
+        assert original["type"] == "Feature"
+        coords = original["geometry"]["coordinates"][0]
         for e, n in coords:
             assert abs(e) > 180 or abs(n) > 180, "Expected BNG coordinates"
+        assert "27700" in original["properties"]["crs"]
 
 
 class TestCheckBoundaryEdpIntersection:

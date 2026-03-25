@@ -329,15 +329,19 @@ async def check_boundary(
         repository = _get_repository()
         intersecting_edps = _find_intersecting_edps(gdf, repository, output_srid=4326)
 
-        # Capture original CRS geometry before reprojecting.
-        # Strips all columns except geometry, removing any user-supplied properties
-        # as we don't to process Personal Identifiable Information (PII).
-        gdf_original = gdf.drop(columns=gdf.columns.difference(["geometry"]))
-        boundary_geometry_original = json.loads(gdf_original.to_json())
+        # Extract the first polygon geometry, stripping user-supplied properties
+        # to avoid processing Personal Identifiable Information (PII).
+        first_geom = gdf.geometry.iloc[0]
+        original_crs = str(gdf.crs)
+        boundary_geometry_original = {
+            "type": "Feature",
+            "geometry": first_geom.__geo_interface__,
+            "properties": {"crs": original_crs},
+        }
 
         gdf = gdf.to_crs(_WGS84)
-        gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
-        boundary_geometry_wgs84 = json.loads(gdf.to_json())
+        first_geom_wgs84 = gdf.geometry.iloc[0]
+        boundary_geometry_wgs84 = first_geom_wgs84.__geo_interface__
 
     return JSONResponse(
         content={
