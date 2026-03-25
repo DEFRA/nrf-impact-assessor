@@ -338,11 +338,14 @@ async def check_boundary(
                 content={"error": "No polygon geometry found in the uploaded file"},
             )
         first_geom = polygons.geometry.iloc[0]
-        original_crs = str(gdf.crs)
+        authority, code = gdf.crs.to_authority()
+        crs_urn = f"urn:ogc:def:crs:{authority}::{code}"
         boundary_geometry_original = {
-            "type": "Feature",
-            "geometry": first_geom.__geo_interface__,
-            "properties": {"crs": original_crs},
+            **first_geom.__geo_interface__,
+            "crs": {
+                "type": "name",
+                "properties": {"name": crs_urn},
+            },
         }
 
         polygons = polygons.to_crs(_WGS84)
