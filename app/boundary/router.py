@@ -34,7 +34,7 @@ from app.spatial.utils import ensure_crs
 
 logger = logging.getLogger(__name__)
 
-_VALID_GEOM_TYPES = {"Polygon", "MultiPolygon"}
+_VALID_GEOM_TYPES = {"Polygon"}
 _WGS84 = "EPSG:4326"
 
 
@@ -52,7 +52,7 @@ def _validate_geometry(gdf: gpd.GeoDataFrame) -> str | None:
     if invalid_types:
         return (
             f"Invalid geometry types found: {', '.join(invalid_types)}. "
-            "Expected: Polygon or MultiPolygon"
+            "Only Polygon geometry is supported."
         )
 
     null_count = gdf.geometry.isna().sum()
