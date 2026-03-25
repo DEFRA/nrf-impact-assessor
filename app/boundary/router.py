@@ -332,15 +332,18 @@ async def check_boundary(
         output_srid = int(proj.split(":")[1])
         intersecting_edps = _find_intersecting_edps(gdf, repository, output_srid)
 
+        # Capture original CRS geometry before reprojecting
+        gdf_original = gdf.drop(columns=gdf.columns.difference(["geometry"]))
+        boundary_geometry_original = json.loads(gdf_original.to_json())
+
         gdf = gdf.to_crs(proj)
         gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
-
-        geojson = json.loads(gdf.to_json())
+        boundary_geometry_wgs84 = json.loads(gdf.to_json())
 
     return JSONResponse(
         content={
-            "geometry": geojson,
-            "intersecting_edps": intersecting_edps,
-            "intersects_edp": len(intersecting_edps) > 0,
+            "boundaryGeometryOriginal": boundary_geometry_original,
+            "boundaryGeometryWgs84": boundary_geometry_wgs84,
+            "intersectingEdps": intersecting_edps,
         }
     )
