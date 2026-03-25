@@ -35,6 +35,7 @@ from app.spatial.utils import ensure_crs
 logger = logging.getLogger(__name__)
 
 _VALID_GEOM_TYPES = {"Polygon", "MultiPolygon"}
+_WGS84 = "EPSG:4326"
 
 
 def _validate_geometry(gdf: gpd.GeoDataFrame) -> str | None:
@@ -293,7 +294,7 @@ async def check_boundary(
         # safe to assume EPSG:4326 when no CRS is present.
         ext = Path(filename).suffix.lower()
         if gdf.crs is None and ext in _WGS84_EXTENSIONS:
-            gdf = gdf.set_crs("EPSG:4326")
+            gdf = gdf.set_crs(_WGS84)
 
         try:
             gdf = ensure_crs(gdf)
@@ -313,7 +314,7 @@ async def check_boundary(
         validation_error = _validate_geometry(gdf)
 
         if validation_error:
-            gdf = gdf.to_crs("EPSG:4326")
+            gdf = gdf.to_crs(_WGS84)
             gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
             geojson = json.loads(gdf.to_json())
 
@@ -334,7 +335,7 @@ async def check_boundary(
         gdf_original = gdf.drop(columns=gdf.columns.difference(["geometry"]))
         boundary_geometry_original = json.loads(gdf_original.to_json())
 
-        gdf = gdf.to_crs("EPSG:4326")
+        gdf = gdf.to_crs(_WGS84)
         gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
         boundary_geometry_wgs84 = json.loads(gdf.to_json())
 
