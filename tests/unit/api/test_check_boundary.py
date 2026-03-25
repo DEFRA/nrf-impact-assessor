@@ -215,8 +215,7 @@ class TestCheckBoundaryGeoJSON:
         body = response.json()
         # Only the first polygon should be returned
         assert body["boundaryGeometryWgs84"]["type"] == "Polygon"
-        assert body["boundaryGeometryOriginal"]["type"] == "Feature"
-        assert body["boundaryGeometryOriginal"]["geometry"]["type"] == "Polygon"
+        assert body["boundaryGeometryOriginal"]["type"] == "Polygon"
 
     def test_invalid_geojson_returns_400(self, client):
         response = client.post(
@@ -450,11 +449,12 @@ class TestCheckBoundaryProjection:
         assert response.status_code == 200
         body = response.json()
         original = body["boundaryGeometryOriginal"]
-        assert original["type"] == "Feature"
-        coords = original["geometry"]["coordinates"][0]
+        assert original["type"] == "Polygon"
+        coords = original["coordinates"][0]
         for e, n in coords:
             assert abs(e) > 180 or abs(n) > 180, "Expected BNG coordinates"
-        assert "27700" in original["properties"]["crs"]
+        assert original["crs"]["type"] == "name"
+        assert "27700" in original["crs"]["properties"]["name"]
 
 
 class TestCheckBoundaryEdpIntersection:
