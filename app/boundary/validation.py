@@ -77,7 +77,7 @@ def validate_geometry(gdf: gpd.GeoDataFrame) -> str | None:
             return (
                 "The uploaded boundary contains duplicated or overlapping geometry "
                 "(duplicate consecutive vertices). "
-                "Please clean up the boundary in your GIS software to remove "
+                "Please clean up the boundary to remove "
                 "duplicate points and try again."
             )
 
