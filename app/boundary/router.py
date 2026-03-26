@@ -71,6 +71,26 @@ _WGS84_EXTENSIONS = frozenset({_EXT_GEOJSON, _EXT_JSON, _EXT_KML})
 _SUPPORTED_EXTENSIONS = frozenset({_EXT_ZIP, _EXT_GEOJSON, _EXT_JSON, _EXT_KML})
 
 
+def _make_response(
+    status_code: int = 200,
+    *,
+    boundary_geometry_original: dict | None = None,
+    boundary_geometry_wgs84: dict | None = None,
+    intersecting_edps: list | None = None,
+    error: str | None = None,
+) -> JSONResponse:
+    """Build a consistent JSON response for the check-boundary endpoint."""
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "boundaryGeometryOriginal": boundary_geometry_original,
+            "boundaryGeometryWgs84": boundary_geometry_wgs84,
+            "intersectingEdps": intersecting_edps or [],
+            "error": error,
+        },
+    )
+
+
 def _validate_extension(filename: str) -> str:
     """Validate the file extension and return it.
 
@@ -78,11 +98,8 @@ def _validate_extension(filename: str) -> str:
     """
     suffix = Path(filename).suffix.lower()
     if suffix not in _SUPPORTED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Unsupported file format: {suffix}. Use .zip, .geojson, .json, or .kml"
-            ),
+        raise ValueError(
+            f"Unsupported file format: {suffix}. Use .zip, .geojson, .json, or .kml"
         )
     return suffix
 
@@ -125,12 +142,10 @@ def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFr
             zip_path = _write_to_temp(content, tmpdir, _EXT_ZIP)
             read_path = _extract_zip(zip_path, tmpdir)
             return gpd.read_file(read_path)
-    except HTTPException:
+    except ValueError:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=400, detail=f"Failed to read geometry file: {e}"
-        ) from e
+        raise ValueError(f"Failed to read geometry file: {e}") from e
 
 
 def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
@@ -141,9 +156,7 @@ def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
         for member in zf.infolist():
             member_path = (extract_dir / member.filename).resolve()
             if not member_path.is_relative_to(extract_dir.resolve()):
-                raise HTTPException(
-                    status_code=400, detail="Malicious zip entry detected"
-                )
+                raise ValueError("Malicious zip entry detected")
         zf.extractall(extract_dir)
 
     shp_files = list(extract_dir.glob("**/*.shp"))
@@ -158,13 +171,10 @@ def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
             ext for ext in (".dbf", ".shx") if not (shp_dir / f"{stem}{ext}").exists()
         ]
         if missing:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Shapefile is missing required companion files: "
-                    f"{', '.join(missing)}. "
-                    "A zip must contain .shp, .dbf, and .shx files."
-                ),
+            raise ValueError(
+                f"Shapefile is missing required companion files: "
+                f"{', '.join(missing)}. "
+                "A zip must contain .shp, .dbf, and .shx files."
             )
         return shp_path
     if geojson_files:
@@ -172,10 +182,7 @@ def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
     if kml_files:
         return kml_files[0]
 
-    raise HTTPException(
-        status_code=400,
-        detail="Zip file must contain a .shp, .geojson, or .kml file",
-    )
+    raise ValueError("Zip file must contain a .shp, .geojson, or .kml file")
 
 
 def _find_intersecting_edps(
@@ -253,15 +260,18 @@ async def check_boundary(
     content = await geometry_file.read(_max_upload_bytes + 1)
     if len(content) > _max_upload_bytes:
         max_mb = _max_upload_bytes / (1024 * 1024)
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum upload size is {max_mb:.0f} MB.",
+        return _make_response(
+            413,
+            error=f"File too large. Maximum upload size is {max_mb:.0f} MB.",
         )
 
     filename = geometry_file.filename or "input.geojson"
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        gdf = _read_geometry(content, filename, Path(tmpdir))
+        try:
+            gdf = _read_geometry(content, filename, Path(tmpdir))
+        except ValueError as e:
+            return _make_response(400, error=str(e))
 
         # GeoJSON (RFC 7946) and KML (OGC spec) mandate WGS84 —
         # safe to assume EPSG:4326 when no CRS is present.
@@ -284,7 +294,7 @@ async def check_boundary(
                 " Please ensure your boundary file has one of these"
                 " Coordinate Reference Systems defined and try again."
             )
-            raise HTTPException(status_code=422, detail=detail) from None
+            return _make_response(422, error=detail)
 
         validation_error = validate_geometry(gdf)
 
@@ -293,12 +303,10 @@ async def check_boundary(
             gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
             geojson = json.loads(gdf.to_json())
 
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "error": validation_error,
-                    "geometry": geojson,
-                },
+            return _make_response(
+                400,
+                error=validation_error,
+                boundary_geometry_wgs84=geojson,
             )
 
         repository = _get_repository()
@@ -308,9 +316,9 @@ async def check_boundary(
         # properties to avoid processing Personal Identifiable Information (PII).
         polygons = gdf[gdf.geometry.geom_type.isin(_VALID_GEOM_TYPES)]
         if polygons.empty:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "No polygon geometry found in the uploaded file"},
+            return _make_response(
+                400,
+                error="No polygon geometry found in the uploaded file",
             )
         first_geom = polygons.geometry.iloc[0]
         authority, code = gdf.crs.to_authority()
@@ -329,10 +337,8 @@ async def check_boundary(
         first_geom_wgs84 = polygons.geometry.iloc[0]
         boundary_geometry_wgs84 = first_geom_wgs84.__geo_interface__
 
-    return JSONResponse(
-        content={
-            "boundaryGeometryOriginal": boundary_geometry_original,
-            "boundaryGeometryWgs84": boundary_geometry_wgs84,
-            "intersectingEdps": intersecting_edps,
-        }
+    return _make_response(
+        boundary_geometry_original=boundary_geometry_original,
+        boundary_geometry_wgs84=boundary_geometry_wgs84,
+        intersecting_edps=intersecting_edps,
     )

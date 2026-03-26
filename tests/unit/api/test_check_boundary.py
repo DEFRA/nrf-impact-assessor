@@ -202,7 +202,7 @@ class TestCheckBoundaryGeoJSON:
         )
 
         assert response.status_code == 400
-        assert "Failed to read geometry file" in response.json()["detail"]
+        assert "Failed to read geometry file" in response.json()["error"]
 
     def test_unsupported_format_returns_400(self, client):
         response = client.post(
@@ -217,7 +217,7 @@ class TestCheckBoundaryGeoJSON:
         )
 
         assert response.status_code == 400
-        assert "Unsupported file format" in response.json()["detail"]
+        assert "Unsupported file format" in response.json()["error"]
 
     def test_file_too_large_returns_413(self, client):
         from app.boundary.router import _max_upload_bytes
@@ -235,7 +235,7 @@ class TestCheckBoundaryGeoJSON:
         )
 
         assert response.status_code == 413
-        assert "File too large" in response.json()["detail"]
+        assert "File too large" in response.json()["error"]
 
     def test_shapefile_without_crs_returns_422(self, client):
         """A .shp without a .prj has no CRS — should return 422 with helpful message."""
@@ -278,10 +278,10 @@ class TestCheckBoundaryGeoJSON:
         )
 
         assert response.status_code == 422
-        detail = response.json()["detail"]
-        assert "coordinate reference system" in detail.lower()
-        assert ".prj" in detail
-        assert "Please ensure your boundary file" in detail
+        error = response.json()["error"]
+        assert "coordinate reference system" in error.lower()
+        assert ".prj" in error
+        assert "Please ensure your boundary file" in error
 
     def test_shapefile_zip_missing_companion_files_returns_400(self, client):
         """A zip with only .shp (no .dbf/.shx) should return 400."""
@@ -305,10 +305,10 @@ class TestCheckBoundaryGeoJSON:
         )
 
         assert response.status_code == 400
-        detail = response.json()["detail"]
-        assert "missing required companion files" in detail
-        assert ".dbf" in detail
-        assert ".shx" in detail
+        error = response.json()["error"]
+        assert "missing required companion files" in error
+        assert ".dbf" in error
+        assert ".shx" in error
 
 
 class TestCheckBoundaryGeometryValidation:
@@ -333,8 +333,8 @@ class TestCheckBoundaryGeometryValidation:
         assert response.status_code == 400
         body = response.json()
         assert "invalid geometry" in body["error"].lower()
-        assert body["geometry"]["type"] == "FeatureCollection"
-        assert len(body["geometry"]["features"]) == 1
+        assert body["boundaryGeometryWgs84"]["type"] == "FeatureCollection"
+        assert len(body["boundaryGeometryWgs84"]["features"]) == 1
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_valid_polygon_passes_validation(self, client):
@@ -437,9 +437,9 @@ class TestCheckBoundaryGeometryValidation:
         )
 
         assert response.status_code == 422
-        detail = response.json()["detail"]
-        assert "EPSG:27700" in detail
-        assert "EPSG:4326" in detail
+        error = response.json()["error"]
+        assert "EPSG:27700" in error
+        assert "EPSG:4326" in error
 
     def test_error_response_includes_retry_guidance(self, client):
         """Error messages should include guidance for correction."""
@@ -600,4 +600,6 @@ class TestCheckBoundaryEdpIntersection:
             "boundaryGeometryOriginal",
             "boundaryGeometryWgs84",
             "intersectingEdps",
+            "error",
         }
+        assert body["error"] is None
