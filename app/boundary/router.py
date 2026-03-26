@@ -12,7 +12,7 @@ from io import BytesIO
 from pathlib import Path
 
 import geopandas as gpd
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, UploadFile
 from fastapi.responses import JSONResponse
 from geoalchemy2.functions import (
     ST_Area,
@@ -98,9 +98,8 @@ def _validate_extension(filename: str) -> str:
     """
     suffix = Path(filename).suffix.lower()
     if suffix not in _SUPPORTED_EXTENSIONS:
-        raise ValueError(
-            f"Unsupported file format: {suffix}. Use .zip, .geojson, .json, or .kml"
-        )
+        msg = f"Unsupported file format: {suffix}. Use .zip, .geojson, .json, or .kml"
+        raise ValueError(msg)
     return suffix
 
 
@@ -145,7 +144,8 @@ def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFr
     except ValueError:
         raise
     except Exception as e:
-        raise ValueError(f"Failed to read geometry file: {e}") from e
+        msg = f"Failed to read geometry file: {e}"
+        raise ValueError(msg) from e
 
 
 def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
@@ -156,7 +156,8 @@ def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
         for member in zf.infolist():
             member_path = (extract_dir / member.filename).resolve()
             if not member_path.is_relative_to(extract_dir.resolve()):
-                raise ValueError("Malicious zip entry detected")
+                msg = "Malicious zip entry detected"
+                raise ValueError(msg)
         zf.extractall(extract_dir)
 
     shp_files = list(extract_dir.glob("**/*.shp"))
@@ -171,18 +172,20 @@ def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
             ext for ext in (".dbf", ".shx") if not (shp_dir / f"{stem}{ext}").exists()
         ]
         if missing:
-            raise ValueError(
+            msg = (
                 f"Shapefile is missing required companion files: "
                 f"{', '.join(missing)}. "
                 "A zip must contain .shp, .dbf, and .shx files."
             )
+            raise ValueError(msg)
         return shp_path
     if geojson_files:
         return geojson_files[0]
     if kml_files:
         return kml_files[0]
 
-    raise ValueError("Zip file must contain a .shp, .geojson, or .kml file")
+    msg = "Zip file must contain a .shp, .geojson, or .kml file"
+    raise ValueError(msg)
 
 
 def _find_intersecting_edps(
