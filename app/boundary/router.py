@@ -26,6 +26,7 @@ from geoalchemy2.functions import (
 )
 from sqlalchemy import select
 
+from app.boundary.validation import _SUPPORTED_CRS_LABELS, validate_geometry
 from app.config import ApiServerConfig, DatabaseSettings
 from app.models.db import EdpBoundaryLayer
 from app.repositories.engine import create_db_engine
@@ -36,34 +37,6 @@ logger = logging.getLogger(__name__)
 
 _VALID_GEOM_TYPES = {"Polygon"}
 _WGS84 = "EPSG:4326"
-
-
-def _validate_geometry(gdf: gpd.GeoDataFrame) -> str | None:
-    """Validate geometry data, returning an error message on invalid input.
-
-    Checks for unsupported geometry types, null geometries,
-    and invalid geometries (e.g. self-intersections, figure-of-8 shapes).
-
-    Returns:
-        Error message string if validation fails, or None if valid.
-    """
-    geom_types = set(gdf.geometry.geom_type.unique())
-    invalid_types = geom_types - _VALID_GEOM_TYPES
-    if invalid_types:
-        return (
-            f"Invalid geometry types found: {', '.join(invalid_types)}. "
-            "Only Polygon geometry is supported."
-        )
-
-    null_count = gdf.geometry.isna().sum()
-    if null_count > 0:
-        return f"Found {null_count} null geometries"
-
-    invalid_count = (~gdf.geometry.is_valid).sum()
-    if invalid_count > 0:
-        return "The uploaded boundary contains invalid geometry (self-intersecting or overlapping lines). Please correct the file and try again."
-
-    return None
 
 
 router = APIRouter()
@@ -299,6 +272,7 @@ async def check_boundary(
         try:
             gdf = ensure_crs(gdf)
         except ValueError:
+            supported = ", ".join(_SUPPORTED_CRS_LABELS)
             detail = (
                 "The uploaded boundary file has no coordinate reference system (CRS) "
                 "defined."
@@ -306,12 +280,13 @@ async def check_boundary(
             if ext == _EXT_ZIP:
                 detail += " Shapefiles require a .prj file to specify the CRS."
             detail += (
-                " Please ensure your boundary file has the appropriate"
-                " Coordinate Reference System defined."
+                f" Supported coordinate systems are: {supported}."
+                " Please ensure your boundary file has one of these"
+                " Coordinate Reference Systems defined and try again."
             )
             raise HTTPException(status_code=422, detail=detail) from None
 
-        validation_error = _validate_geometry(gdf)
+        validation_error = validate_geometry(gdf)
 
         if validation_error:
             gdf = gdf.to_crs(_WGS84)

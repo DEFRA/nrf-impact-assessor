@@ -355,6 +355,112 @@ class TestCheckBoundaryGeometryValidation:
 
         assert response.status_code == 200
 
+    def test_polygon_with_holes_returns_400(self, client):
+        """A polygon with interior rings (holes) should be rejected."""
+        content = _make_geojson_bytes(
+            coordinates=[
+                [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]],
+                [[2, 2], [2, 4], [4, 4], [4, 2], [2, 2]],
+            ]
+        )
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "holes.geojson",
+                    BytesIO(content),
+                    "application/json",
+                )
+            },
+        )
+
+        assert response.status_code == 400
+        body = response.json()
+        assert "holes" in body["error"].lower() or "gaps" in body["error"].lower()
+        assert "single continuous area" in body["error"].lower()
+
+    def test_duplicate_consecutive_vertices_returns_400(self, client):
+        """A polygon with duplicate consecutive vertices should be rejected."""
+        content = _make_geojson_bytes(
+            coordinates=[[[0, 0], [1, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]
+        )
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "duplicates.geojson",
+                    BytesIO(content),
+                    "application/json",
+                )
+            },
+        )
+
+        assert response.status_code == 400
+        body = response.json()
+        assert "duplicate" in body["error"].lower()
+
+    def test_missing_crs_error_lists_supported_systems(self, client):
+        """CRS error should list supported coordinate reference systems."""
+        import tempfile
+        import zipfile
+        from pathlib import Path
+
+        import geopandas as gpd
+        from shapely.geometry import Polygon
+
+        gdf = gpd.GeoDataFrame(
+            {"id": [1]},
+            geometry=[Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])],
+            crs=None,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            shp_path = Path(tmpdir) / "no_crs.shp"
+            gdf.to_file(shp_path)
+            for prj in Path(tmpdir).glob("*.prj"):
+                prj.unlink()
+
+            zip_buf = BytesIO()
+            with zipfile.ZipFile(zip_buf, "w") as zf:
+                for f in Path(tmpdir).glob("no_crs.*"):
+                    zf.write(f, f.name)
+            zip_buf.seek(0)
+
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "no_crs.zip",
+                    zip_buf,
+                    "application/zip",
+                )
+            },
+        )
+
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert "EPSG:27700" in detail
+        assert "EPSG:4326" in detail
+
+    def test_error_response_includes_retry_guidance(self, client):
+        """Error messages should include guidance for correction."""
+        content = _make_geojson_bytes(
+            coordinates=[[[0, 0], [1, 1], [1, 0], [0, 1], [0, 0]]]
+        )
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "invalid.geojson",
+                    BytesIO(content),
+                    "application/json",
+                )
+            },
+        )
+
+        assert response.status_code == 400
+        body = response.json()
+        assert "try again" in body["error"].lower() or "please" in body["error"].lower()
+
 
 class TestCheckBoundaryProjection:
     """Tests for output projection."""
