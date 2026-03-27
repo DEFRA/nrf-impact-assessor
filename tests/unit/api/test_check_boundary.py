@@ -1,11 +1,16 @@
 """Tests for the POST /check-boundary endpoint."""
 
 import json
+import tempfile
+import zipfile
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import patch
 
+import geopandas as gpd
 import pytest
 from fastapi.testclient import TestClient
+from shapely.geometry import Polygon
 
 from app.main import app
 from tests.unit.api.conftest import _make_geojson_bytes
@@ -89,22 +94,49 @@ def _mock_edp_intersections(gdf, repository, output_srid=4326):
     ]
 
 
+def _post_boundary(client, filename, content, content_type="application/json"):
+    """Post a file to the /check-boundary endpoint."""
+    return client.post(
+        "/check-boundary",
+        files={"geometry_file": (filename, BytesIO(content), content_type)},
+    )
+
+
+def _post_boundary_file(client, filename, file_buf, content_type):
+    """Post a file buffer to the /check-boundary endpoint."""
+    return client.post(
+        "/check-boundary",
+        files={"geometry_file": (filename, file_buf, content_type)},
+    )
+
+
+def _make_shapefile_zip_without_crs():
+    """Create a zip containing a shapefile with no .prj (no CRS)."""
+    gdf = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])],
+        crs=None,
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        shp_path = Path(tmpdir) / "no_crs.shp"
+        gdf.to_file(shp_path)
+        for prj in Path(tmpdir).glob("*.prj"):
+            prj.unlink()
+
+        zip_buf = BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as zf:
+            for f in Path(tmpdir).glob("no_crs.*"):
+                zf.write(f, f.name)
+        zip_buf.seek(0)
+    return zip_buf
+
+
 class TestCheckBoundaryGeoJSON:
     """Tests for POST /check-boundary with GeoJSON files."""
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_valid_geojson_returns_polygon_geometry(self, client):
-        content = _make_geojson_bytes()
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "boundary.geojson",
-                    BytesIO(content),
-                    "application/json",
-                )
-            },
-        )
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
 
         assert response.status_code == 200
         body = response.json()
@@ -114,17 +146,7 @@ class TestCheckBoundaryGeoJSON:
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_properties_are_not_included(self, client):
         """User-supplied properties should not be present in bare geometry output."""
-        content = _make_geojson_bytes()
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "boundary.geojson",
-                    BytesIO(content),
-                    "application/json",
-                )
-            },
-        )
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
 
         assert response.status_code == 200
         geom = response.json()["boundaryGeometryWgs84"]
@@ -132,17 +154,7 @@ class TestCheckBoundaryGeoJSON:
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_json_extension_accepted(self, client):
-        content = _make_geojson_bytes()
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "boundary.json",
-                    BytesIO(content),
-                    "application/json",
-                )
-            },
-        )
+        response = _post_boundary(client, "boundary.json", _make_geojson_bytes())
 
         assert response.status_code == 200
         assert response.json()["boundaryGeometryWgs84"]["type"] == "Polygon"
@@ -172,143 +184,65 @@ class TestCheckBoundaryGeoJSON:
             ],
         }
         content = json.dumps(geojson).encode()
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "multi.geojson",
-                    BytesIO(content),
-                    "application/json",
-                )
-            },
-        )
+        response = _post_boundary(client, "multi.geojson", content)
 
         assert response.status_code == 200
         body = response.json()
-        # Only the first polygon should be returned
         assert body["boundaryGeometryWgs84"]["type"] == "Polygon"
         assert body["boundaryGeometryOriginal"]["type"] == "Polygon"
 
     def test_invalid_geojson_returns_400(self, client):
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "bad.geojson",
-                    BytesIO(b"not valid json"),
-                    "application/json",
-                )
-            },
-        )
+        response = _post_boundary(client, "bad.geojson", b"not valid json")
 
         assert response.status_code == 400
-        assert "Failed to read geometry file" in response.json()["detail"]
+        assert "Failed to read geometry file" in response.json()["error"]
 
     def test_unsupported_format_returns_400(self, client):
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "data.csv",
-                    BytesIO(b"col1,col2\n1,2"),
-                    "text/csv",
-                )
-            },
+        response = _post_boundary(
+            client, "data.csv", b"col1,col2\n1,2", content_type="text/csv"
         )
 
         assert response.status_code == 400
-        assert "Unsupported file format" in response.json()["detail"]
+        assert "Unsupported file format" in response.json()["error"]
 
     def test_file_too_large_returns_413(self, client):
         from app.boundary.router import _max_upload_bytes
 
         content = b"x" * (_max_upload_bytes + 1)
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "huge.geojson",
-                    BytesIO(content),
-                    "application/json",
-                )
-            },
-        )
+        response = _post_boundary(client, "huge.geojson", content)
 
         assert response.status_code == 413
-        assert "File too large" in response.json()["detail"]
+        assert "File too large" in response.json()["error"]
 
     def test_shapefile_without_crs_returns_422(self, client):
         """A .shp without a .prj has no CRS — should return 422 with helpful message."""
-        import tempfile
-        import zipfile
-        from pathlib import Path
-
-        import geopandas as gpd
-        from shapely.geometry import Polygon
-
-        # Create a shapefile without a .prj file
-        gdf = gpd.GeoDataFrame(
-            {"id": [1]},
-            geometry=[Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])],
-            crs=None,
-        )
-        with tempfile.TemporaryDirectory() as tmpdir:
-            shp_path = Path(tmpdir) / "no_crs.shp"
-            gdf.to_file(shp_path)
-            # Remove .prj to ensure no CRS
-            for prj in Path(tmpdir).glob("*.prj"):
-                prj.unlink()
-
-            # Zip the shapefile components
-            zip_buf = BytesIO()
-            with zipfile.ZipFile(zip_buf, "w") as zf:
-                for f in Path(tmpdir).glob("no_crs.*"):
-                    zf.write(f, f.name)
-            zip_buf.seek(0)
-
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "no_crs.zip",
-                    zip_buf,
-                    "application/zip",
-                )
-            },
+        zip_buf = _make_shapefile_zip_without_crs()
+        response = _post_boundary_file(
+            client, "no_crs.zip", zip_buf, "application/zip"
         )
 
         assert response.status_code == 422
-        detail = response.json()["detail"]
-        assert "coordinate reference system" in detail.lower()
-        assert ".prj" in detail
-        assert "Please ensure your boundary file" in detail
+        error = response.json()["error"]
+        assert "coordinate reference system" in error.lower()
+        assert ".prj" in error
+        assert "Please ensure your boundary file" in error
 
     def test_shapefile_zip_missing_companion_files_returns_400(self, client):
         """A zip with only .shp (no .dbf/.shx) should return 400."""
-        import zipfile
-
-        # Create a zip containing only a .shp file (no companions)
         zip_buf = BytesIO()
         with zipfile.ZipFile(zip_buf, "w") as zf:
             zf.writestr("boundary.shp", b"fake shapefile content")
         zip_buf.seek(0)
 
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "incomplete.zip",
-                    zip_buf,
-                    "application/zip",
-                )
-            },
+        response = _post_boundary_file(
+            client, "incomplete.zip", zip_buf, "application/zip"
         )
 
         assert response.status_code == 400
-        detail = response.json()["detail"]
-        assert "missing required companion files" in detail
-        assert ".dbf" in detail
-        assert ".shx" in detail
+        error = response.json()["error"]
+        assert "missing required companion files" in error
+        assert ".dbf" in error
+        assert ".shx" in error
 
 
 class TestCheckBoundaryGeometryValidation:
@@ -319,22 +253,13 @@ class TestCheckBoundaryGeometryValidation:
         content = _make_geojson_bytes(
             coordinates=[[[0, 0], [1, 1], [1, 0], [0, 1], [0, 0]]]
         )
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "self-intersecting.geojson",
-                    BytesIO(content),
-                    "application/json",
-                )
-            },
-        )
+        response = _post_boundary(client, "self-intersecting.geojson", content)
 
         assert response.status_code == 400
         body = response.json()
         assert "invalid geometry" in body["error"].lower()
-        assert body["geometry"]["type"] == "FeatureCollection"
-        assert len(body["geometry"]["features"]) == 1
+        assert body["boundaryGeometryWgs84"]["type"] == "FeatureCollection"
+        assert len(body["boundaryGeometryWgs84"]["features"]) == 1
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_valid_polygon_passes_validation(self, client):
@@ -342,18 +267,69 @@ class TestCheckBoundaryGeometryValidation:
         content = _make_geojson_bytes(
             coordinates=[[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]
         )
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "valid.geojson",
-                    BytesIO(content),
-                    "application/json",
-                )
-            },
-        )
+        response = _post_boundary(client, "valid.geojson", content)
 
         assert response.status_code == 200
+
+    def test_polygon_with_holes_returns_400(self, client):
+        """A polygon with interior rings (holes) should be rejected."""
+        content = _make_geojson_bytes(
+            coordinates=[
+                [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]],
+                [[2, 2], [2, 4], [4, 4], [4, 2], [2, 2]],
+            ]
+        )
+        response = _post_boundary(client, "holes.geojson", content)
+
+        assert response.status_code == 400
+        body = response.json()
+        assert "holes" in body["error"].lower() or "gaps" in body["error"].lower()
+        assert "single continuous area" in body["error"].lower()
+
+    def test_duplicate_consecutive_vertices_returns_400(self, client):
+        """A polygon with duplicate consecutive vertices should be rejected."""
+        content = _make_geojson_bytes(
+            coordinates=[[[0, 0], [1, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]
+        )
+        response = _post_boundary(client, "duplicates.geojson", content)
+
+        assert response.status_code == 400
+        body = response.json()
+        assert "duplicate" in body["error"].lower()
+
+    def test_missing_crs_error_lists_supported_systems(self, client):
+        """CRS error should list supported coordinate reference systems."""
+        zip_buf = _make_shapefile_zip_without_crs()
+        response = _post_boundary_file(
+            client, "no_crs.zip", zip_buf, "application/zip"
+        )
+
+        assert response.status_code == 422
+        error = response.json()["error"]
+        assert "EPSG:27700" in error
+        assert "EPSG:4326" in error
+
+    def test_error_response_includes_retry_guidance(self, client):
+        """Error messages should include guidance for correction."""
+        content = _make_geojson_bytes(
+            coordinates=[[[0, 0], [1, 1], [1, 0], [0, 1], [0, 0]]]
+        )
+        response = _post_boundary(client, "invalid.geojson", content)
+
+        assert response.status_code == 400
+        body = response.json()
+        assert "try again" in body["error"].lower() or "please" in body["error"].lower()
+
+
+_BNG_COORDINATES = [
+    [
+        [400000, 100000],
+        [400100, 100000],
+        [400100, 100100],
+        [400000, 100100],
+        [400000, 100000],
+    ]
+]
 
 
 class TestCheckBoundaryProjection:
@@ -363,27 +339,10 @@ class TestCheckBoundaryProjection:
     def test_bng_input_reprojected_to_wgs84(self, client):
         """BNG input geometry should be reprojected to WGS84 in boundaryGeometryWgs84."""
         content = _make_geojson_bytes(
-            coordinates=[
-                [
-                    [400000, 100000],
-                    [400100, 100000],
-                    [400100, 100100],
-                    [400000, 100100],
-                    [400000, 100000],
-                ]
-            ],
+            coordinates=_BNG_COORDINATES,
             crs="urn:ogc:def:crs:EPSG::27700",
         )
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "boundary.geojson",
-                    BytesIO(content),
-                    "application/json",
-                )
-            },
-        )
+        response = _post_boundary(client, "boundary.geojson", content)
 
         assert response.status_code == 200
         body = response.json()
@@ -396,27 +355,10 @@ class TestCheckBoundaryProjection:
     def test_original_geometry_preserves_input_crs(self, client):
         """boundaryGeometryOriginal should keep the input CRS (BNG)."""
         content = _make_geojson_bytes(
-            coordinates=[
-                [
-                    [400000, 100000],
-                    [400100, 100000],
-                    [400100, 100100],
-                    [400000, 100100],
-                    [400000, 100000],
-                ]
-            ],
+            coordinates=_BNG_COORDINATES,
             crs="urn:ogc:def:crs:EPSG::27700",
         )
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "boundary.geojson",
-                    BytesIO(content),
-                    "application/json",
-                )
-            },
-        )
+        response = _post_boundary(client, "boundary.geojson", content)
 
         assert response.status_code == 200
         body = response.json()
@@ -434,17 +376,7 @@ class TestCheckBoundaryEdpIntersection:
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_no_intersections_returns_empty_list(self, client):
-        content = _make_geojson_bytes()
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "boundary.geojson",
-                    BytesIO(content),
-                    "application/json",
-                )
-            },
-        )
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
 
         assert response.status_code == 200
         body = response.json()
@@ -452,17 +384,7 @@ class TestCheckBoundaryEdpIntersection:
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
     def test_intersections_returns_edp_details(self, client):
-        content = _make_geojson_bytes()
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "boundary.geojson",
-                    BytesIO(content),
-                    "application/json",
-                )
-            },
-        )
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
 
         assert response.status_code == 200
         body = response.json()
@@ -476,17 +398,7 @@ class TestCheckBoundaryEdpIntersection:
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
     def test_response_contains_all_expected_keys(self, client):
-        content = _make_geojson_bytes()
-        response = client.post(
-            "/check-boundary",
-            files={
-                "geometry_file": (
-                    "boundary.geojson",
-                    BytesIO(content),
-                    "application/json",
-                )
-            },
-        )
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
 
         assert response.status_code == 200
         body = response.json()
@@ -494,4 +406,6 @@ class TestCheckBoundaryEdpIntersection:
             "boundaryGeometryOriginal",
             "boundaryGeometryWgs84",
             "intersectingEdps",
+            "error",
         }
+        assert body["error"] is None
