@@ -9,10 +9,10 @@ import numpy as np
 
 _VALID_GEOM_TYPES = {"Polygon"}
 
-_SUPPORTED_CRS_LABELS = [
-    "EPSG:27700 (British National Grid)",
-    "EPSG:4326 (WGS 84)",
-]
+SUPPORTED_CRS = {
+    27700: "British National Grid",
+    4326: "WGS 84",
+}
 
 
 def _has_duplicate_consecutive_vertices(geom) -> bool:

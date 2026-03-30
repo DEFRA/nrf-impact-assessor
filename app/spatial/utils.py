@@ -6,7 +6,15 @@ This module provides common spatial utilities used across assessments:
 """
 
 import geopandas as gpd
+from pyproj import CRS
+from pyproj.exceptions import CRSError
 from shapely import set_precision
+
+from app.boundary.validation import SUPPORTED_CRS
+
+
+class UnsupportedCRSError(ValueError):
+    """Raised when the input CRS is not in the supported set."""
 
 
 def ensure_crs(
@@ -16,6 +24,16 @@ def ensure_crs(
     if gdf.crs is None:
         msg = "Input GeoDataFrame has no CRS defined"
         raise ValueError(msg)
+
+    try:
+        epsg = CRS(gdf.crs).to_epsg()
+    except CRSError as e:
+        msg = f"Unrecognised coordinate reference system: {e}"
+        raise UnsupportedCRSError(msg) from e
+
+    if epsg not in SUPPORTED_CRS:
+        msg = f"Unsupported coordinate reference system: EPSG:{epsg}"
+        raise UnsupportedCRSError(msg)
 
     if gdf.crs != target_crs:
         return gdf.to_crs(target_crs)
