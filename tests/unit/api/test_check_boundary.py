@@ -131,6 +131,25 @@ def _make_shapefile_zip_without_crs():
     return zip_buf
 
 
+def _make_shapefile_zip_with_crs(crs: str):
+    """Create a zip containing a shapefile with the given CRS."""
+    gdf = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])],
+        crs=crs,
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        shp_path = Path(tmpdir) / "boundary.shp"
+        gdf.to_file(shp_path)
+
+        zip_buf = BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as zf:
+            for f in Path(tmpdir).glob("boundary.*"):
+                zf.write(f, f.name)
+        zip_buf.seek(0)
+    return zip_buf
+
+
 class TestCheckBoundaryGeoJSON:
     """Tests for POST /check-boundary with GeoJSON files."""
 
@@ -217,9 +236,7 @@ class TestCheckBoundaryGeoJSON:
     def test_shapefile_without_crs_returns_422(self, client):
         """A .shp without a .prj has no CRS — should return 422 with helpful message."""
         zip_buf = _make_shapefile_zip_without_crs()
-        response = _post_boundary_file(
-            client, "no_crs.zip", zip_buf, "application/zip"
-        )
+        response = _post_boundary_file(client, "no_crs.zip", zip_buf, "application/zip")
 
         assert response.status_code == 422
         error = response.json()["error"]
@@ -300,9 +317,7 @@ class TestCheckBoundaryGeometryValidation:
     def test_missing_crs_error_lists_supported_systems(self, client):
         """CRS error should list supported coordinate reference systems."""
         zip_buf = _make_shapefile_zip_without_crs()
-        response = _post_boundary_file(
-            client, "no_crs.zip", zip_buf, "application/zip"
-        )
+        response = _post_boundary_file(client, "no_crs.zip", zip_buf, "application/zip")
 
         assert response.status_code == 422
         error = response.json()["error"]
@@ -319,6 +334,76 @@ class TestCheckBoundaryGeometryValidation:
         assert response.status_code == 400
         body = response.json()
         assert "try again" in body["error"].lower() or "please" in body["error"].lower()
+
+
+class TestCheckBoundaryUnsupportedCRS:
+    """Tests for unsupported coordinate reference systems."""
+
+    def test_unsupported_crs_in_geojson_returns_422(self, client):
+        """GeoJSON with an unsupported CRS (e.g. Web Mercator) should be rejected."""
+        content = _make_geojson_bytes(
+            coordinates=[
+                [
+                    [0, 0],
+                    [100000, 0],
+                    [100000, 100000],
+                    [0, 100000],
+                    [0, 0],
+                ]
+            ],
+            crs="urn:ogc:def:crs:EPSG::3857",
+        )
+        response = _post_boundary(client, "mercator.geojson", content)
+
+        assert response.status_code == 422
+        error = response.json()["error"]
+        assert "unsupported" in error.lower()
+        assert "EPSG:27700" in error
+        assert "EPSG:4326" in error
+
+    def test_unsupported_crs_in_shapefile_returns_422(self, client):
+        """Shapefile with an unsupported CRS should be rejected."""
+        zip_buf = _make_shapefile_zip_with_crs("EPSG:3857")
+        response = _post_boundary_file(
+            client, "mercator.zip", zip_buf, "application/zip"
+        )
+
+        assert response.status_code == 422
+        error = response.json()["error"]
+        assert "unsupported" in error.lower()
+        assert "EPSG:27700" in error
+        assert "EPSG:4326" in error
+
+    def test_unrecognised_crs_in_shapefile_returns_422(self, client):
+        """Shapefile with a corrupted/unrecognised .prj should return 422."""
+        gdf = gpd.GeoDataFrame(
+            {"id": [1]},
+            geometry=[Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])],
+            crs="EPSG:27700",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            shp_path = Path(tmpdir) / "bad_crs.shp"
+            gdf.to_file(shp_path)
+            prj_path = Path(tmpdir) / "bad_crs.prj"
+            prj_path.write_text("GARBAGE_NOT_A_REAL_CRS")
+
+            zip_buf = BytesIO()
+            with zipfile.ZipFile(zip_buf, "w") as zf:
+                for f in Path(tmpdir).glob("bad_crs.*"):
+                    zf.write(f, f.name)
+            zip_buf.seek(0)
+
+        response = _post_boundary_file(
+            client, "bad_crs.zip", zip_buf, "application/zip"
+        )
+
+        assert response.status_code in (400, 422)
+        error = response.json()["error"]
+        assert (
+            "coordinate" in error.lower()
+            or "crs" in error.lower()
+            or "read" in error.lower()
+        )
 
 
 _BNG_COORDINATES = [

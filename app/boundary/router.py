@@ -31,7 +31,7 @@ from app.config import ApiServerConfig, DatabaseSettings
 from app.models.db import EdpBoundaryLayer
 from app.repositories.engine import create_db_engine
 from app.repositories.repository import Repository
-from app.spatial.utils import ensure_crs
+from app.spatial.utils import UnsupportedCRSError, ensure_crs
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +284,16 @@ async def check_boundary(
 
         try:
             gdf = ensure_crs(gdf)
+        except UnsupportedCRSError:
+            supported = ", ".join(_SUPPORTED_CRS_LABELS)
+            detail = (
+                "The uploaded boundary file uses an unsupported"
+                " coordinate reference system (CRS)."
+                f" Supported coordinate systems are: {supported}."
+                " Please ensure your boundary file uses one of these"
+                " Coordinate Reference Systems and try again."
+            )
+            return _make_response(422, error=detail)
         except ValueError:
             supported = ", ".join(_SUPPORTED_CRS_LABELS)
             detail = (

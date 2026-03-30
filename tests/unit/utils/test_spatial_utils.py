@@ -105,6 +105,18 @@ def test_ensure_crs_custom_target():
     assert 50 < result.geometry.iloc[0].y < 55  # Latitude
 
 
+def test_ensure_crs_rejects_unsupported_crs():
+    """Test that an unsupported but valid CRS (e.g. Web Mercator) is rejected."""
+    from app.spatial.utils import UnsupportedCRSError, ensure_crs
+
+    gdf = gpd.GeoDataFrame({"id": [1]}, geometry=[Point(0, 0)], crs="EPSG:3857")
+
+    with pytest.raises(
+        UnsupportedCRSError, match="Unsupported coordinate reference system"
+    ):
+        ensure_crs(gdf)
+
+
 def test_majority_overlap_basic(simple_target_gdf, simple_overlay_gdf):
     """Test basic majority overlap assignment."""
     from app.spatial import majority_overlap
