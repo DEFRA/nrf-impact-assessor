@@ -10,7 +10,7 @@ from pyproj import CRS
 from pyproj.exceptions import CRSError
 from shapely import set_precision
 
-_SUPPORTED_EPSG_CODES = {27700, 4326}
+from app.boundary.validation import SUPPORTED_CRS
 
 
 class UnsupportedCRSError(ValueError):
@@ -31,7 +31,7 @@ def ensure_crs(
         msg = f"Unrecognised coordinate reference system: {e}"
         raise UnsupportedCRSError(msg) from e
 
-    if epsg not in _SUPPORTED_EPSG_CODES:
+    if epsg not in SUPPORTED_CRS:
         msg = f"Unsupported coordinate reference system: EPSG:{epsg}"
         raise UnsupportedCRSError(msg)
 
