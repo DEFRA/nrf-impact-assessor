@@ -55,7 +55,7 @@ runs:
       if: ${{ inputs.test_type == 'regression' || inputs.test_type == 'all' }}
       shell: bash
       run: |
-        uv run python scripts/load_data.py --fixtures-dir tests/data/fixtures/
+        PYTHONPATH=. uv run python scripts/load_data.py --fixtures-dir tests/data/fixtures/
 
     - name: Run regression tests
       if: ${{ inputs.test_type == 'regression' || inputs.test_type == 'all' }}
