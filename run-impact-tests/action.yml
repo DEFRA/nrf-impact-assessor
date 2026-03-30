@@ -1,0 +1,75 @@
+name: Run Impact Assessor Tests
+description: Set up environment and run integration and/or regression tests against a PostGIS service container.
+
+inputs:
+  test_type:
+    description: "Test suite to run: integration, regression, or all"
+    required: true
+    default: all
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python 3.13
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.13"
+
+    - name: Install uv and sync dependencies
+      shell: bash
+      run: |
+        pipx install uv
+        uv sync --frozen
+
+    - name: Wait for PostGIS
+      shell: bash
+      run: |
+        echo "Waiting for PostGIS to be ready..."
+        for i in $(seq 1 30); do
+          pg_isready -h localhost -p 5432 -U postgres && break
+          echo "  attempt $i/30..."
+          sleep 2
+        done
+        pg_isready -h localhost -p 5432 -U postgres
+
+    - name: Run integration tests
+      if: ${{ inputs.test_type == 'integration' || inputs.test_type == 'all' }}
+      shell: bash
+      run: |
+        uv run pytest -m integration -v --override-ini="addopts="
+
+    - name: Create nrf_impact database
+      if: ${{ inputs.test_type == 'regression' || inputs.test_type == 'all' }}
+      shell: bash
+      run: |
+        psql -h localhost -U postgres -c "CREATE DATABASE nrf_impact;"
+        psql -h localhost -U postgres -d nrf_impact -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+
+    - name: Run Alembic migrations
+      if: ${{ inputs.test_type == 'regression' || inputs.test_type == 'all' }}
+      shell: bash
+      run: |
+        uv run alembic upgrade head
+
+    - name: Load fixture data
+      if: ${{ inputs.test_type == 'regression' || inputs.test_type == 'all' }}
+      shell: bash
+      run: |
+        uv run python scripts/load_data.py --fixtures-dir tests/data/fixtures/
+
+    - name: Run regression tests
+      if: ${{ inputs.test_type == 'regression' || inputs.test_type == 'all' }}
+      shell: bash
+      run: |
+        uv run pytest -m regression -v --override-ini="addopts="
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v6
+      with:
+        name: test-results-${{ inputs.test_type }}
+        path: |
+          .pytest_cache/
+          test-results/
+        retention-days: 14
+        if-no-files-found: ignore

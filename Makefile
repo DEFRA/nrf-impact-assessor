@@ -131,6 +131,12 @@ load-data-layer: ## Load a specific layer e.g. make load-data-layer LAYER=wwtw_c
 load-data-lookup: ## Load a specific lookup e.g. make load-data-lookup LOOKUP=wwtw_lookup
 	$(LOAD_DATA_ENV) uv run python scripts/load_data.py --lookup $(LOOKUP)
 
+extract-fixtures: ## Clip reference layers to test input extents → tests/data/fixtures/ (requires .env.local)
+	PYTHONPATH=. uv run python scripts/extract_test_fixtures.py
+
+load-fixtures: ## Load committed fixture data into nrf_impact DB (no .env.local required)
+	$(LOAD_DATA_ENV) uv run python scripts/load_data.py --fixtures-dir tests/data/fixtures/
+
 # ---------------------------------------------------------------------------
 # Docker
 # ---------------------------------------------------------------------------

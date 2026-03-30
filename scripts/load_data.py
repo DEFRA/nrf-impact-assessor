@@ -107,40 +107,65 @@ class SpatialDataLoader:
     def __init__(
         self,
         repository: Repository,
-        settings: ScriptSettings,
+        settings: ScriptSettings | None = None,
         sample_mode: bool = False,
+        fixtures_dir: Path | None = None,
     ):
         """Initialize loader.
 
         Args:
             repository: PostGIS repository for database access
-            settings: Script settings with file paths from .env
+            settings: Script settings with file paths from .env (required when
+                fixtures_dir is not provided)
             sample_mode: If True, load only small sample of data for testing
+            fixtures_dir: When set, load from committed fixture GeoPackages in
+                this directory instead of the paths in settings.
         """
         self.repository = repository
         self.settings = settings
         self.sample_mode = sample_mode
         self.sample_limit = 100 if sample_mode else None
 
-        # File paths from settings
-        # Nutrient mitigation layers
-        self.coefficient_gpkg = settings.coefficient_gpkg_path
-        self.coefficient_layer = settings.coefficient_layer
-        self.wwtw_shapefile = settings.wwtw_shapefile_path
-        self.lpa_shapefile = settings.lpa_shapefile_path
-        self.nn_catchment_shapefile = settings.nn_catchment_shapefile_path
-        self.subcatchment_shapefile = settings.subcatchment_shapefile_path
-        self.lookup_database = settings.lookup_database_path
+        if fixtures_dir is not None:
+            # File paths derived from committed fixture directory
+            self.coefficient_gpkg = fixtures_dir / "coefficient_layer.gpkg"
+            self.coefficient_layer = "coefficient_layer"
+            self.wwtw_shapefile = fixtures_dir / "wwtw_catchments.gpkg"
+            self.lpa_shapefile = fixtures_dir / "lpa_boundaries.gpkg"
+            self.nn_catchment_shapefile = fixtures_dir / "nn_catchments.gpkg"
+            self.subcatchment_shapefile = fixtures_dir / "subcatchments.gpkg"
+            self.lookup_database = fixtures_dir / "lookups" / "lookups.sqlite"
+            self.gcn_risk_zones_gdb = fixtures_dir / "gcn_risk_zones.gpkg"
+            self.gcn_risk_zones_layer = "gcn_risk_zones"
+            self.gcn_ponds_gdb = fixtures_dir / "gcn_ponds.gpkg"
+            self.gcn_ponds_layer = "gcn_ponds"
+            self.edp_edges_gdb = fixtures_dir / "edp_edges.gpkg"
+            self.edp_edges_layer = "edp_edges"
+            self.edp_boundary_gpkg = fixtures_dir / "edp_boundaries.gpkg"
+            self.edp_boundary_layer = "edp_boundaries"
+        else:
+            if settings is None:
+                msg = "Either settings or fixtures_dir must be provided"
+                raise ValueError(msg)
+            # File paths from settings
+            # Nutrient mitigation layers
+            self.coefficient_gpkg = settings.coefficient_gpkg_path
+            self.coefficient_layer = settings.coefficient_layer
+            self.wwtw_shapefile = settings.wwtw_shapefile_path
+            self.lpa_shapefile = settings.lpa_shapefile_path
+            self.nn_catchment_shapefile = settings.nn_catchment_shapefile_path
+            self.subcatchment_shapefile = settings.subcatchment_shapefile_path
+            self.lookup_database = settings.lookup_database_path
 
-        # GCN assessment layers
-        self.gcn_risk_zones_gdb = settings.gcn_risk_zones_gdb_path
-        self.gcn_risk_zones_layer = settings.gcn_risk_zones_layer
-        self.gcn_ponds_gdb = settings.gcn_ponds_gdb_path
-        self.gcn_ponds_layer = settings.gcn_ponds_layer
-        self.edp_edges_gdb = settings.edp_edges_gdb_path
-        self.edp_edges_layer = settings.edp_edges_layer
-        self.edp_boundary_gpkg = settings.edp_boundary_gpkg_path
-        self.edp_boundary_layer = settings.edp_boundary_layer
+            # GCN assessment layers
+            self.gcn_risk_zones_gdb = settings.gcn_risk_zones_gdb_path
+            self.gcn_risk_zones_layer = settings.gcn_risk_zones_layer
+            self.gcn_ponds_gdb = settings.gcn_ponds_gdb_path
+            self.gcn_ponds_layer = settings.gcn_ponds_layer
+            self.edp_edges_gdb = settings.edp_edges_gdb_path
+            self.edp_edges_layer = settings.edp_edges_layer
+            self.edp_boundary_gpkg = settings.edp_boundary_gpkg_path
+            self.edp_boundary_layer = settings.edp_boundary_layer
 
     def load_all(self) -> None:
         """Load all reference data layers and lookups."""
@@ -637,10 +662,25 @@ def main(
         bool,
         typer.Option(help="Load only sample data for testing (100 features per layer)"),
     ] = False,
+    fixtures_dir: Annotated[
+        Path | None,
+        typer.Option(
+            help="Load from committed fixture GeoPackages in this directory instead of "
+            "the paths configured in .env.local. Skips the confirmation prompt. "
+            "Use with CI: python scripts/load_data.py --fixtures-dir tests/data/fixtures/"
+        ),
+    ] = None,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Skip the confirmation prompt"),
+    ] = False,
 ) -> None:
     """Load reference data into PostGIS database.
 
-    File paths are configured via .env file. See scripts/.env.example for configuration.
+    By default, file paths are configured via scripts/.env.local.
+
+    In CI, pass --fixtures-dir to load from committed fixture GeoPackages
+    (no .env.local required, confirmation prompt is skipped automatically).
     """
     # Validate layer and lookup names
     valid_layers = [
@@ -658,25 +698,29 @@ def main(
     _validate_names(layer, valid_layers, "layer")
     _validate_names(lookup, valid_lookups, "lookup")
 
-    # Load settings from .env
-    settings = ScriptSettings()
-
     # Create repository
     db_settings = DatabaseSettings()
     engine = create_db_engine(db_settings)
     repository = Repository(engine)
 
-    # Create loader
-    loader = SpatialDataLoader(repository, settings, sample_mode=sample)
+    if fixtures_dir is not None:
+        # CI mode: load from committed fixtures, no .env required
+        loader = SpatialDataLoader(repository, fixtures_dir=fixtures_dir)
+        typer.secho(f"\nLoading from fixtures: {fixtures_dir}", fg=typer.colors.CYAN)
+        auto_confirm = True
+    else:
+        # Interactive mode: load from .env-configured paths
+        settings = ScriptSettings()
+        loader = SpatialDataLoader(repository, settings, sample_mode=sample)
+        _print_load_summary(settings, layer, lookup, sample)
+        auto_confirm = yes
 
-    # Confirmation prompt with warning
-    _print_load_summary(settings, layer, lookup, sample)
-    typer.echo()
-    confirm = typer.confirm("Do you want to continue?")
-
-    if not confirm:
-        typer.secho("Operation cancelled.", fg=typer.colors.YELLOW)
-        raise typer.Exit(code=0)
+    if not auto_confirm:
+        typer.echo()
+        confirm = typer.confirm("Do you want to continue?")
+        if not confirm:
+            typer.secho("Operation cancelled.", fg=typer.colors.YELLOW)
+            raise typer.Exit(code=0)
 
     try:
         # Determine what to load
