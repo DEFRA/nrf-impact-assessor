@@ -72,10 +72,10 @@ class TestNearbyWwtws:
         assert len(items) == 2
         assert items[0]["wwtwId"] == "101"
         assert items[0]["wwtwName"] == "Great Billing WRC"
-        assert items[0]["distanceKm"] == 0.0
+        assert items[0]["distanceKm"] == pytest.approx(0.0)
         assert items[1]["wwtwId"] == "202"
         assert items[1]["wwtwName"] == "Letchworth WWTP"
-        assert items[1]["distanceKm"] == 5.4
+        assert items[1]["distanceKm"] == pytest.approx(5.4)
 
     @patch("app.wwtw.router._load_wwtw_lookup", _mock_load_lookup)
     @patch("app.wwtw.router._find_nearby_wwtws", _mock_nearby_empty)
@@ -94,7 +94,7 @@ class TestNearbyWwtws:
         assert response.status_code == 200
         body = response.json()
         assert len(body["nearbyWwtws"]) == 1
-        assert body["nearbyWwtws"][0]["distanceKm"] == 0.0
+        assert body["nearbyWwtws"][0]["distanceKm"] == pytest.approx(0.0)
 
     def test_invalid_geometry_returns_400(self, client):
         response = client.post(
