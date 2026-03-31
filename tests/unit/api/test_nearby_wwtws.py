@@ -103,8 +103,7 @@ class TestNearbyWwtws:
 
         assert response.status_code == 400
         body = response.json()
-        assert "error" in body
-        assert body["nearbyWwtws"] == []
+        assert "detail" in body
 
     def test_missing_geometry_returns_422(self, client):
         response = client.post("/wwtw/nearby", json={})

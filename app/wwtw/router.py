@@ -8,8 +8,7 @@ import logging
 import threading
 
 import pandas as pd
-from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException
 from geoalchemy2.functions import (
     ST_Distance,
     ST_DWithin,
@@ -17,6 +16,7 @@ from geoalchemy2.functions import (
     ST_SetSRID,
 )
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 from shapely.geometry import shape
 from sqlalchemy import select, text
 
@@ -98,7 +98,7 @@ def _load_wwtw_lookup(repository: Repository) -> pd.DataFrame:
 _DEFAULT_DISTANCE_M = 10_000.0
 
 
-class NearbyWwtwRequest(BaseModel):
+class NearbyWasteWaterTreatmentWorksRequest(BaseModel):
     """Request body for the nearby WWTW endpoint."""
 
     geometry: dict = Field(description="RLB geometry as GeoJSON dict (EPSG:27700)")
@@ -109,10 +109,12 @@ class NearbyWwtwRequest(BaseModel):
     )
 
 
-class NearbyWwtwItem(BaseModel):
+class NearbyWasteWaterTreatmentWorksItem(BaseModel):
     """A single nearby WWTW in the response."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(
+        frozen=True, alias_generator=to_camel, populate_by_name=True
+    )
 
     wwtw_id: str = Field(description="WwTW identifier")
     wwtw_name: str = Field(description="WwTW facility name")
@@ -121,12 +123,14 @@ class NearbyWwtwItem(BaseModel):
     )
 
 
-class NearbyWwtwResponse(BaseModel):
+class NearbyWasteWaterTreatmentWorksResponse(BaseModel):
     """Response from the nearby WWTW endpoint."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(
+        frozen=True, alias_generator=to_camel, populate_by_name=True
+    )
 
-    nearby_wwtws: list[NearbyWwtwItem] = Field(
+    nearby_wwtws: list[NearbyWasteWaterTreatmentWorksItem] = Field(
         description="WWTWs within search radius, ordered by distance"
     )
 
@@ -168,25 +172,25 @@ def _find_nearby_wwtws(
 # ---------------------------------------------------------------------------
 @router.post(
     "/wwtw/nearby",
+    response_model=NearbyWasteWaterTreatmentWorksResponse,
+    response_model_by_alias=True,
     responses={
         400: {"description": "Invalid geometry"},
     },
 )
-async def nearby_wwtws(body: NearbyWwtwRequest) -> JSONResponse:
+async def nearby_wwtws(
+    body: NearbyWasteWaterTreatmentWorksRequest,
+) -> NearbyWasteWaterTreatmentWorksResponse:
     """Find WWTW catchments within a given distance of an RLB polygon."""
     try:
         geom = shape(body.geometry)
     except Exception:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Invalid GeoJSON geometry", "nearbyWwtws": []},
-        )
+        raise HTTPException(
+            status_code=400, detail="Invalid GeoJSON geometry"
+        ) from None
 
     if geom.is_empty:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Geometry is empty", "nearbyWwtws": []},
-        )
+        raise HTTPException(status_code=400, detail="Geometry is empty")
 
     rlb_wkt = geom.wkt
     repository = _get_repository()
@@ -209,14 +213,11 @@ async def nearby_wwtws(body: NearbyWwtwRequest) -> JSONResponse:
         wwtw_name = lookup_map.get(wwtw_id, f"WWTW {wwtw_id}")
         distance_km = round(row["distance_m"] / 1000.0, 1)
         items.append(
-            {
-                "wwtwId": wwtw_id,
-                "wwtwName": wwtw_name,
-                "distanceKm": distance_km,
-            }
+            NearbyWasteWaterTreatmentWorksItem(
+                wwtw_id=wwtw_id,
+                wwtw_name=wwtw_name,
+                distance_km=distance_km,
+            )
         )
 
-    return JSONResponse(
-        status_code=200,
-        content={"nearbyWwtws": items},
-    )
+    return NearbyWasteWaterTreatmentWorksResponse(nearby_wwtws=items)
