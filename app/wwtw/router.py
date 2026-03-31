@@ -172,7 +172,6 @@ def _find_nearby_wwtws(
 # ---------------------------------------------------------------------------
 @router.post(
     "/wwtw/nearby",
-    response_model=NearbyWasteWaterTreatmentWorksResponse,
     response_model_by_alias=True,
     responses={
         400: {"description": "Invalid geometry"},
