@@ -11,8 +11,8 @@ import pandas as pd
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from geoalchemy2.functions import (
-    ST_DWithin,
     ST_Distance,
+    ST_DWithin,
     ST_GeomFromText,
     ST_SetSRID,
 )
@@ -62,8 +62,7 @@ def _load_wwtw_lookup(repository: Repository) -> pd.DataFrame:
     with repository.session() as session:
         row = session.execute(
             text(
-                "SELECT MAX(version) FROM nrf_reference.lookup_table "
-                "WHERE name = :name"
+                "SELECT MAX(version) FROM nrf_reference.lookup_table WHERE name = :name"
             ),
             {"name": name},
         ).fetchone()

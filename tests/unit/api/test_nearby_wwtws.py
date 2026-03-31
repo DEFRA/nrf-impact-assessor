@@ -136,9 +136,7 @@ class TestNearbyWwtws:
             return [{"wwtw_id": "999", "distance_m": 1000.0}]
 
         with patch("app.wwtw.router._find_nearby_wwtws", mock_nearby_unknown):
-            response = client.post(
-                "/wwtw/nearby", json={"geometry": _VALID_GEOMETRY}
-            )
+            response = client.post("/wwtw/nearby", json={"geometry": _VALID_GEOMETRY})
 
         assert response.status_code == 200
         body = response.json()
