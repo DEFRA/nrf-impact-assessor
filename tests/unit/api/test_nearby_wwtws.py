@@ -27,7 +27,7 @@ def client():
     return TestClient(app)
 
 
-def _mock_nearby_multiple(rlb_wkt, repository, max_distance_m=10000.0):
+def _mock_nearby_multiple(rlb_wkt, repository, max_distance_m=10000.0, srid=4326):
     """Mock returning two nearby WWTWs at different distances."""
     return [
         {"wwtw_id": "101", "distance_m": 0.0},
@@ -35,12 +35,12 @@ def _mock_nearby_multiple(rlb_wkt, repository, max_distance_m=10000.0):
     ]
 
 
-def _mock_nearby_empty(rlb_wkt, repository, max_distance_m=10000.0):
+def _mock_nearby_empty(rlb_wkt, repository, max_distance_m=10000.0, srid=4326):
     """Mock returning no nearby WWTWs."""
     return []
 
 
-def _mock_nearby_single(rlb_wkt, repository, max_distance_m=10000.0):
+def _mock_nearby_single(rlb_wkt, repository, max_distance_m=10000.0, srid=4326):
     """Mock returning a single overlapping WWTW."""
     return [{"wwtw_id": "101", "distance_m": 0.0}]
 
@@ -131,7 +131,7 @@ class TestNearbyWwtws:
     def test_unknown_wwtw_id_gets_fallback_name(self, client):
         """When a WWTW ID is not in the lookup, a fallback name is used."""
 
-        def mock_nearby_unknown(rlb_wkt, repository, max_distance_m=10000.0):
+        def mock_nearby_unknown(rlb_wkt, repository, max_distance_m=10000.0, srid=4326):
             return [{"wwtw_id": "999", "distance_m": 1000.0}]
 
         with patch("app.wwtw.router._find_nearby_wwtws", mock_nearby_unknown):

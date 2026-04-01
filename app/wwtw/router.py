@@ -14,6 +14,7 @@ from geoalchemy2.functions import (
     ST_DWithin,
     ST_GeomFromText,
     ST_SetSRID,
+    ST_Transform,
 )
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -96,12 +97,17 @@ def _load_wwtw_lookup(repository: Repository) -> pd.DataFrame:
 # Request / response models
 # ---------------------------------------------------------------------------
 _DEFAULT_DISTANCE_M = 10_000.0
+_TARGET_SRID = 27700
 
 
 class NearbyWasteWaterTreatmentWorksRequest(BaseModel):
     """Request body for the nearby WWTW endpoint."""
 
-    geometry: dict = Field(description="RLB geometry as GeoJSON dict (EPSG:27700)")
+    geometry: dict = Field(description="RLB geometry as GeoJSON dict")
+    srid: int = Field(
+        default=4326,
+        description="SRID of the input geometry (default 4326 / WGS84)",
+    )
     max_distance_m: float = Field(
         default=_DEFAULT_DISTANCE_M,
         gt=0,
@@ -142,9 +148,12 @@ def _find_nearby_wwtws(
     rlb_wkt: str,
     repository: Repository,
     max_distance_m: float = _DEFAULT_DISTANCE_M,
+    srid: int = 4326,
 ) -> list[dict]:
     """Query PostGIS for WWTW catchments within max_distance_m of the RLB."""
-    input_geom = ST_SetSRID(ST_GeomFromText(rlb_wkt), 27700)
+    input_geom = ST_SetSRID(ST_GeomFromText(rlb_wkt), srid)
+    if srid != _TARGET_SRID:
+        input_geom = ST_Transform(input_geom, _TARGET_SRID)
 
     stmt = (
         select(
@@ -194,7 +203,7 @@ async def nearby_wwtws(
     rlb_wkt = geom.wkt
     repository = _get_repository()
 
-    nearby = _find_nearby_wwtws(rlb_wkt, repository, body.max_distance_m)
+    nearby = _find_nearby_wwtws(rlb_wkt, repository, body.max_distance_m, body.srid)
 
     # Enrich with names from lookup table
     lookup_df = _load_wwtw_lookup(repository)
