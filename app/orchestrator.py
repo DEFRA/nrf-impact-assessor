@@ -8,7 +8,10 @@ from pathlib import Path
 import geopandas as gpd
 from shapely.geometry import shape
 
+from app.assessments.adapters import nutrient_adapter
 from app.aws.s3 import S3Client
+from app.clients.backend_client import BackendClient
+from app.clients.payload_mapper import build_quote_patch_payload
 from app.config import AWSConfig
 from app.models.enums import AssessmentType
 from app.models.geometry import GeometryFormat
@@ -27,9 +30,11 @@ class JobOrchestrator:
         self,
         aws_config: AWSConfig,
         repository: Repository,
+        backend_client: BackendClient | None = None,
     ):
         self.aws_config = aws_config
         self.repository = repository
+        self.backend_client = backend_client
 
         # S3 client only needed for legacy file-based geometry
         self.s3_input = None
@@ -86,6 +91,10 @@ class JobOrchestrator:
             logger.info(
                 f"Processed {len(dataframes)} result set(s): {list(dataframes.keys())}"
             )
+
+            # Callback to nrf-backend if quote reference and EDPs are present
+            self._send_results_callback(job, dataframes)
+
             return dataframes
 
         except Exception as e:
@@ -262,3 +271,33 @@ class JobOrchestrator:
         logger.info(f"Injected job data: id: {job_id} {dwellings} {dwelling_type}")
 
         return gdf
+
+    def _send_results_callback(
+        self, job: ImpactAssessmentJob, dataframes: dict
+    ) -> None:
+        """Send assessment results to nrf-backend via PATCH /quotes/{reference}.
+
+        Only fires when all conditions are met:
+        - backend_client is configured
+        - job has a quote reference
+        - job has EDP metadata
+
+        Failures are logged but do not affect the job result.
+        """
+        if not self.backend_client or not job.reference or not job.edps:
+            return
+
+        try:
+            domain_results = nutrient_adapter.to_domain_models(dataframes)
+            payload = build_quote_patch_payload(
+                results=domain_results["assessment_results"],
+                edps=job.edps,
+            )
+            self.backend_client.patch_quote(job.reference, payload)
+            logger.info(
+                f"Sent assessment results to nrf-backend for quote {job.reference}"
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to send results to nrf-backend for quote {job.reference}: {e}"
+            )

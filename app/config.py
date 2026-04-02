@@ -311,6 +311,26 @@ class DatabaseSettings(BaseSettings):
         return f"postgresql://{self.user}@{self.host}:{self.port}/{self.database}"  # NOSONAR - intentional: trust auth for local dev without a password
 
 
+class BackendConfig(BaseSettings):
+    """Configuration for nrf-backend callback."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="BACKEND_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    base_url: str = Field(default="", description="Base URL for nrf-backend API")
+    callback_timeout: int = Field(
+        default=30, ge=1, description="HTTP timeout in seconds for callbacks"
+    )
+    callback_max_retries: int = Field(
+        default=3, ge=0, description="Max retry attempts for failed callbacks"
+    )
+
+
 class AWSConfig(BaseSettings):
     """AWS resource configuration for ECS worker deployment."""
 

@@ -26,9 +26,10 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.aws.sqs import SQSClient
+from app.clients.backend_client import BackendClient
 from app.common.proxy_utils import configure_proxy_settings
 from app.common.tls import init_custom_certificates
-from app.config import ApiServerConfig, AWSConfig, DatabaseSettings
+from app.config import ApiServerConfig, AWSConfig, BackendConfig, DatabaseSettings
 from app.orchestrator import JobOrchestrator
 from app.repositories.engine import create_db_engine
 from app.repositories.repository import Repository
@@ -266,9 +267,21 @@ def main():
             endpoint_url=aws_config.endpoint_url,
         )
 
+        # Initialize backend client for result callbacks (if configured)
+        backend_config = BackendConfig()
+        backend_client = None
+        if backend_config.base_url:
+            backend_client = BackendClient(
+                base_url=backend_config.base_url,
+                timeout=backend_config.callback_timeout,
+                max_retries=backend_config.callback_max_retries,
+            )
+            logger.info(f"Backend callback enabled: {backend_config.base_url}")
+
         orchestrator = JobOrchestrator(
             aws_config=aws_config,
             repository=repository,
+            backend_client=backend_client,
         )
 
         consumer = SqsConsumer(

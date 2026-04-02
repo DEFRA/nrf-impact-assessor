@@ -23,6 +23,24 @@ class BoundaryGeojson(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class LevyRange(BaseModel):
+    """Levy amount range in GBP."""
+
+    min: float = Field(ge=0)
+    max: float = Field(ge=0)
+
+
+class EdpInput(BaseModel):
+    """EDP metadata from nrf-backend for result callback."""
+
+    edp_id: int = Field(alias="edpId")
+    edp_name: str = Field(alias="edpName")
+    edp_type: str = Field(default="NUTRIENT", alias="edpType")
+    levy_gbp: LevyRange = Field(alias="levyGbp")
+
+    model_config = {"populate_by_name": True}
+
+
 class ImpactAssessmentJob(BaseModel):
     """SQS message schema for impact assessment jobs.
 
@@ -59,6 +77,9 @@ class ImpactAssessmentJob(BaseModel):
         default=None, alias="wasteWaterTreatmentWorksName"
     )
     email: EmailStr | None = Field(default=None)
+
+    # --- EDP metadata for callback (from nrf-backend) ---
+    edps: list["EdpInput"] | None = Field(default=None)
 
     # --- Legacy fields (for S3-based processing and tests) ---
     job_id: str | None = Field(default=None, description="Unique job identifier")
