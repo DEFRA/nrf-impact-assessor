@@ -1,7 +1,8 @@
 """Nearby WWTW endpoint.
 
 Accepts an RLB geometry (GeoJSON) and returns all WWTW catchment polygons
-where any part of the polygon is within a given distance of the RLB polygon.
+where any part of the polygon is within a given distance of the centre of
+the RLB polygon.
 """
 
 import logging
@@ -10,6 +11,7 @@ import threading
 import pandas as pd
 from fastapi import APIRouter, HTTPException
 from geoalchemy2.functions import (
+    ST_Centroid,
     ST_Distance,
     ST_DWithin,
     ST_GeomFromText,
@@ -125,7 +127,8 @@ class NearbyWasteWaterTreatmentWorksItem(BaseModel):
     wwtw_id: str = Field(description="WwTW identifier")
     wwtw_name: str = Field(description="WwTW facility name")
     distance_km: float = Field(
-        ge=0, description="Distance in km from RLB to nearest edge of catchment"
+        ge=0,
+        description="Distance in km from centre of RLB to nearest edge of catchment",
     )
 
 
@@ -150,19 +153,23 @@ def _find_nearby_wwtws(
     max_distance_m: float = _DEFAULT_DISTANCE_M,
     srid: int = 4326,
 ) -> list[dict]:
-    """Query PostGIS for WWTW catchments within max_distance_m of the RLB."""
+    """Query PostGIS for WWTW catchments within max_distance_m of the RLB centre."""
     input_geom = ST_SetSRID(ST_GeomFromText(rlb_wkt), srid)
     if srid != _TARGET_SRID:
         input_geom = ST_Transform(input_geom, _TARGET_SRID)
 
+    # Distance is measured from the centre of the RLB to the nearest edge
+    # of each WWTW catchment polygon.
+    rlb_centroid = ST_Centroid(input_geom)
+
     stmt = (
         select(
             SpatialLayer.attributes["WwTw_ID"].astext.label("wwtw_id"),
-            ST_Distance(SpatialLayer.geometry, input_geom).label("distance_m"),
+            ST_Distance(SpatialLayer.geometry, rlb_centroid).label("distance_m"),
         )
         .where(
             SpatialLayer.layer_type == SpatialLayerType.WWTW_CATCHMENTS,
-            ST_DWithin(SpatialLayer.geometry, input_geom, max_distance_m),
+            ST_DWithin(SpatialLayer.geometry, rlb_centroid, max_distance_m),
         )
         .order_by("distance_m")
     )
