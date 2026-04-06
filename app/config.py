@@ -61,7 +61,7 @@ class GreenspaceConfig(BaseSettings):
     )
 
     threshold_area_ha: float = Field(
-        default=2.5,
+        default=1.0,
         description="Development area (ha) above which greenspace is assumed",
     )
     greenspace_percent: float = Field(
@@ -86,19 +86,16 @@ class SuDsConfig(BaseSettings):
         extra="ignore",
     )
 
-    threshold_area_ha: float = Field(
-        default=2.5, description="Development area (ha) above which SuDS is applied"
-    )
-    flow_capture_percent: float = Field(
-        default=100.0, description="Percentage of flow entering SuDS system"
+    threshold_dwellings: int = Field(
+        default=50, description="Dwelling count at or above which SuDS is applied"
     )
     removal_rate_percent: float = Field(
-        default=40.0, description="SuDS nutrient removal rate (%)"
+        default=25.0, description="SuDS nutrient removal rate (%)"
     )
 
     @property
     def total_reduction_factor(self) -> float:
-        return (self.flow_capture_percent / 100) * (self.removal_rate_percent / 100)
+        return self.removal_rate_percent / 100
 
 
 class AssessmentConfig(BaseSettings):

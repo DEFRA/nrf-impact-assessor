@@ -33,8 +33,7 @@ def calculate_land_use_uplift(
         greenspace_config: Greenspace configuration
 
     Returns:
-        Tuple of (n_uplift, p_uplift, resi_n_component, gs_n_component,
-                  resi_p_component, gs_p_component).
+        Tuple of (n_uplift, p_uplift).
     """
     gs_threshold = greenspace_config.threshold_area_ha
     gs_fraction = greenspace_config.greenspace_percent / 100
@@ -67,11 +66,4 @@ def calculate_land_use_uplift(
         (adj_p_coeff - current_phosphorus_coeff) * area_hectares, 2
     )
 
-    return (
-        nitrogen_uplift,
-        phosphorus_uplift,
-        resi_n_component,
-        gs_n_component,
-        resi_p_component,
-        gs_p_component,
-    )
+    return nitrogen_uplift, phosphorus_uplift

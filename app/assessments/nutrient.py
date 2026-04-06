@@ -358,10 +358,10 @@ class NutrientAssessment:
         )
 
         land_use_intersections = land_use_intersections.merge(
-            rlb_gdf[["rlb_id", "dev_area_ha"]], on="rlb_id", how="left"
+            rlb_gdf[["rlb_id", "dev_area_ha", "dwellings"]], on="rlb_id", how="left"
         )
 
-        n_uplift, p_uplift, resi_n, gs_n, resi_p, gs_p = calculate_land_use_uplift(
+        n_uplift, p_uplift = calculate_land_use_uplift(
             area_hectares=land_use_intersections["area_in_nn_catchment_ha"],
             dev_area_ha=land_use_intersections["dev_area_ha"],
             current_nitrogen_coeff=land_use_intersections["lu_curr_n_coeff"],
@@ -373,20 +373,6 @@ class NutrientAssessment:
         land_use_intersections["n_lu_uplift"] = n_uplift
         land_use_intersections["p_lu_uplift"] = p_uplift
 
-        n_post_suds, p_post_suds = apply_suds_mitigation(
-            area_hectares=land_use_intersections["area_in_nn_catchment_ha"],
-            dev_area_ha=land_use_intersections["dev_area_ha"],
-            current_nitrogen_coeff=land_use_intersections["lu_curr_n_coeff"],
-            current_phosphorus_coeff=land_use_intersections["lu_curr_p_coeff"],
-            resi_n_component=resi_n,
-            gs_n_component=gs_n,
-            resi_p_component=resi_p,
-            gs_p_component=gs_p,
-            suds_config=self.config.suds,
-        )
-        land_use_intersections["n_lu_post_suds"] = n_post_suds
-        land_use_intersections["p_lu_post_suds"] = p_post_suds
-
         uplift_sum = (
             land_use_intersections.groupby("rlb_id")
             .agg(
@@ -394,8 +380,6 @@ class NutrientAssessment:
                     "area_in_nn_catchment_ha": "sum",
                     "n_lu_uplift": "sum",
                     "p_lu_uplift": "sum",
-                    "n_lu_post_suds": "sum",
-                    "p_lu_post_suds": "sum",
                     "n2k_site_n": lambda x: "; ".join(sorted(set(x.dropna()))),
                 }
             )
@@ -404,6 +388,16 @@ class NutrientAssessment:
         )
 
         rlb_gdf = rlb_gdf.merge(uplift_sum, on="rlb_id", how="left")
+
+        # Apply SuDS mitigation post-aggregation on per-RLB totals
+        n_post_suds, p_post_suds = apply_suds_mitigation(
+            n_lu_uplift=rlb_gdf["n_lu_uplift"],
+            p_lu_uplift=rlb_gdf["p_lu_uplift"],
+            dwellings=rlb_gdf["dwellings"],
+            suds_config=self.config.suds,
+        )
+        rlb_gdf["n_lu_post_suds"] = n_post_suds
+        rlb_gdf["p_lu_post_suds"] = p_post_suds
 
         return rlb_gdf
 
@@ -430,6 +424,12 @@ class NutrientAssessment:
 
         t0 = time.perf_counter()
         rlb_gdf = rlb_gdf.merge(rates_lookup, how="left", on="nn_catchment")
+
+        # Group-mean fallback: fill missing rates from the WwTW group average
+        for col in ["occupancy_rate", "water_usage_L_per_person_day"]:
+            rlb_gdf[col] = rlb_gdf.groupby("majority_wwtw_id")[col].transform(
+                lambda x: x.fillna(x.mean())
+            )
 
         if "wwtw_catchment" in rlb_gdf.columns:
             rates_by_catchment = rates_lookup.set_index("nn_catchment")[
