@@ -78,8 +78,10 @@ def test_build_payload_single_edp():
     assert edp_out["edpType"] == "NUTRIENT"
     assert edp_out["impact"]["nitrogenTotal"]["amount"] == 10.51  # NOSONAR
     assert edp_out["impact"]["nitrogenTotal"]["unit"] == "mg/I TP"
+    assert edp_out["impact"]["nitrogenTotal"]["band"] == {"min": 4, "max": 4}
     assert edp_out["impact"]["phosphorusTotal"]["amount"] == 2.30  # NOSONAR
     assert edp_out["impact"]["phosphorusTotal"]["unit"] == "mg/I TP"
+    assert edp_out["impact"]["phosphorusTotal"]["band"] == {"min": 3, "max": 3}
     assert edp_out["levyGbp"]["min"] == 1000.00  # NOSONAR
     assert edp_out["levyGbp"]["max"] == 2000.00  # NOSONAR
 

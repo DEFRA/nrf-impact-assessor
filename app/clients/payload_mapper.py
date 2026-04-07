@@ -1,5 +1,6 @@
 """Map assessment results to nrf-backend PATCH /quotes/{reference} payload."""
 
+from app.clients.bands import get_band
 from app.models.domain import ImpactAssessmentResult
 from app.models.job import EdpInput
 
@@ -26,6 +27,8 @@ def build_quote_patch_payload(
     result = results[0]
     n_total = round(result.total.nitrogen_total_kg_yr, 2)
     p_total = round(result.total.phosphorus_total_kg_yr, 2)
+    n_band = get_band(n_total)
+    p_band = get_band(p_total)
 
     mapped_edps = []
     for edp in edps:
@@ -38,10 +41,12 @@ def build_quote_patch_payload(
                     "nitrogenTotal": {
                         "amount": n_total,
                         "unit": "mg/I TP",
+                        "band": {"min": n_band, "max": n_band},
                     },
                     "phosphorusTotal": {
                         "amount": p_total,
                         "unit": "mg/I TP",
+                        "band": {"min": p_band, "max": p_band},
                     },
                 },
                 "levyGbp": {
