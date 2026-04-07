@@ -125,7 +125,7 @@ class TestSuDsMitigationCalculator:
     @pytest.fixture
     def default_suds_config(self):
         """Default SuDS configuration matching IATScript."""
-        return SuDsConfig()  # threshold_dwellings=50, removal_rate_percent=25
+        return SuDsConfig()
 
     def test_suds_above_threshold(self, default_suds_config):
         """Test SuDS applied to development >= 50 dwellings."""

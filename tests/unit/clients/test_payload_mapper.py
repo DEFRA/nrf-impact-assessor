@@ -76,12 +76,12 @@ def test_build_payload_single_edp():
     assert edp_out["edpId"] == 1
     assert edp_out["edpName"] == "Somerset Levels"
     assert edp_out["edpType"] == "NUTRIENT"
-    assert edp_out["impact"]["nitrogenTotal"]["amount"] == 10.51
+    assert edp_out["impact"]["nitrogenTotal"]["amount"] == 10.51  # NOSONAR
     assert edp_out["impact"]["nitrogenTotal"]["unit"] == "mg/I TP"
-    assert edp_out["impact"]["phosphorusTotal"]["amount"] == 2.30
+    assert edp_out["impact"]["phosphorusTotal"]["amount"] == 2.30  # NOSONAR
     assert edp_out["impact"]["phosphorusTotal"]["unit"] == "mg/I TP"
-    assert edp_out["levyGbp"]["min"] == 1000.00
-    assert edp_out["levyGbp"]["max"] == 2000.00
+    assert edp_out["levyGbp"]["min"] == 1000.00  # NOSONAR
+    assert edp_out["levyGbp"]["max"] == 2000.00  # NOSONAR
 
 
 def test_build_payload_multiple_edps():
@@ -98,8 +98,8 @@ def test_build_payload_multiple_edps():
     assert payload["edps"][0]["edpId"] == 1
     assert payload["edps"][1]["edpId"] == 2
     # Both EDPs get the same impact totals
-    assert payload["edps"][0]["impact"]["nitrogenTotal"]["amount"] == 5.0
-    assert payload["edps"][1]["impact"]["nitrogenTotal"]["amount"] == 5.0
+    assert payload["edps"][0]["impact"]["nitrogenTotal"]["amount"] == 5.0  # NOSONAR
+    assert payload["edps"][1]["impact"]["nitrogenTotal"]["amount"] == 5.0  # NOSONAR
 
 
 def test_build_payload_empty_results():
@@ -116,5 +116,5 @@ def test_build_payload_rounds_to_two_decimals():
 
     payload = build_quote_patch_payload([result], [edp])
 
-    assert payload["edps"][0]["impact"]["nitrogenTotal"]["amount"] == 11.0
-    assert payload["edps"][0]["impact"]["phosphorusTotal"]["amount"] == 0.0
+    assert payload["edps"][0]["impact"]["nitrogenTotal"]["amount"] == 11.0  # NOSONAR
+    assert payload["edps"][0]["impact"]["phosphorusTotal"]["amount"] == 0.0  # NOSONAR

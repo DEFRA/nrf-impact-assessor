@@ -49,29 +49,20 @@ class BackendClient:
                         f"{e.response.text}"
                     )
                     raise
-                if attempt < self.max_retries:
-                    wait = 2**attempt
-                    logger.warning(
-                        f"PATCH {url} failed with HTTP {status}, "
-                        f"retrying in {wait}s (attempt {attempt + 1}/{self.max_retries})"
-                    )
-                    time.sleep(wait)
-                else:
-                    logger.error(
-                        f"PATCH {url} failed with HTTP {status} after "
-                        f"{self.max_retries} retries"
-                    )
-                    raise
+                self._handle_retry(url, attempt, f"HTTP {status}")
             except httpx.TransportError as e:
-                if attempt < self.max_retries:
-                    wait = 2**attempt
-                    logger.warning(
-                        f"PATCH {url} transport error: {e}, "
-                        f"retrying in {wait}s (attempt {attempt + 1}/{self.max_retries})"
-                    )
-                    time.sleep(wait)
-                else:
-                    logger.error(
-                        f"PATCH {url} transport error after {self.max_retries} retries: {e}"
-                    )
-                    raise
+                self._handle_retry(url, attempt, f"transport error: {e}")
+
+    def _handle_retry(self, url: str, attempt: int, reason: str) -> None:
+        """Sleep before the next retry, or log and re-raise if attempts exhausted."""
+        if attempt >= self.max_retries:
+            logger.error(
+                f"PATCH {url} failed with {reason} after {self.max_retries} retries"
+            )
+            raise
+        wait = 2**attempt
+        logger.warning(
+            f"PATCH {url} failed with {reason}, "
+            f"retrying in {wait}s (attempt {attempt + 1}/{self.max_retries})"
+        )
+        time.sleep(wait)
