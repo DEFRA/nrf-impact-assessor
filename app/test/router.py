@@ -316,7 +316,8 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
     gdf = _wkt_to_gdf(request.wkt, request.crs)
 
     # Build an SNS-shaped quote payload. The reference must match ^NRF-\d{6}$.
-    reference = f"NRF-{random.randint(0, 999_999):06d}"  # noqa: S311 - test tooling
+    # Cosmetic test identifier in a test-only endpoint (API_TESTING_ENABLED=true); not security-sensitive.
+    reference = f"NRF-{random.randint(0, 999_999):06d}"  # noqa: S311 # NOSONAR
     geometry_dict = mapping(gdf.geometry.iloc[0])
 
     client_kwargs: dict = {"region_name": aws.region}
