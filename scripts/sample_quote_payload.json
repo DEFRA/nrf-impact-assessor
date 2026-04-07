@@ -1,0 +1,27 @@
+{
+  "reference": "NRF-000001",
+  "boundaryEntryType": "draw",
+  "boundaryGeojson": {
+    "boundaryGeometryOriginal": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [582814.93, 328188.89],
+          [582808.89, 328203.73],
+          [582824.96, 328210.17],
+          [582830.09, 328197.00],
+          [582814.93, 328188.89]
+        ]
+      ]
+    },
+    "intersectingEdps": [
+      {
+        "label": "River Wensum SAC",
+        "n2k_site_name": "River Wensum SAC"
+      }
+    ]
+  },
+  "developmentTypes": ["housing"],
+  "residentialBuildingCount": 25,
+  "email": "developer@example.com"
+}

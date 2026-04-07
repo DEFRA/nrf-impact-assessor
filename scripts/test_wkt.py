@@ -15,7 +15,7 @@ Usage:
     # Use a predefined example polygon (Broads area):
     uv run python scripts/test_wkt.py assess --example
 
-    # Upload to LocalStack S3 + enqueue to SQS (full pipeline):
+    # Enqueue to SQS with embedded geometry (full pipeline):
     uv run python scripts/test_wkt.py enqueue --wkt "POLYGON (...)"
     uv run python scripts/test_wkt.py enqueue --example
 
@@ -145,7 +145,7 @@ def enqueue(
         "http://localhost:8086", "--base-url", help=_BASE_URL_HELP
     ),
 ):
-    """Upload geometry to LocalStack S3 and enqueue an SQS job message.
+    """Enqueue an SQS job message with the geometry embedded in the body.
 
     Calls POST /test/enqueue — exercises the full SQS pipeline.
     Requires LocalStack running and the SQS consumer active.
@@ -184,7 +184,6 @@ def enqueue(
 
     result = response.json()
     typer.echo(f"\nJob enqueued: {result.get('job_id')}")
-    typer.echo(f"S3 key:       {result.get('s3_key')}")
     typer.echo(f"SQS msg ID:   {result.get('message_id')}")
     typer.echo(f"\n{result.get('note')}")
     typer.echo("\nWatch consumer logs:")

@@ -74,17 +74,9 @@ class TestWktEnqueueEndpoint:
         mock_boto3["sqs"].send_message.assert_called_once()
         call_kwargs = mock_boto3["sqs"].send_message.call_args.kwargs
         message = json.loads(call_kwargs["MessageBody"])
-        assert message["geometry"] is not None
-        geojson = json.loads(message["geometry"])
-        assert geojson["type"] == "FeatureCollection"
-        assert len(geojson["features"]) == 1
-
-    def test_sqs_message_has_no_s3_key(self, mock_boto3):
-        client.post("/test/enqueue", json=_VALID_BODY)
-        message = json.loads(
-            mock_boto3["sqs"].send_message.call_args.kwargs["MessageBody"]
-        )
-        assert message.get("s3_input_key") is None
+        geom = message["boundaryGeojson"]["boundaryGeometryOriginal"]
+        assert geom["type"] == "Polygon"
+        assert len(geom["coordinates"][0]) >= 4
 
     def test_sqs_message_body_is_valid_job(self, mock_boto3):
         client.post("/test/enqueue", json=_VALID_BODY)
@@ -92,18 +84,19 @@ class TestWktEnqueueEndpoint:
         call_kwargs = mock_boto3["sqs"].send_message.call_args.kwargs
         assert call_kwargs["QueueUrl"] == "http://localhost:4566/000000000000/nrf-queue"
         message = json.loads(call_kwargs["MessageBody"])
-        assert message["assessment_type"] == "nutrient"
-        assert message["dwelling_type"] == "house"
-        assert message["number_of_dwellings"] == 10
-        assert message["developer_email"] == "test@example.com"
+        assert message["reference"].startswith("NRF-")
+        assert len(message["reference"]) == 10  # NRF-######
+        assert message["developmentTypes"] == ["house"]
+        assert message["residentialBuildingCount"] == 10
+        assert message["email"] == "test@example.com"
 
-    def test_job_id_consistent_in_message(self, mock_boto3):
+    def test_job_id_matches_reference_in_message(self, mock_boto3):
         response = client.post("/test/enqueue", json=_VALID_BODY)
         job_id = response.json()["job_id"]
         message = json.loads(
             mock_boto3["sqs"].send_message.call_args.kwargs["MessageBody"]
         )
-        assert message["job_id"] == job_id
+        assert message["reference"] == job_id
 
     def test_note_contains_job_id(self):
         response = client.post("/test/enqueue", json=_VALID_BODY)
@@ -153,8 +146,8 @@ class TestWktEnqueueEndpoint:
         message = json.loads(
             mock_boto3["sqs"].send_message.call_args.kwargs["MessageBody"]
         )
-        geojson = json.loads(message["geometry"])
-        assert geojson["type"] == "FeatureCollection"
+        geom = message["boundaryGeojson"]["boundaryGeometryOriginal"]
+        assert geom["type"] == "Polygon"
 
     def test_default_developer_email(self, mock_boto3):
         body = {k: v for k, v in _VALID_BODY.items() if k != "developer_email"}
@@ -162,7 +155,7 @@ class TestWktEnqueueEndpoint:
         message = json.loads(
             mock_boto3["sqs"].send_message.call_args.kwargs["MessageBody"]
         )
-        assert message["developer_email"] == "test@example.com"
+        assert message["email"] == "test@example.com"
 
     def test_boto3_uses_localstack_endpoint(self, mock_boto3):
         client.post("/test/enqueue", json=_VALID_BODY)

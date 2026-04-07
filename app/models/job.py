@@ -1,10 +1,6 @@
 """Job message schema for SQS-based worker coordination."""
 
-from datetime import UTC, datetime
-
 from pydantic import BaseModel, EmailStr, Field
-
-from app.models.enums import AssessmentType
 
 
 class IntersectingEdp(BaseModel):
@@ -44,22 +40,11 @@ class EdpInput(BaseModel):
 class ImpactAssessmentJob(BaseModel):
     """SQS message schema for impact assessment jobs.
 
-    Supports two message formats:
-
-    1. Quote payload from nrf-backend (via SNS):
-       - reference, boundaryGeojson, developmentTypes, residentialBuildingCount,
-         peopleCount, email, wasteWaterTreatmentWorksId/Name
-
-    2. Legacy direct SQS message (for tests):
-       - job_id, s3_input_key, developer_email, dwelling_type,
-         number_of_dwellings, assessment_type
-
-    All fields are optional to accept both formats. The orchestrator
-    determines the geometry source: boundaryGeojson (inline) or
-    s3_input_key (S3 download).
+    Quote payload from nrf-backend, delivered via SNS → SQS. `boundaryGeojson`
+    is required; all other fields are optional so malformed messages can still
+    be parsed for logging/DLQ.
     """
 
-    # --- Quote payload fields (from nrf-backend POST /quotes) ---
     reference: str | None = Field(default=None, pattern=r"^NRF-\d{6}$")
     boundary_geojson: BoundaryGeojson | None = Field(
         default=None, alias="boundaryGeojson"
@@ -78,23 +63,8 @@ class ImpactAssessmentJob(BaseModel):
     )
     email: EmailStr | None = Field(default=None)
 
-    # --- EDP metadata for callback (from nrf-backend) ---
+    # EDP metadata for result callback to nrf-backend
     edps: list["EdpInput"] | None = Field(default=None)
-
-    # --- Legacy fields (for S3-based processing and tests) ---
-    job_id: str | None = Field(default=None, description="Unique job identifier")
-    s3_input_key: str | None = Field(
-        default=None, description="S3 key to input shapefile zip"
-    )
-    geometry: str | None = Field(
-        default=None, description="GeoJSON string for test enqueue endpoint"
-    )
-    developer_email: EmailStr | None = Field(default=None)
-    submitted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    development_name: str = Field(default="")
-    dwelling_type: str | None = Field(default=None)
-    number_of_dwellings: int | None = Field(default=None, ge=1)
-    assessment_type: AssessmentType | None = Field(default=None)
 
     model_config = {
         "populate_by_name": True,
@@ -128,22 +98,3 @@ class ImpactAssessmentJob(BaseModel):
             }
         },
     }
-
-    @property
-    def effective_id(self) -> str:
-        """Return the best available identifier for this job."""
-        return self.job_id or self.reference or "unknown"
-
-    @property
-    def effective_dwelling_type(self) -> str:
-        """Return dwelling type from either message format."""
-        if self.dwelling_type:
-            return self.dwelling_type
-        if self.development_types:
-            return self.development_types[0]
-        return "housing"
-
-    @property
-    def effective_dwellings(self) -> int:
-        """Return dwelling count from either message format."""
-        return self.number_of_dwellings or self.residential_building_count or 0

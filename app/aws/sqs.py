@@ -82,7 +82,7 @@ class SQSClient:
 
             try:
                 job_message = ImpactAssessmentJob.model_validate(body)
-                logger.info(f"Received job message: {job_message.job_id}")
+                logger.info(f"Received job message: {job_message.reference}")
                 results.append((job_message, receipt_handle))
             except ValidationError as e:
                 logger.error(

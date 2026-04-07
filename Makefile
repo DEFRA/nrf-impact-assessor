@@ -1,4 +1,4 @@
-.PHONY: help test test-integration test-regression update-regression-baseline lint format build up down logs rebuild health monitoring-up monitoring-down monitoring-logs load-data load-data-sample load-data-layer load-data-lookup db-migrate db-rollback db-backup db-backup-schema db-backup-globals db-backup-tables db-restore db-restore-tables secrets-init _check-secrets
+.PHONY: help test test-integration test-regression update-regression-baseline lint format build up down logs rebuild health monitoring-up monitoring-down monitoring-logs load-data load-data-sample load-data-layer load-data-lookup db-migrate db-rollback db-backup db-backup-schema db-backup-globals db-backup-tables db-restore db-restore-tables secrets-init _check-secrets sns-publish sqs-send sqs-peek sqs-depth sqs-purge
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -211,3 +211,36 @@ health: ## Check health endpoint
 
 db-check: ## Check database tables and row counts (requires API_TESTING_ENABLED=true)
 	curl -s $(BASE_URL)/test/db | python -m json.tool
+
+# ---------------------------------------------------------------------------
+# LocalStack SNS / SQS (host gateway is remapped to 4568 in compose.yml)
+# ---------------------------------------------------------------------------
+LOCALSTACK_URL ?= http://localhost:4568
+AWS_LOCAL       = AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=eu-west-2 aws --endpoint-url=$(LOCALSTACK_URL)
+SNS_TOPIC_ARN   = arn:aws:sns:eu-west-2:000000000000:nrf-quote-estimate-request
+SQS_QUEUE_URL   = http://localhost:4568/000000000000/nrf-impact-assessment-jobs
+SAMPLE_PAYLOAD  = scripts/sample_quote_payload.json
+
+sns-publish: ## Publish sample quote payload to SNS (wrapped → SQS). Override: PAYLOAD=path/to.json
+	$(AWS_LOCAL) sns publish \
+		--topic-arn $(SNS_TOPIC_ARN) \
+		--message file://$(or $(PAYLOAD),$(SAMPLE_PAYLOAD))
+
+sqs-send: ## Send payload directly to SQS (bypasses SNS envelope). Override: PAYLOAD=path/to.json
+	$(AWS_LOCAL) sqs send-message \
+		--queue-url $(SQS_QUEUE_URL) \
+		--message-body file://$(or $(PAYLOAD),$(SAMPLE_PAYLOAD))
+
+sqs-peek: ## Peek at queue without consuming (visibility-timeout=0)
+	$(AWS_LOCAL) sqs receive-message \
+		--queue-url $(SQS_QUEUE_URL) \
+		--visibility-timeout 0 \
+		--max-number-of-messages 10
+
+sqs-depth: ## Show approximate queue depth
+	$(AWS_LOCAL) sqs get-queue-attributes \
+		--queue-url $(SQS_QUEUE_URL) \
+		--attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible
+
+sqs-purge: ## Purge all messages from the queue
+	$(AWS_LOCAL) sqs purge-queue --queue-url $(SQS_QUEUE_URL)
