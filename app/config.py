@@ -358,7 +358,7 @@ class ApiServerConfig(BaseSettings):
     )
 
     host: str = Field(
-        default="0.0.0.0",
+        default="0.0.0.0",  # noqa: S104
         description="Host interface to bind the API server",
     )
     port: int = Field(
