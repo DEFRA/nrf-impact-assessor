@@ -71,6 +71,8 @@ services:
         condition: service_healthy
     profiles:
       - service
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - "compose/aws.env"
       - "compose/secrets.env"
@@ -78,6 +80,7 @@ services:
       PORT: ${PORT:-8085}
       AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-http://localstack:4566}
       AWS_SQS_QUEUE_URL: ${AWS_SQS_QUEUE_URL:-http://localstack:4566/000000000000/nrf-impact-assessment-jobs}
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://host.docker.internal:3001}
       MONGO_URI: ${MONGO_URI:-mongodb://mongodb:27017/}
       HOST: ${HOST:-0.0.0.0}
       DB_HOST: postgres

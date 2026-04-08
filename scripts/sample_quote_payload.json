@@ -23,5 +23,13 @@
   },
   "developmentTypes": ["housing"],
   "residentialBuildingCount": 25,
-  "email": "developer@example.com"
+  "email": "developer@example.com",
+  "edps": [
+    {
+      "edpId": 1,
+      "edpName": "River Wensum SAC",
+      "edpType": "NUTRIENT",
+      "levyGbp": { "min": 1000, "max": 2000 }
+    }
+  ]
 }
