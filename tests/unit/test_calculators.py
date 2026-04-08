@@ -3,6 +3,7 @@
 Tests all calculator functions with known inputs/outputs from IATScript.
 """
 
+import numpy as np
 import pytest
 
 from app.calculators import (
@@ -19,13 +20,13 @@ class TestLandUseCalculator:
 
     @pytest.fixture
     def default_gs_config(self):
-        return GreenspaceConfig()  # threshold=2.5ha, 20%, N=3.0, P=0.2
+        return GreenspaceConfig()  # threshold=1.0ha, 20%, N=3.0, P=0.2
 
     def test_positive_uplift_below_greenspace_threshold(self, default_gs_config):
         """Test land use change below greenspace threshold (no greenspace adjustment)."""
-        n_uplift, p_uplift, *_ = calculate_land_use_uplift(
+        n_uplift, p_uplift = calculate_land_use_uplift(
             area_hectares=1.5,
-            dev_area_ha=1.0,  # Below 2.5ha threshold
+            dev_area_ha=0.5,  # Below 1.0ha threshold
             current_nitrogen_coeff=10.0,
             residential_nitrogen_coeff=25.0,
             current_phosphorus_coeff=2.0,
@@ -37,10 +38,10 @@ class TestLandUseCalculator:
         assert p_uplift == pytest.approx(4.5)  # (5 - 2) * 1.5
 
     def test_positive_uplift_above_greenspace_threshold(self, default_gs_config):
-        """Test greenspace adjustment for development >= 2.5ha."""
-        n_uplift, p_uplift, resi_n, gs_n, resi_p, gs_p = calculate_land_use_uplift(
+        """Test greenspace adjustment for development >= 1.0ha."""
+        n_uplift, p_uplift = calculate_land_use_uplift(
             area_hectares=1.5,
-            dev_area_ha=3.0,  # Above 2.5ha threshold
+            dev_area_ha=3.0,  # Above 1.0ha threshold
             current_nitrogen_coeff=10.0,
             residential_nitrogen_coeff=25.0,
             current_phosphorus_coeff=2.0,
@@ -49,24 +50,20 @@ class TestLandUseCalculator:
         )
 
         # Residential component: 25 * (1 - 0.20) = 20.0
-        assert resi_n == pytest.approx(20.0)
         # Greenspace component: 0.20 * 3.0 = 0.6
-        assert gs_n == pytest.approx(0.6)
         # Adjusted coeff: 20.0 + 0.6 = 20.6
         # Uplift: (20.6 - 10.0) * 1.5 = 15.9
         assert n_uplift == pytest.approx(15.9)
 
         # P: resi = 5.0 * 0.80 = 4.0, gs = 0.20 * 0.2 = 0.04
-        assert resi_p == pytest.approx(4.0)
-        assert gs_p == pytest.approx(0.04)
         # Adjusted: 4.04, uplift: (4.04 - 2.0) * 1.5 = 3.06
         assert p_uplift == pytest.approx(3.06)
 
     def test_negative_uplift(self, default_gs_config):
         """Test land use change with negative nutrient uplift (improvement)."""
-        n_uplift, p_uplift, *_ = calculate_land_use_uplift(
+        n_uplift, p_uplift = calculate_land_use_uplift(
             area_hectares=2.0,
-            dev_area_ha=1.0,  # Below threshold
+            dev_area_ha=0.5,  # Below threshold
             current_nitrogen_coeff=30.0,
             residential_nitrogen_coeff=15.0,
             current_phosphorus_coeff=8.0,
@@ -79,7 +76,7 @@ class TestLandUseCalculator:
 
     def test_zero_area(self, default_gs_config):
         """Test with zero development area."""
-        n_uplift, p_uplift, *_ = calculate_land_use_uplift(
+        n_uplift, p_uplift = calculate_land_use_uplift(
             area_hectares=0.0,
             dev_area_ha=0.0,
             current_nitrogen_coeff=10.0,
@@ -94,9 +91,9 @@ class TestLandUseCalculator:
 
     def test_rounding(self, default_gs_config):
         """Test that results are rounded to 2 decimal places."""
-        n_uplift, p_uplift, *_ = calculate_land_use_uplift(
+        n_uplift, p_uplift = calculate_land_use_uplift(
             area_hectares=1.333,
-            dev_area_ha=1.0,  # Below threshold
+            dev_area_ha=0.5,  # Below threshold
             current_nitrogen_coeff=10.777,
             residential_nitrogen_coeff=25.888,
             current_phosphorus_coeff=2.111,
@@ -107,8 +104,8 @@ class TestLandUseCalculator:
         assert n_uplift == round((25.888 - 10.777) * 1.333, 2)
         assert p_uplift == round((5.999 - 2.111) * 1.333, 2)
 
-    def test_returns_six_values(self, default_gs_config):
-        """Test that function returns 6-tuple with component breakdown."""
+    def test_returns_two_values(self, default_gs_config):
+        """Test that function returns 2-tuple (n_uplift, p_uplift)."""
         result = calculate_land_use_uplift(
             area_hectares=1.0,
             dev_area_ha=3.0,
@@ -119,146 +116,114 @@ class TestLandUseCalculator:
             greenspace_config=default_gs_config,
         )
 
-        assert len(result) == 6
+        assert len(result) == 2
 
 
 class TestSuDsMitigationCalculator:
-    """Tests for SuDS mitigation at coefficient level."""
+    """Tests for SuDS mitigation on aggregated uplift totals."""
 
     @pytest.fixture
     def default_suds_config(self):
         """Default SuDS configuration matching IATScript."""
-        return SuDsConfig(
-            threshold_area_ha=2.5,
-            flow_capture_percent=100.0,
-            removal_rate_percent=40.0,
-        )
+        return SuDsConfig()
 
     def test_suds_above_threshold(self, default_suds_config):
-        """Test SuDS applied to development >= 2.5ha."""
-        # Simulate a large site with greenspace: resi_n=20.0, gs_n=0.6
+        """Test SuDS applied to development >= 50 dwellings."""
         n_post, p_post = apply_suds_mitigation(
-            area_hectares=1.5,
-            dev_area_ha=3.0,  # Above 2.5ha threshold
-            current_nitrogen_coeff=10.0,
-            current_phosphorus_coeff=2.0,
-            resi_n_component=20.0,  # 25 * 0.80
-            gs_n_component=0.6,  # 0.20 * 3.0
-            resi_p_component=4.0,  # 5 * 0.80
-            gs_p_component=0.04,  # 0.20 * 0.2
+            n_lu_uplift=15.9,
+            p_lu_uplift=3.06,
+            dwellings=60,  # Above 50 threshold
             suds_config=default_suds_config,
         )
 
-        # SuDS adj N: (20.0 * (1 - 0.40)) + 0.6 = 12.0 + 0.6 = 12.6
-        # Post-SuDS uplift: (12.6 - 10.0) * 1.5 = 3.9
-        assert n_post == pytest.approx(3.9)
-
-        # SuDS adj P: (4.0 * (1 - 0.40)) + 0.04 = 2.4 + 0.04 = 2.44
-        # Post-SuDS uplift: (2.44 - 2.0) * 1.5 = 0.66
-        assert p_post == pytest.approx(0.66)
+        # n: 15.9 - abs(15.9) * 0.25 = 15.9 - 3.975 = 11.925 -> 11.92 (np.round half-even)
+        assert n_post == pytest.approx(11.92)
+        # p: 3.06 - abs(3.06) * 0.25 = 3.06 - 0.765 = 2.295 -> 2.3 (np.round half-even)
+        assert p_post == pytest.approx(2.3)
 
     def test_suds_below_threshold(self, default_suds_config):
-        """Test SuDS NOT applied below threshold — returns greenspace-adjusted uplift."""
+        """Test SuDS NOT applied below threshold — uplift unchanged."""
         n_post, p_post = apply_suds_mitigation(
-            area_hectares=1.5,
-            dev_area_ha=1.0,  # Below 2.5ha threshold
-            current_nitrogen_coeff=10.0,
-            current_phosphorus_coeff=2.0,
-            resi_n_component=25.0,  # No greenspace adjustment below threshold
-            gs_n_component=0.0,
-            resi_p_component=5.0,
-            gs_p_component=0.0,
+            n_lu_uplift=22.5,
+            p_lu_uplift=4.5,
+            dwellings=30,  # Below 50 threshold
             suds_config=default_suds_config,
         )
 
-        # No SuDS: (25 - 10) * 1.5 = 22.5
         assert n_post == pytest.approx(22.5)
-        # No SuDS: (5 - 2) * 1.5 = 4.5
         assert p_post == pytest.approx(4.5)
 
-    def test_suds_zero_area(self, default_suds_config):
-        """Test SuDS with zero intersection area."""
+    def test_suds_at_threshold(self, default_suds_config):
+        """Test SuDS applied at exactly 50 dwellings."""
         n_post, p_post = apply_suds_mitigation(
-            area_hectares=0.0,
-            dev_area_ha=3.0,
-            current_nitrogen_coeff=10.0,
-            current_phosphorus_coeff=2.0,
-            resi_n_component=20.0,
-            gs_n_component=0.6,
-            resi_p_component=4.0,
-            gs_p_component=0.04,
+            n_lu_uplift=20.0,
+            p_lu_uplift=4.0,
+            dwellings=50,  # Exactly at threshold
+            suds_config=default_suds_config,
+        )
+
+        # n: 20 - abs(20) * 0.25 = 20 - 5 = 15.0
+        assert n_post == pytest.approx(15.0)
+        # p: 4 - abs(4) * 0.25 = 4 - 1 = 3.0
+        assert p_post == pytest.approx(3.0)
+
+    def test_suds_negative_uplift_amplified(self, default_suds_config):
+        """Test that SuDS amplifies negative uplift (improvement) via abs()."""
+        n_post, p_post = apply_suds_mitigation(
+            n_lu_uplift=-20.0,
+            p_lu_uplift=-4.0,
+            dwellings=60,
+            suds_config=default_suds_config,
+        )
+
+        # n: -20 - abs(-20) * 0.25 = -20 - 5 = -25.0
+        assert n_post == pytest.approx(-25.0)
+        # p: -4 - abs(-4) * 0.25 = -4 - 1 = -5.0
+        assert p_post == pytest.approx(-5.0)
+
+    def test_suds_zero_uplift(self, default_suds_config):
+        """Test SuDS with zero uplift."""
+        n_post, p_post = apply_suds_mitigation(
+            n_lu_uplift=0.0,
+            p_lu_uplift=0.0,
+            dwellings=60,
             suds_config=default_suds_config,
         )
 
         assert n_post == pytest.approx(0.0)
         assert p_post == pytest.approx(0.0)
 
-    def test_suds_only_reduces_residential(self, default_suds_config):
-        """Test that SuDS only reduces residential component, not greenspace."""
-        # With greenspace component = 0 (small site that somehow got SuDS)
-        config = SuDsConfig(
-            threshold_area_ha=0.0,  # Always apply
-            flow_capture_percent=100.0,
-            removal_rate_percent=40.0,
+    def test_suds_vectorized(self, default_suds_config):
+        """Test SuDS works with numpy arrays (vectorized)."""
+        n_post, p_post = apply_suds_mitigation(
+            n_lu_uplift=np.array([20.0, 10.0, -5.0]),
+            p_lu_uplift=np.array([4.0, 2.0, -1.0]),
+            dwellings=np.array([60, 30, 100]),
+            suds_config=default_suds_config,
         )
 
-        n_post_no_gs, _ = apply_suds_mitigation(
-            area_hectares=1.0,
-            dev_area_ha=3.0,
-            current_nitrogen_coeff=10.0,
-            current_phosphorus_coeff=2.0,
-            resi_n_component=25.0,
-            gs_n_component=0.0,
-            resi_p_component=5.0,
-            gs_p_component=0.0,
-            suds_config=config,
-        )
-
-        n_post_with_gs, _ = apply_suds_mitigation(
-            area_hectares=1.0,
-            dev_area_ha=3.0,
-            current_nitrogen_coeff=10.0,
-            current_phosphorus_coeff=2.0,
-            resi_n_component=20.0,
-            gs_n_component=5.0,  # Same total but split differently
-            resi_p_component=5.0,
-            gs_p_component=0.0,
-            suds_config=config,
-        )
-
-        # Without GS: (25 * 0.6 + 0 - 10) * 1 = 5.0
-        assert n_post_no_gs == pytest.approx(5.0)
-        # With GS: (20 * 0.6 + 5.0 - 10) * 1 = 7.0
-        # GS component passes through unreduced
-        assert n_post_with_gs == pytest.approx(7.0)
+        # dwellings=60 >= 50: 20 - 5 = 15, dwellings=30 < 50: 10, dwellings=100 >= 50: -5 - 1.25 = -6.25
+        np.testing.assert_array_almost_equal(n_post, [15.0, 10.0, -6.25])
+        np.testing.assert_array_almost_equal(p_post, [3.0, 2.0, -1.25])
 
     def test_custom_suds_config(self):
         """Test with custom SuDS configuration."""
         custom_config = SuDsConfig(
-            threshold_area_ha=1.0,
-            flow_capture_percent=75.0,
-            removal_rate_percent=50.0,
+            threshold_dwellings=10,
+            removal_rate_percent=40.0,
         )
 
         n_post, p_post = apply_suds_mitigation(
-            area_hectares=1.0,
-            dev_area_ha=2.0,  # Above 1.0ha threshold
-            current_nitrogen_coeff=10.0,
-            current_phosphorus_coeff=2.0,
-            resi_n_component=25.0,
-            gs_n_component=0.0,
-            resi_p_component=5.0,
-            gs_p_component=0.0,
+            n_lu_uplift=100.0,
+            p_lu_uplift=20.0,
+            dwellings=15,  # Above 10 threshold
             suds_config=custom_config,
         )
 
-        # Reduction = 0.75 * 0.50 = 0.375
-        # SuDS adj N: 25 * (1 - 0.375) + 0 = 15.625
-        # Uplift: (15.625 - 10) * 1 = 5.625 -> 5.62
-        assert n_post == pytest.approx(5.62)
-        # SuDS adj P: 5 * 0.625 + 0 = 3.125
-        # Uplift: (3.125 - 2) * 1 = 1.125 -> 1.12
-        assert p_post == pytest.approx(1.12)
+        # n: 100 - abs(100) * 0.40 = 100 - 40 = 60.0
+        assert n_post == pytest.approx(60.0)
+        # p: 20 - abs(20) * 0.40 = 20 - 8 = 12.0
+        assert p_post == pytest.approx(12.0)
 
 
 class TestWastewaterLoadCalculator:

@@ -75,9 +75,14 @@ class SQSClient:
                 continue
             body = json.loads(raw_body)
 
+            # Unwrap SNS envelope if present
+            if body.get("Type") == "Notification" and "Message" in body:
+                logger.debug("Unwrapping SNS envelope from SQS message")
+                body = json.loads(body["Message"])
+
             try:
                 job_message = ImpactAssessmentJob.model_validate(body)
-                logger.info(f"Received job message: {job_message.job_id}")
+                logger.info(f"Received job message: {job_message.reference}")
                 results.append((job_message, receipt_handle))
             except ValidationError as e:
                 logger.error(

@@ -61,7 +61,7 @@ class GreenspaceConfig(BaseSettings):
     )
 
     threshold_area_ha: float = Field(
-        default=2.5,
+        default=1.0,
         description="Development area (ha) above which greenspace is assumed",
     )
     greenspace_percent: float = Field(
@@ -86,19 +86,16 @@ class SuDsConfig(BaseSettings):
         extra="ignore",
     )
 
-    threshold_area_ha: float = Field(
-        default=2.5, description="Development area (ha) above which SuDS is applied"
-    )
-    flow_capture_percent: float = Field(
-        default=100.0, description="Percentage of flow entering SuDS system"
+    threshold_dwellings: int = Field(
+        default=50, description="Dwelling count at or above which SuDS is applied"
     )
     removal_rate_percent: float = Field(
-        default=40.0, description="SuDS nutrient removal rate (%)"
+        default=25.0, description="SuDS nutrient removal rate (%)"
     )
 
     @property
     def total_reduction_factor(self) -> float:
-        return (self.flow_capture_percent / 100) * (self.removal_rate_percent / 100)
+        return self.removal_rate_percent / 100
 
 
 class AssessmentConfig(BaseSettings):
@@ -311,6 +308,26 @@ class DatabaseSettings(BaseSettings):
         return f"postgresql://{self.user}@{self.host}:{self.port}/{self.database}"  # NOSONAR - intentional: trust auth for local dev without a password
 
 
+class BackendConfig(BaseSettings):
+    """Configuration for nrf-backend callback."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="BACKEND_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    base_url: str = Field(default="", description="Base URL for nrf-backend API")
+    callback_timeout: int = Field(
+        default=30, ge=1, description="HTTP timeout in seconds for callbacks"
+    )
+    callback_max_retries: int = Field(
+        default=3, ge=0, description="Max retry attempts for failed callbacks"
+    )
+
+
 class AWSConfig(BaseSettings):
     """AWS resource configuration for ECS worker deployment."""
 
@@ -322,7 +339,6 @@ class AWSConfig(BaseSettings):
         extra="ignore",
     )
 
-    s3_input_bucket: str = ""
     account_id: str = ""
     region: str = Field(default="eu-west-2")
     sqs_queue_url: str = ""

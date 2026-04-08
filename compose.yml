@@ -9,7 +9,7 @@ services:
     environment:
       DEBUG: ${DEBUG:-1}
       LS_LOG: WARN # Localstack DEBUG Level
-      SERVICES: s3,sqs,sns,firehose
+      SERVICES: sqs,sns,firehose
       LOCALSTACK_HOST: 127.0.0.1
     volumes:
       - "${TMPDIR:-/tmp}/localstack:/var/lib/localstack"
@@ -71,12 +71,16 @@ services:
         condition: service_healthy
     profiles:
       - service
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - "compose/aws.env"
       - "compose/secrets.env"
     environment:
       PORT: ${PORT:-8085}
       AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-http://localstack:4566}
+      AWS_SQS_QUEUE_URL: ${AWS_SQS_QUEUE_URL:-http://localstack:4566/000000000000/nrf-impact-assessment-jobs}
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://host.docker.internal:3001}
       MONGO_URI: ${MONGO_URI:-mongodb://mongodb:27017/}
       HOST: ${HOST:-0.0.0.0}
       DB_HOST: postgres
@@ -115,4 +119,5 @@ volumes:
 
 networks:
   cdp-tenant:
+    external: true
     driver: bridge

@@ -13,8 +13,8 @@ Endpoints:
 """
 
 import logging
+import random
 import time
-from datetime import UTC, datetime
 from uuid import uuid4
 
 import boto3
@@ -23,13 +23,14 @@ from botocore.exceptions import ClientError
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from shapely import wkt as shapely_wkt
+from shapely.geometry import mapping
 from sqlalchemy import func, select, text
 
 from app.assess._geometry import inject_job_fields
 from app.config import AWSConfig, DatabaseSettings
 from app.models.db import CoefficientLayer, EdpBoundaryLayer, LookupTable, SpatialLayer
 from app.models.enums import AssessmentType, SpatialLayerType
-from app.models.job import ImpactAssessmentJob
+from app.models.job import BoundaryGeojson, ImpactAssessmentJob
 from app.repositories.engine import create_db_engine
 from app.repositories.repository import Repository
 from app.runner.runner import run_assessment
@@ -301,7 +302,9 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
     Requires LocalStack running with SQS queue provisioned, and the consumer running
     (docker-compose worker profile or `python -m app.consumer`).
     """
-    assessment_type = _parse_assessment_type(request.assessment_type)
+    # Validate assessment_type even though only NUTRIENT is supported end-to-end,
+    # so bad values return 400 rather than silently flowing through.
+    _parse_assessment_type(request.assessment_type)
     aws = AWSConfig()
 
     if not aws.sqs_queue_url:
@@ -312,8 +315,10 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
 
     gdf = _wkt_to_gdf(request.wkt, request.crs)
 
-    job_id = str(uuid4())
-    geojson_str = gdf.to_json()
+    # Build an SNS-shaped quote payload. The reference must match ^NRF-\d{6}$.
+    # Cosmetic test identifier in a test-only endpoint (API_TESTING_ENABLED=true); not security-sensitive.
+    reference = f"NRF-{random.randint(0, 999_999):06d}"  # noqa: S311 # NOSONAR
+    geometry_dict = mapping(gdf.geometry.iloc[0])
 
     client_kwargs: dict = {"region_name": aws.region}
     if aws.endpoint_url:
@@ -322,21 +327,21 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
     sqs = boto3.client("sqs", **client_kwargs)
 
     job = ImpactAssessmentJob(
-        job_id=job_id,
-        geometry=geojson_str,
-        developer_email=request.developer_email,
-        submitted_at=datetime.now(UTC),
-        assessment_type=assessment_type,
-        dwelling_type=request.dwelling_type,
-        number_of_dwellings=request.dwellings,
-        development_name=request.name,
+        reference=reference,
+        boundary_geojson=BoundaryGeojson(
+            boundary_geometry_original=geometry_dict,
+            intersecting_edps=[],
+        ),
+        development_types=[request.dwelling_type],
+        residential_building_count=request.dwellings,
+        email=request.developer_email,
     )
 
     try:
         logger.info("Sending job message to SQS queue: %s", aws.sqs_queue_url)
         response = sqs.send_message(
             QueueUrl=aws.sqs_queue_url,
-            MessageBody=job.model_dump_json(),
+            MessageBody=job.model_dump_json(by_alias=True),
         )
     except ClientError as e:
         logger.error("SQS send failed: %s", e)
@@ -346,12 +351,12 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
         ) from e
 
     message_id = response["MessageId"]
-    logger.info("Enqueued job %s (SQS message ID: %s)", job_id, message_id)
+    logger.info("Enqueued job %s (SQS message ID: %s)", reference, message_id)
 
     return WktEnqueueResponse(
-        job_id=job_id,
+        job_id=reference,
         message_id=message_id,
         note="Consumer will process on next poll. Watch worker logs for: 'Processing job: "
-        + job_id
+        + reference
         + "'",
     )

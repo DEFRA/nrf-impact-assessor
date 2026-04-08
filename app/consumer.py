@@ -26,9 +26,11 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.aws.sqs import SQSClient
+from app.clients.backend_client import BackendClient
 from app.common.proxy_utils import configure_proxy_settings
 from app.common.tls import init_custom_certificates
-from app.config import ApiServerConfig, AWSConfig, DatabaseSettings
+from app.config import ApiServerConfig, AWSConfig, BackendConfig, DatabaseSettings
+from app.models.enums import AssessmentType
 from app.orchestrator import JobOrchestrator
 from app.repositories.engine import create_db_engine
 from app.repositories.repository import Repository
@@ -157,10 +159,11 @@ class SqsConsumer:
                     continue
 
                 for job_message, receipt_handle in results:
-                    logger.info(f"Processing job: {job_message.job_id}")
+                    job_id = job_message.reference or "unknown"
+                    logger.info(f"Processing job: {job_id}")
                     _with_visibility_heartbeat(
                         lambda msg=job_message: self.orchestrator.process_job(
-                            msg, msg.assessment_type
+                            msg, AssessmentType.NUTRIENT
                         ),
                         self.sqs_client,
                         receipt_handle,
@@ -168,7 +171,7 @@ class SqsConsumer:
                     )
                     self.sqs_client.delete_message(receipt_handle)
                     logger.info(
-                        f"Job {job_message.job_id} processing complete, message deleted from queue"
+                        f"Job {job_id} processing complete, message deleted from queue"
                     )
 
             except KeyboardInterrupt:
@@ -266,9 +269,21 @@ def main():
             endpoint_url=aws_config.endpoint_url,
         )
 
+        # Initialize backend client for result callbacks (if configured)
+        backend_config = BackendConfig()
+        backend_client = None
+        if backend_config.base_url:
+            backend_client = BackendClient(
+                base_url=backend_config.base_url,
+                timeout=backend_config.callback_timeout,
+                max_retries=backend_config.callback_max_retries,
+            )
+            logger.info(f"Backend callback enabled: {backend_config.base_url}")
+
         orchestrator = JobOrchestrator(
             aws_config=aws_config,
             repository=repository,
+            backend_client=backend_client,
         )
 
         consumer = SqsConsumer(

@@ -1,71 +1,100 @@
 """Job message schema for SQS-based worker coordination."""
 
-from datetime import UTC, datetime
-
 from pydantic import BaseModel, EmailStr, Field
 
-from app.models.enums import AssessmentType
+
+class IntersectingEdp(BaseModel):
+    """An EDP that intersects with the development boundary."""
+
+    label: str
+    n2k_site_name: str
+
+
+class BoundaryGeojson(BaseModel):
+    """Boundary geometry and intersecting EDPs from nrf-backend."""
+
+    boundary_geometry_original: dict = Field(alias="boundaryGeometryOriginal")
+    intersecting_edps: list[IntersectingEdp] = Field(alias="intersectingEdps")
+
+    model_config = {"populate_by_name": True}
+
+
+class LevyRange(BaseModel):
+    """Levy amount range in GBP."""
+
+    min: float = Field(ge=0)
+    max: float = Field(ge=0)
+
+
+class EdpInput(BaseModel):
+    """EDP metadata from nrf-backend for result callback."""
+
+    edp_id: int = Field(alias="edpId")
+    edp_name: str = Field(alias="edpName")
+    edp_type: str = Field(default="NUTRIENT", alias="edpType")
+    levy_gbp: LevyRange = Field(alias="levyGbp")
+
+    model_config = {"populate_by_name": True}
 
 
 class ImpactAssessmentJob(BaseModel):
     """SQS message schema for impact assessment jobs.
 
-    Attributes:
-        job_id: Unique identifier for this assessment job
-        s3_input_key: S3 key to shapefile zip (e.g., "jobs/abc123/input.zip")
-        developer_email: Email address of developer submitting the job
-        submitted_at: ISO 8601 timestamp when job was submitted
-        development_name: Optional name/description for the development
-        dwelling_type: Dwelling type from developer form submission.
-            Will become Enum once final list is determined.
-        number_of_dwellings: Number of dwellings from developer form submission.
-        assessment_type: The type of assessment to run (e.g., "nutrient", "gcn")
-
-    ** Note ** These fields are not finalised yet
-
-    Note:
-        In production, geometry file contains only geometry. All development data
-        (development_name, dwelling_type, number_of_dwellings) comes from the frontend form.
-        EmbeddedDevelopmentDataValidator is only for legacy test data with attributes.
+    Quote payload from nrf-backend, delivered via SNS → SQS. `boundaryGeojson`
+    is required; all other fields are optional so malformed messages can still
+    be parsed for logging/DLQ.
     """
 
-    job_id: str = Field(..., description="Unique job identifier")
-    s3_input_key: str | None = Field(
-        default=None, description="S3 key to input shapefile zip"
+    reference: str | None = Field(default=None, pattern=r"^NRF-\d{6}$")
+    boundary_geojson: BoundaryGeojson | None = Field(
+        default=None, alias="boundaryGeojson"
     )
-    geometry: str | None = Field(
-        default=None, description="GeoJSON geometry string embedded in message"
+    boundary_entry_type: str | None = Field(default=None, alias="boundaryEntryType")
+    development_types: list[str] | None = Field(default=None, alias="developmentTypes")
+    residential_building_count: int | None = Field(
+        default=None, ge=1, alias="residentialBuildingCount"
     )
-    developer_email: EmailStr = Field(..., description="Developer's email address")
-    submitted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    development_name: str = Field(
-        default="",
-        description="Optional name/description for the development",
+    people_count: int | None = Field(default=None, ge=1, alias="peopleCount")
+    waste_water_treatment_works_id: str | None = Field(
+        default=None, alias="wasteWaterTreatmentWorksId"
     )
-    dwelling_type: str = Field(
-        ...,
-        description="Dwelling type from form (will become Enum once finalized)",
+    waste_water_treatment_works_name: str | None = Field(
+        default=None, alias="wasteWaterTreatmentWorksName"
     )
-    number_of_dwellings: int = Field(
-        ...,
-        ge=1,
-        description="Number of dwellings from form",
-    )
-    assessment_type: AssessmentType = Field(
-        ..., description="Type of assessment to run"
-    )
+    email: EmailStr | None = Field(default=None)
+
+    # EDP metadata for result callback to nrf-backend
+    edps: list["EdpInput"] | None = Field(default=None)
 
     model_config = {
+        "populate_by_name": True,
         "json_schema_extra": {
             "example": {
-                "job_id": "550e8400-e29b-41d4-a716-446655440000",
-                "s3_input_key": "jobs/550e8400/input.zip",
-                "developer_email": "developer@example.com",
-                "submitted_at": "2025-10-15T14:30:00Z",
-                "development_name": "Big homes",
-                "dwelling_type": "apartment",
-                "number_of_dwellings": 25,
-                "assessment_type": "nutrient",
+                "reference": "NRF-000001",
+                "boundaryEntryType": "draw",
+                "boundaryGeojson": {
+                    "boundaryGeometryOriginal": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [582814.93, 328188.89],
+                                [582808.89, 328203.73],
+                                [582824.96, 328210.17],
+                                [582830.09, 328197.00],
+                                [582814.93, 328188.89],
+                            ]
+                        ],
+                    },
+                    "intersectingEdps": [
+                        {
+                            "label": "River Wensum SAC",
+                            "n2k_site_name": "River Wensum SAC",
+                        }
+                    ],
+                },
+                "developmentTypes": ["housing"],
+                "residentialBuildingCount": 25,
+                "email": "developer@example.com",
             }
-        }
+        },
     }
