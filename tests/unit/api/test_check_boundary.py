@@ -216,6 +216,25 @@ class TestCheckBoundaryGeoJSON:
         assert response.status_code == 400
         assert "Failed to read geometry file" in response.json()["error"]
 
+    def test_corrupt_geometry_returns_400(self, client):
+        """Valid JSON with malformed/incomplete coordinates must return 400, not 500."""
+        corrupt = json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {},
+                        "geometry": {"type": "Polygon"},
+                    }
+                ],
+            }
+        ).encode()
+        response = _post_boundary(client, "corrupt.geojson", corrupt)
+
+        assert response.status_code == 400
+        assert "incomplete or malformed coordinates" in response.json()["error"]
+
     def test_unsupported_format_returns_400(self, client):
         response = _post_boundary(
             client, "data.csv", b"col1,col2\n1,2", content_type="text/csv"
