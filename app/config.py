@@ -358,8 +358,8 @@ class ApiServerConfig(BaseSettings):
     )
 
     host: str = Field(
-        default="127.0.0.1",
-        description="Host interface to bind the API server (use 0.0.0.0 for container deployments)",
+        default="0.0.0.0",  # noqa: S104 — bind to all interfaces; the IA is always containerised
+        description="Host interface to bind the API server",
     )
     port: int = Field(
         default=8085, ge=1, le=65535, description="Port for the API server"
