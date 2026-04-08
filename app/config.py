@@ -358,7 +358,7 @@ class ApiServerConfig(BaseSettings):
     )
 
     host: str = Field(
-        default="0.0.0.0",  # noqa: S104 — bind to all interfaces; the IA is always containerised
+        default="0.0.0.0",
         description="Host interface to bind the API server",
     )
     port: int = Field(
