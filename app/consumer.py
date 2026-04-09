@@ -158,6 +158,8 @@ class SqsConsumer:
                 if not results:
                     continue
 
+                logger.info(f"SQS poll received {len(results)} message(s)")
+
                 for job_message, receipt_handle in results:
                     job_id = job_message.reference or "unknown"
                     logger.info(f"Processing job: {job_id}")
@@ -271,6 +273,7 @@ def main():
 
         # Initialize backend client for result callbacks (if configured)
         backend_config = BackendConfig()
+        logger.info(f"BACKEND_BASE_URL={backend_config.base_url or '<unset>'}")
         backend_client = None
         if backend_config.base_url:
             backend_client = BackendClient(
@@ -298,7 +301,7 @@ def main():
         sys.exit(1)
 
     finally:
-        # Explicit cleanup of API server process
+        # Explicit clean-up of API server process
         if api_server_process is not None and api_server_process.is_alive():
             logger.info("Terminating API server...")
             api_server_process.terminate()

@@ -10,7 +10,6 @@ from app.common.mongo import get_mongo_client
 from app.common.tls import cleanup_cert_files, init_custom_certificates
 from app.common.tracing import TraceIdMiddleware
 from app.config import ApiServerConfig, config
-from app.example.router import router as example_router
 from app.health.router import router as health_router
 from app.tiles.router import router as tiles_router
 from app.version.router import router as version_router
@@ -41,7 +40,6 @@ app.add_middleware(TraceIdMiddleware)
 # Setup Routes
 app.include_router(health_router)
 app.include_router(version_router)
-app.include_router(example_router)
 app.include_router(assess_router)
 app.include_router(boundary_router)
 app.include_router(tiles_router)

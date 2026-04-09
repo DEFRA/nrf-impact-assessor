@@ -9,7 +9,7 @@ services:
     environment:
       DEBUG: ${DEBUG:-1}
       LS_LOG: WARN # Localstack DEBUG Level
-      SERVICES: sqs,sns,firehose
+      SERVICES: sqs,sns
       LOCALSTACK_HOST: 127.0.0.1
     volumes:
       - "${TMPDIR:-/tmp}/localstack:/var/lib/localstack"
