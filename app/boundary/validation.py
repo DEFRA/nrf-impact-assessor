@@ -38,6 +38,13 @@ def validate_geometry(gdf: gpd.GeoDataFrame) -> str | None:
     Returns:
         Error message string if validation fails, or None if valid.
     """
+    null_count = gdf.geometry.isna().sum()
+    if null_count > 0:
+        return (
+            "The uploaded boundary geometry could not be processed. "
+            "The file contains incomplete or malformed coordinates."
+        )
+
     geom_types = set(gdf.geometry.geom_type.unique())
     invalid_types = geom_types - _VALID_GEOM_TYPES
     if invalid_types:
@@ -45,14 +52,6 @@ def validate_geometry(gdf: gpd.GeoDataFrame) -> str | None:
             f"Invalid geometry types found: {', '.join(invalid_types)}. "
             "Only Polygon geometry is supported. "
             "Please ensure the boundary forms a complete closed polygon shape."
-        )
-
-    null_count = gdf.geometry.isna().sum()
-    if null_count > 0:
-        return (
-            "The uploaded boundary geometry could not be processed. "
-            "The file contains incomplete or malformed coordinates. "
-            "Please check your file and re-export the boundary from your GIS software."
         )
 
     invalid_count = (~gdf.geometry.is_valid).sum()
