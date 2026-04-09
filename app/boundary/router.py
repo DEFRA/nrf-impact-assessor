@@ -10,9 +10,10 @@ import tempfile
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from typing import Annotated
 
 import geopandas as gpd
-from fastapi import APIRouter, UploadFile
+from fastapi import APIRouter, Form, UploadFile
 from fastapi.responses import JSONResponse
 from geoalchemy2.functions import (
     ST_Area,
@@ -114,7 +115,12 @@ def _write_to_temp(content: bytes, tmpdir: Path, suffix: str) -> Path:
         return Path(tmp.name)
 
 
-def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFrame:
+def _read_geometry(
+    content: bytes,
+    filename: str,
+    tmpdir: Path,
+    boundary_filename: str | None = None,
+) -> gpd.GeoDataFrame:
     """Read a geometry file from uploaded bytes into a GeoDataFrame.
 
     Supports .geojson, .json, .kml, and .zip (containing .shp, .geojson, or .kml).
@@ -123,6 +129,12 @@ def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFr
         content: Raw file bytes.
         filename: Original filename (used for extension detection).
         tmpdir: Temporary directory to write files into.
+        boundary_filename: Bare filename (no directory) of the entry inside
+            `filename` that should be used when `filename` is a zip — today
+            always a .shp selected by the backend during zip validation, but
+            the parameter is deliberately format-agnostic so future bundled
+            formats can flow through the same contract. Ignored for non-zip
+            uploads.
 
     Returns:
         GeoDataFrame with the uploaded geometries.
@@ -139,7 +151,7 @@ def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFr
             return gpd.read_file(BytesIO(content), driver="KML")
         if ext == _EXT_ZIP:
             zip_path = _write_to_temp(content, tmpdir, _EXT_ZIP)
-            read_path = _extract_zip(zip_path, tmpdir)
+            read_path = _extract_zip(zip_path, tmpdir, boundary_filename)
             return gpd.read_file(read_path)
     except ValueError:
         raise
@@ -148,8 +160,17 @@ def _read_geometry(content: bytes, filename: str, tmpdir: Path) -> gpd.GeoDataFr
         raise ValueError(msg) from e
 
 
-def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
-    """Extract a zip archive and return the path to the geometry file inside."""
+def _extract_zip(
+    zip_path: Path, tmpdir: Path, boundary_filename: str | None = None
+) -> Path:
+    """Extract a zip archive and return the path to the geometry file inside.
+
+    If `boundary_filename` is supplied (the normal case when called from the
+    backend), we locate that exact entry inside the extracted zip and use it.
+    Otherwise we fall back to picking the first .shp / .geojson / .kml found
+    by glob — this path is only exercised by direct callers of the IA that
+    don't know which file to ask for.
+    """
     extract_dir = tmpdir / "extracted"
     extract_dir.mkdir()
     with zipfile.ZipFile(zip_path, "r") as zf:
@@ -160,25 +181,15 @@ def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
                 raise ValueError(msg)
         zf.extractall(extract_dir)
 
+    if boundary_filename:
+        return _locate_named_entry(extract_dir, boundary_filename)
+
     shp_files = list(extract_dir.glob("**/*.shp"))
     geojson_files = list(extract_dir.glob("**/*.geojson"))
     kml_files = list(extract_dir.glob("**/*.kml"))
 
     if shp_files:
-        shp_path = shp_files[0]
-        stem = shp_path.stem
-        shp_dir = shp_path.parent
-        missing = [
-            ext for ext in (".dbf", ".shx") if not (shp_dir / f"{stem}{ext}").exists()
-        ]
-        if missing:
-            msg = (
-                f"Shapefile is missing required companion files: "
-                f"{', '.join(missing)}. "
-                "A zip must contain .shp, .dbf, and .shx files."
-            )
-            raise ValueError(msg)
-        return shp_path
+        return _check_shapefile_companions(shp_files[0])
     if geojson_files:
         return geojson_files[0]
     if kml_files:
@@ -186,6 +197,53 @@ def _extract_zip(zip_path: Path, tmpdir: Path) -> Path:
 
     msg = "Zip file must contain a .shp, .geojson, or .kml file"
     raise ValueError(msg)
+
+
+def _locate_named_entry(extract_dir: Path, boundary_filename: str) -> Path:
+    """Find a specific file inside the extracted zip, matched by bare filename.
+
+    We match on the filename only (not the full in-zip path) so the backend
+    doesn't need to know whether entries were at the top level or nested in a
+    subdirectory. Case-insensitive because zip tools on Windows/macOS routinely
+    mangle extension casing.
+    """
+    lowered = boundary_filename.lower()
+    candidates = [
+        p for p in extract_dir.glob("**/*") if p.name.lower() == lowered and p.is_file()
+    ]
+    if not candidates:
+        msg = f"Boundary file {boundary_filename!r} not found inside uploaded zip."
+        raise ValueError(msg)
+    # Multiple matches would mean the same filename appears in two different
+    # subdirectories — ambiguous, so refuse rather than guess.
+    if len(candidates) > 1:
+        msg = (
+            f"Boundary file {boundary_filename!r} appears more than once in the "
+            "uploaded zip; cannot determine which one to use."
+        )
+        raise ValueError(msg)
+    entry = candidates[0]
+    # Shapefiles still need their sibling .dbf / .shx in the same directory.
+    if entry.suffix.lower() == ".shp":
+        return _check_shapefile_companions(entry)
+    return entry
+
+
+def _check_shapefile_companions(shp_path: Path) -> Path:
+    """Verify a .shp has its required .dbf/.shx siblings in the same directory."""
+    stem = shp_path.stem
+    shp_dir = shp_path.parent
+    missing = [
+        ext for ext in (".dbf", ".shx") if not (shp_dir / f"{stem}{ext}").exists()
+    ]
+    if missing:
+        msg = (
+            f"Shapefile is missing required companion files: "
+            f"{', '.join(missing)}. "
+            "A zip must contain .shp, .dbf, and .shx files."
+        )
+        raise ValueError(msg)
+    return shp_path
 
 
 def _find_intersecting_edps(
@@ -250,6 +308,7 @@ def _find_intersecting_edps(
 )
 async def check_boundary(
     geometry_file: UploadFile,
+    boundary_filename: Annotated[str | None, Form()] = None,
 ):
     """Check whether an uploaded geometry intersects with EDP areas.
 
@@ -257,6 +316,12 @@ async def check_boundary(
     - .zip containing .shp (with companion .dbf, .shx, .prj files), .geojson, or .kml
     - .geojson or .json
     - .kml
+
+    For zip uploads the caller (the backend service) passes `boundary_filename`:
+    the bare filename of the entry that was selected during the backend's
+    zip-safety validation step — today always a .shp, but the contract is
+    format-agnostic. This service then opens that specific file rather than
+    re-implementing a picking rule of its own.
 
     Returns the uploaded geometry as GeoJSON along with any intersecting EDP areas.
     """
@@ -272,7 +337,7 @@ async def check_boundary(
 
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
-            gdf = _read_geometry(content, filename, Path(tmpdir))
+            gdf = _read_geometry(content, filename, Path(tmpdir), boundary_filename)
         except ValueError as e:
             return _make_response(400, error=str(e))
 
