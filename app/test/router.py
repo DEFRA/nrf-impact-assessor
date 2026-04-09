@@ -4,21 +4,27 @@ These endpoints are only mounted when API_TESTING_ENABLED=true and are
 never available in production.
 
 Endpoints:
-    POST /test/assess   - Run an assessment synchronously from a WKT geometry string.
-                          No S3, no SQS, no polling — results returned immediately.
-    POST /test/enqueue  - Convert WKT to GeoJSON and send an SQS job message with the
-                          geometry embedded in the message body. The running consumer
-                          processes it on its next poll, exercising the SQS pipeline
-                          without requiring S3.
+    POST /test/assess        - Run an assessment synchronously from a WKT geometry string.
+                                No S3, no SQS, no polling — results returned immediately.
+    POST /test/enqueue       - Convert WKT to GeoJSON and send an SQS job message with the
+                                geometry embedded in the message body. The running consumer
+                                processes it on its next poll, exercising the SQS pipeline
+                                without requiring S3.
+    POST /test/patch-backend - Fire a PATCH /quotes/{reference} at nrf-backend via
+                                BackendClient using a stub (or caller-supplied) payload.
+                                Validates BACKEND_BASE_URL, network path, and backend route
+                                prefix — no assessment, no DB, no SQS.
 """
 
 import logging
 import random
+import re
 import time
 from uuid import uuid4
 
 import boto3
 import geopandas as gpd
+import httpx
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -27,13 +33,25 @@ from shapely.geometry import mapping
 from sqlalchemy import func, select, text
 
 from app.assess._geometry import inject_job_fields
-from app.config import AWSConfig, DatabaseSettings
+from app.clients.backend_client import BackendClient
+from app.clients.payload_mapper import build_quote_patch_payload
+from app.config import AWSConfig, BackendConfig, DatabaseSettings
 from app.models.db import CoefficientLayer, EdpBoundaryLayer, LookupTable, SpatialLayer
+from app.models.domain import (
+    Development,
+    ImpactAssessmentResult,
+    LandUseImpact,
+    NutrientImpact,
+    SpatialAssignment,
+    WastewaterImpact,
+)
 from app.models.enums import AssessmentType, SpatialLayerType
-from app.models.job import BoundaryGeojson, ImpactAssessmentJob
+from app.models.job import BoundaryGeojson, EdpInput, ImpactAssessmentJob, LevyRange
 from app.repositories.engine import create_db_engine
 from app.repositories.repository import Repository
 from app.runner.runner import run_assessment
+
+_NRF_REFERENCE_PATTERN = re.compile(r"^NRF-\d{6}$")
 
 logger = logging.getLogger(__name__)
 
@@ -359,4 +377,161 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
         note="Consumer will process on next poll. Watch worker logs for: 'Processing job: "
         + reference
         + "'",
+    )
+
+
+# ---------------------------------------------------------------------------
+# /test/patch-backend — exercise the nrf-backend callback path in isolation
+# ---------------------------------------------------------------------------
+
+
+class PatchBackendRequest(BaseModel):
+    """Request body for POST /test/patch-backend."""
+
+    reference: str = "NRF-000001"
+    payload: dict | None = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "reference": "NRF-000001",
+                "payload": None,
+            }
+        }
+    }
+
+
+class PatchBackendResponse(BaseModel):
+    """Response from POST /test/patch-backend."""
+
+    reference: str
+    url: str
+    status: str
+
+
+def _build_stub_patch_payload() -> dict:
+    """Build a stub PATCH payload via the real payload_mapper.
+
+    Routes through build_quote_patch_payload with a fully-typed
+    ImpactAssessmentResult so the complete domain model chain is exercised.
+    """
+    stub_result = ImpactAssessmentResult(
+        rlb_id=1,
+        development=Development(
+            id="TEST-001",
+            name="Test Development",
+            dwelling_category="house",
+            source="test",
+            dwellings=1,
+            area_m2=1000.0,
+            area_ha=0.1,
+        ),
+        spatial=SpatialAssignment(
+            wwtw_id=141,
+            wwtw_name="Test WwTW",
+            wwtw_subcatchment="Test Subcatchment",
+            lpa_name="Test LPA",
+            nn_catchment="Broads",
+            dev_subcatchment="Test Dev Subcatchment",
+            area_in_nn_catchment_ha=0.1,
+        ),
+        land_use=LandUseImpact(
+            nitrogen_kg_yr=10.0,
+            phosphorus_kg_yr=4.0,
+            nitrogen_post_suds_kg_yr=9.0,
+            phosphorus_post_suds_kg_yr=3.5,
+        ),
+        wastewater=WastewaterImpact(
+            occupancy_rate=2.4,
+            water_usage_L_per_person_day=110.0,
+            daily_water_usage_L=264.0,
+            nitrogen_conc_2025_2030_mg_L=25.0,
+            phosphorus_conc_2025_2030_mg_L=5.0,
+            nitrogen_conc_2030_onwards_mg_L=20.0,
+            phosphorus_conc_2030_onwards_mg_L=4.0,
+            nitrogen_temp_kg_yr=2.41,
+            phosphorus_temp_kg_yr=0.48,
+            nitrogen_perm_kg_yr=1.93,
+            phosphorus_perm_kg_yr=0.39,
+        ),
+        total=NutrientImpact(
+            nitrogen_total_kg_yr=12.34,
+            phosphorus_total_kg_yr=5.67,
+        ),
+    )
+    stub_edp = EdpInput(
+        edp_id=1,
+        edp_name="Test EDP",
+        edp_type="NUTRIENT",
+        levy_gbp=LevyRange(min=100.0, max=200.0),
+    )
+    return build_quote_patch_payload([stub_result], [stub_edp])
+
+
+@router.post(
+    "/patch-backend",
+    responses={
+        400: {"description": "Invalid reference or BACKEND_BASE_URL not configured"},
+        502: {"description": "Backend PATCH failed (HTTP error or transport error)"},
+    },
+)
+def patch_backend(request: PatchBackendRequest) -> PatchBackendResponse:
+    """Fire a PATCH /quotes/{reference} at nrf-backend via BackendClient.
+
+    Plumbing test only — does not hit the DB, run an assessment, or touch SQS.
+    Use it to validate that BACKEND_BASE_URL is set correctly, the network path
+    to nrf-backend is reachable, and the route prefix matches.
+
+    If `payload` is omitted, a stub payload is generated via the real
+    payload_mapper so the mapper is exercised too. Pass a payload explicitly to
+    reproduce bad-payload scenarios (e.g. to see a 400 from nrf-backend).
+
+    Returns 502 on any backend failure (HTTP status error or transport error)
+    so the HTTP status reflects reality; the detail message contains the
+    underlying error text for diagnosis.
+    """
+    if not _NRF_REFERENCE_PATTERN.match(request.reference):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid reference '{request.reference}'. Must match ^NRF-\\d{{6}}$",
+        )
+
+    backend_config = BackendConfig()
+    if not backend_config.base_url:
+        raise HTTPException(
+            status_code=400,
+            detail="BACKEND_BASE_URL is not configured.",
+        )
+
+    payload = (
+        request.payload if request.payload is not None else _build_stub_patch_payload()
+    )
+
+    client = BackendClient(
+        base_url=backend_config.base_url,
+        timeout=backend_config.callback_timeout,
+        max_retries=backend_config.callback_max_retries,
+    )
+    url = f"{client.base_url}/quotes/{request.reference}"
+    logger.info(f"Test PATCH → {url}")
+
+    try:
+        client.patch_quote(request.reference, payload)
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Test PATCH {url} failed: HTTP {e.response.status_code}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Backend PATCH failed with HTTP {e.response.status_code}: {e.response.text}",
+        ) from e
+    except httpx.TransportError as e:
+        logger.error(f"Test PATCH {url} failed: transport error: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Backend PATCH failed with transport error: {e}",
+        ) from e
+
+    return PatchBackendResponse(
+        reference=request.reference,
+        url=url,
+        status="ok",
     )

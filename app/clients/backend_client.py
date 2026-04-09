@@ -34,12 +34,19 @@ class BackendClient:
             httpx.TransportError: On transport errors after max retries.
         """
         url = f"{self.base_url}/quotes/{reference}"
+        logger.info(f"Attempting PATCH {url} to backend")
+        start = time.monotonic()
+        last_exception = None
 
         for attempt in range(self.max_retries + 1):
             try:
                 response = self._client.patch(url, json=payload)
                 response.raise_for_status()
-                logger.info(f"PATCH {url} succeeded (HTTP {response.status_code})")
+                elapsed = time.monotonic() - start
+                logger.info(
+                    f"PATCH {url} succeeded (HTTP {response.status_code}) "
+                    f"in {elapsed:.2f}s"
+                )
                 return
             except httpx.HTTPStatusError as e:
                 status = e.response.status_code
@@ -49,20 +56,23 @@ class BackendClient:
                         f"{e.response.text}"
                     )
                     raise
-                self._handle_retry(url, attempt, f"HTTP {status}")
+                logger.warning(
+                    f"PATCH {url} returned HTTP {status}: {e.response.text[:500]}"
+                )
+                last_exception = e
             except httpx.TransportError as e:
-                self._handle_retry(url, attempt, f"transport error: {e}")
+                last_exception = e
 
-    def _handle_retry(self, url: str, attempt: int, reason: str) -> None:
-        """Sleep before the next retry, or log and re-raise if attempts exhausted."""
-        if attempt >= self.max_retries:
-            logger.error(
-                f"PATCH {url} failed with {reason} after {self.max_retries} retries"
-            )
-            raise
-        wait = 2**attempt
-        logger.warning(
-            f"PATCH {url} failed with {reason}, "
-            f"retrying in {wait}s (attempt {attempt + 1}/{self.max_retries})"
+            if attempt < self.max_retries:
+                wait = 2**attempt
+                logger.warning(
+                    f"PATCH {url} failed ({last_exception}), "
+                    f"retrying in {wait}s (attempt {attempt + 1}/{self.max_retries})"
+                )
+                time.sleep(wait)
+
+        elapsed = time.monotonic() - start
+        logger.error(
+            f"PATCH {url} failed after {self.max_retries} retries in {elapsed:.2f}s"
         )
-        time.sleep(wait)
+        raise last_exception
