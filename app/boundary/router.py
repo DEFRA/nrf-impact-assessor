@@ -10,6 +10,7 @@ import tempfile
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from typing import Annotated
 
 import geopandas as gpd
 from fastapi import APIRouter, Form, UploadFile
@@ -307,7 +308,7 @@ def _find_intersecting_edps(
 )
 async def check_boundary(
     geometry_file: UploadFile,
-    boundary_filename: str | None = Form(default=None),
+    boundary_filename: Annotated[str | None, Form()] = None,
 ):
     """Check whether an uploaded geometry intersects with EDP areas.
 
