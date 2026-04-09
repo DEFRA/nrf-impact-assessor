@@ -102,11 +102,19 @@ def _post_boundary(client, filename, content, content_type="application/json"):
     )
 
 
-def _post_boundary_file(client, filename, file_buf, content_type):
+def _post_boundary_file(
+    client, filename, file_buf, content_type, *, boundary_filename=None
+):
     """Post a file buffer to the /check-boundary endpoint."""
+    data = (
+        {"boundary_filename": boundary_filename}
+        if boundary_filename is not None
+        else None
+    )
     return client.post(
         "/check-boundary",
         files={"geometry_file": (filename, file_buf, content_type)},
+        data=data,
     )
 
 
@@ -146,6 +154,32 @@ def _make_shapefile_zip_with_crs(crs: str):
         with zipfile.ZipFile(zip_buf, "w") as zf:
             for f in Path(tmpdir).glob("boundary.*"):
                 zf.write(f, f.name)
+        zip_buf.seek(0)
+    return zip_buf
+
+
+def _make_multi_shapefile_zip() -> BytesIO:
+    """Create a zip containing two distinct complete shapefile bundles."""
+    gdf_a = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])],
+        crs="EPSG:4326",
+    )
+    gdf_b = gpd.GeoDataFrame(
+        {"id": [2]},
+        geometry=[Polygon([(10, 10), (11, 10), (11, 11), (10, 11)])],
+        crs="EPSG:4326",
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        gdf_a.to_file(tmp / "alpha.shp")
+        gdf_b.to_file(tmp / "zebra.shp")
+
+        zip_buf = BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as zf:
+            for pattern in ("alpha.*", "zebra.*"):
+                for f in tmp.glob(pattern):
+                    zf.write(f, f.name)
         zip_buf.seek(0)
     return zip_buf
 
@@ -279,6 +313,42 @@ class TestCheckBoundaryGeoJSON:
         assert "missing required companion files" in error
         assert ".dbf" in error
         assert ".shx" in error
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_multi_shapefile_zip_uses_explicit_boundary_filename(self, client):
+        """When the caller specifies a boundary_filename, that .shp is used."""
+        zip_buf = _make_multi_shapefile_zip()
+
+        response = _post_boundary_file(
+            client,
+            "multi.zip",
+            zip_buf,
+            "application/zip",
+            boundary_filename="zebra.shp",
+        )
+
+        assert response.status_code == 200
+        geom = response.json()["boundaryGeometryWgs84"]
+        # zebra.shp was written with coordinates around (10, 10)-(11, 11);
+        # alpha.shp used (0, 0)-(1, 1). Confirm we loaded zebra's geometry
+        # (tolerance covers round-trip reprojection artefacts).
+        xs = [pt[0] for pt in geom["coordinates"][0]]
+        assert min(xs) > 9
+
+    def test_multi_shapefile_zip_rejects_unknown_boundary_filename(self, client):
+        """An unknown boundary_filename should 400 rather than fall back."""
+        zip_buf = _make_multi_shapefile_zip()
+
+        response = _post_boundary_file(
+            client,
+            "multi.zip",
+            zip_buf,
+            "application/zip",
+            boundary_filename="no-such-file.shp",
+        )
+
+        assert response.status_code == 400
+        assert "not found" in response.json()["error"].lower()
 
 
 class TestCheckBoundaryGeometryValidation:
