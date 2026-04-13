@@ -14,7 +14,7 @@ from app.models.domain import (
 def _make_result(
     n_total: float = 10.505,
     p_total: float = 2.304,
-    nn_catchment: str = "Test Catchment",
+    nn_catchment: str | None = "Test Catchment",
     wwtw_id: int = 1,
 ):
     return ImpactAssessmentResult(
