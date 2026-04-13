@@ -9,10 +9,14 @@ from app.models.domain import (
     SpatialAssignment,
     WastewaterImpact,
 )
-from app.models.job import EdpInput, LevyRange
 
 
-def _make_result(n_total: float = 10.505, p_total: float = 2.304):
+def _make_result(
+    n_total: float = 10.505,
+    p_total: float = 2.304,
+    nn_catchment: str = "Test Catchment",
+    wwtw_id: int = 1,
+):
     return ImpactAssessmentResult(
         rlb_id=1,
         development=Development(
@@ -25,10 +29,10 @@ def _make_result(n_total: float = 10.505, p_total: float = 2.304):
             area_ha=0.5,
         ),
         spatial=SpatialAssignment(
-            wwtw_id=1,
+            wwtw_id=wwtw_id,
             wwtw_name="Test WwTW",
             lpa_name="Test LPA",
-            nn_catchment="Test Catchment",
+            nn_catchment=nn_catchment,
             area_in_nn_catchment_ha=0.5,
         ),
         land_use=LandUseImpact(
@@ -55,26 +59,16 @@ def _make_result(n_total: float = 10.505, p_total: float = 2.304):
     )
 
 
-def _make_edp(edp_id=1, edp_name="Somerset Levels", min_levy=1000.0, max_levy=2000.0):
-    return EdpInput(
-        edp_id=edp_id,
-        edp_name=edp_name,
-        edp_type="NUTRIENT",
-        levy_gbp=LevyRange(min=min_levy, max=max_levy),
-    )
-
-
-def test_build_payload_single_edp():
-    """Test building payload with one EDP and one result."""
+def test_build_payload_derives_edp_from_result():
+    """Test building payload derives EDP from nn_catchment in assessment result."""
     result = _make_result(n_total=10.505, p_total=2.304)
-    edp = _make_edp()
 
-    payload = build_quote_patch_payload([result], [edp])
+    payload = build_quote_patch_payload([result])
 
     assert len(payload["edps"]) == 1
     edp_out = payload["edps"][0]
     assert edp_out["edpId"] == 1
-    assert edp_out["edpName"] == "Somerset Levels"
+    assert edp_out["edpName"] == "Test Catchment"
     assert edp_out["edpType"] == "NUTRIENT"
     assert edp_out["impact"]["nitrogenTotal"]["amount"] == 10.51  # NOSONAR
     assert edp_out["impact"]["nitrogenTotal"]["unit"] == "mg/I TP"
@@ -82,41 +76,28 @@ def test_build_payload_single_edp():
     assert edp_out["impact"]["phosphorusTotal"]["amount"] == 2.30  # NOSONAR
     assert edp_out["impact"]["phosphorusTotal"]["unit"] == "mg/I TP"
     assert edp_out["impact"]["phosphorusTotal"]["band"] == {"min": 3, "max": 3}
-    assert edp_out["levyGbp"]["min"] == 1000.00  # NOSONAR
-    assert edp_out["levyGbp"]["max"] == 2000.00  # NOSONAR
-
-
-def test_build_payload_multiple_edps():
-    """Test building payload with multiple EDPs — all get same totals."""
-    result = _make_result(n_total=5.0, p_total=1.0)
-    edps = [
-        _make_edp(edp_id=1, edp_name="EDP A", min_levy=500, max_levy=1000),
-        _make_edp(edp_id=2, edp_name="EDP B", min_levy=750, max_levy=1500),
-    ]
-
-    payload = build_quote_patch_payload([result], edps)
-
-    assert len(payload["edps"]) == 2
-    assert payload["edps"][0]["edpId"] == 1
-    assert payload["edps"][1]["edpId"] == 2
-    # Both EDPs get the same impact totals
-    assert payload["edps"][0]["impact"]["nitrogenTotal"]["amount"] == 5.0  # NOSONAR
-    assert payload["edps"][1]["impact"]["nitrogenTotal"]["amount"] == 5.0  # NOSONAR
+    assert edp_out["levyGbp"]["min"] == 999
+    assert edp_out["levyGbp"]["max"] == 999
 
 
 def test_build_payload_empty_results():
     """Test building payload with no results returns empty edps."""
-    edp = _make_edp()
-    payload = build_quote_patch_payload([], [edp])
+    payload = build_quote_patch_payload([])
+    assert payload == {"edps": []}
+
+
+def test_build_payload_no_nn_catchment():
+    """Test building payload when result has no nn_catchment returns empty edps."""
+    result = _make_result(nn_catchment=None)
+    payload = build_quote_patch_payload([result])
     assert payload == {"edps": []}
 
 
 def test_build_payload_rounds_to_two_decimals():
     """Test that amounts are rounded to 2 decimal places."""
     result = _make_result(n_total=10.999, p_total=0.001)
-    edp = _make_edp()
 
-    payload = build_quote_patch_payload([result], [edp])
+    payload = build_quote_patch_payload([result])
 
     assert payload["edps"][0]["impact"]["nitrogenTotal"]["amount"] == 11.0  # NOSONAR
     assert payload["edps"][0]["impact"]["phosphorusTotal"]["amount"] == 0.0  # NOSONAR
