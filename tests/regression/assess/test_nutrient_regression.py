@@ -240,12 +240,20 @@ def _compare_csv_outputs(
         include=["object", "string"]
     ).columns.tolist()
 
-    # Compare string columns exactly (skip geometry and caller-specified columns)
+    # Compare string columns exactly (skip geometry, Name, and caller-specified columns)
+    # Name is an input label from the shapefile, not a computed output — shapefile
+    # DBF encoding differences can cause spurious mismatches.
     comparable_str_cols = [
-        c for c in string_cols if c != "geometry" and c not in skip_columns
+        c
+        for c in string_cols
+        if c not in {"geometry", "Name"} and c not in skip_columns
     ]
     for col in comparable_str_cols:
-        assert df1_sorted[col].equals(df2_sorted[col]), (
+        # Strip whitespace before comparing — shapefile DBF fields have fixed
+        # widths and may pad or truncate strings differently.
+        s1 = df1_sorted[col].fillna("").str.strip()
+        s2 = df2_sorted[col].fillna("").str.strip()
+        assert s1.equals(s2), (
             f"String column '{col}' mismatch between {label1} and {label2}"
         )
 

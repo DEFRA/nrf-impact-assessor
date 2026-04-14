@@ -46,7 +46,7 @@ from app.models.domain import (
     WastewaterImpact,
 )
 from app.models.enums import AssessmentType, SpatialLayerType
-from app.models.job import BoundaryGeojson, EdpInput, ImpactAssessmentJob, LevyRange
+from app.models.job import BoundaryGeojson, ImpactAssessmentJob
 from app.repositories.engine import create_db_engine
 from app.repositories.repository import Repository
 from app.runner.runner import run_assessment
@@ -459,13 +459,7 @@ def _build_stub_patch_payload() -> dict:
             phosphorus_total_kg_yr=5.67,
         ),
     )
-    stub_edp = EdpInput(
-        edp_id=1,
-        edp_name="Test EDP",
-        edp_type="NUTRIENT",
-        levy_gbp=LevyRange(min=100.0, max=200.0),
-    )
-    return build_quote_patch_payload([stub_result], [stub_edp])
+    return build_quote_patch_payload([stub_result])
 
 
 @router.post(

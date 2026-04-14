@@ -2,21 +2,19 @@
 
 from app.clients.bands import get_band
 from app.models.domain import ImpactAssessmentResult
-from app.models.job import EdpInput
 
 
 def build_quote_patch_payload(
     results: list[ImpactAssessmentResult],
-    edps: list[EdpInput],
 ) -> dict:
-    """Build the PATCH body for nrf-backend from assessment results and EDP metadata.
+    """Build the PATCH body for nrf-backend from assessment results.
 
-    Each EDP in the input gets the nitrogen/phosphorus totals from the first
-    assessment result. The levy amounts are passed through from the EDP input.
+    Derives EDP entries from the assessment results using nn_catchment as
+    the EDP name and a placeholder OID/levy until nrf-backend provides
+    real EDP metadata.
 
     Args:
         results: Assessment results (typically one per development).
-        edps: EDP metadata from the SQS job message.
 
     Returns:
         Dict matching the nrf-backend PATCH /quotes/{reference} schema.
@@ -30,30 +28,32 @@ def build_quote_patch_payload(
     n_band = get_band(n_total)
     p_band = get_band(p_total)
 
-    mapped_edps = []
-    for edp in edps:
-        mapped_edps.append(
-            {
-                "edpId": edp.edp_id,
-                "edpName": edp.edp_name,
-                "edpType": edp.edp_type,
-                "impact": {
-                    "nitrogenTotal": {
-                        "amount": n_total,
-                        "unit": "mg/I TP",
-                        "band": {"min": n_band, "max": n_band},
-                    },
-                    "phosphorusTotal": {
-                        "amount": p_total,
-                        "unit": "mg/I TP",
-                        "band": {"min": p_band, "max": p_band},
-                    },
+    nn_catchment = result.spatial.nn_catchment
+    if not nn_catchment:
+        return {"edps": []}
+
+    mapped_edps = [
+        {
+            "edpId": result.spatial.wwtw_id,
+            "edpName": nn_catchment,
+            "edpType": "NUTRIENT",
+            "impact": {
+                "nitrogenTotal": {
+                    "amount": n_total,
+                    "unit": "mg/I TP",
+                    "band": {"min": n_band, "max": n_band},
                 },
-                "levyGbp": {
-                    "min": round(edp.levy_gbp.min, 2),
-                    "max": round(edp.levy_gbp.max, 2),
+                "phosphorusTotal": {
+                    "amount": p_total,
+                    "unit": "mg/I TP",
+                    "band": {"min": p_band, "max": p_band},
                 },
-            }
-        )
+            },
+            "levyGbp": {
+                "min": 999,
+                "max": 999,
+            },
+        }
+    ]
 
     return {"edps": mapped_edps}

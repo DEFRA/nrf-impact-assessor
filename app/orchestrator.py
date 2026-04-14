@@ -182,22 +182,47 @@ class JobOrchestrator:
         Only fires when all conditions are met:
         - backend_client is configured
         - job has a quote reference
-        - job has EDP metadata
 
         Failures are logged but do not affect the job result.
         """
-        if not self.backend_client or not job.reference or not job.edps:
+        if not self.backend_client:
+            logger.error("Backend client not configured, skipping results callback")
+            return
+        if not job.reference:
+            logger.error("Job has no reference, skipping results callback")
             return
 
         try:
             domain_results = nutrient_adapter.to_domain_models(dataframes)
-            payload = build_quote_patch_payload(
-                results=domain_results["assessment_results"],
-                edps=job.edps,
-            )
+            results = domain_results["assessment_results"]
+            if not results:
+                logger.error(
+                    f"No assessment results for quote {job.reference}, "
+                    "cannot send PATCH callback"
+                )
+                return
+
+            result = results[0]
+            nn_catchment = result.spatial.nn_catchment
+            if not nn_catchment:
+                logger.error(
+                    f"No NN catchment found for quote {job.reference}, "
+                    "cannot derive EDP for PATCH callback"
+                )
+                return
+
+            payload = build_quote_patch_payload(results=results)
+            if not payload.get("edps"):
+                logger.error(
+                    f"Empty EDP payload for quote {job.reference}, "
+                    "skipping PATCH callback"
+                )
+                return
+
             self.backend_client.patch_quote(job.reference, payload)
             logger.info(
-                f"Sent assessment results to nrf-backend for quote {job.reference}"
+                f"Sent assessment results to nrf-backend for quote {job.reference} "
+                f"(edpId={payload['edps'][0]['edpId']}, edpName={nn_catchment})"
             )
         except Exception as e:
             logger.error(
