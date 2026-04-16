@@ -88,7 +88,6 @@ class TestWktEnqueueEndpoint:
         assert len(message["reference"]) == 10  # NRF-######
         assert message["developmentTypes"] == ["house"]
         assert message["residentialBuildingCount"] == 10
-        assert message["email"] == "test@example.com"
 
     def test_job_id_matches_reference_in_message(self, mock_boto3):
         response = client.post("/test/enqueue", json=_VALID_BODY)
@@ -148,14 +147,6 @@ class TestWktEnqueueEndpoint:
         )
         geom = message["boundaryGeojson"]["boundaryGeometryOriginal"]
         assert geom["type"] == "Polygon"
-
-    def test_default_developer_email(self, mock_boto3):
-        body = {k: v for k, v in _VALID_BODY.items() if k != "developer_email"}
-        client.post("/test/enqueue", json=body)
-        message = json.loads(
-            mock_boto3["sqs"].send_message.call_args.kwargs["MessageBody"]
-        )
-        assert message["email"] == "test@example.com"
 
     def test_boto3_uses_localstack_endpoint(self, mock_boto3):
         client.post("/test/enqueue", json=_VALID_BODY)

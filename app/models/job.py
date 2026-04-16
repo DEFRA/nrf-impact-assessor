@@ -1,6 +1,6 @@
 """Job message schema for SQS-based worker coordination."""
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 
 class IntersectingEdp(BaseModel):
@@ -19,24 +19,6 @@ class BoundaryGeojson(BaseModel):
     model_config = {"populate_by_name": True}
 
 
-class LevyRange(BaseModel):
-    """Levy amount range in GBP."""
-
-    min: float = Field(ge=0)
-    max: float = Field(ge=0)
-
-
-class EdpInput(BaseModel):
-    """EDP metadata from nrf-backend for result callback."""
-
-    edp_id: int = Field(alias="edpId")
-    edp_name: str = Field(alias="edpName")
-    edp_type: str = Field(default="NUTRIENT", alias="edpType")
-    levy_gbp: LevyRange = Field(alias="levyGbp")
-
-    model_config = {"populate_by_name": True}
-
-
 class ImpactAssessmentJob(BaseModel):
     """SQS message schema for impact assessment jobs.
 
@@ -49,7 +31,6 @@ class ImpactAssessmentJob(BaseModel):
     boundary_geojson: BoundaryGeojson | None = Field(
         default=None, alias="boundaryGeojson"
     )
-    boundary_entry_type: str | None = Field(default=None, alias="boundaryEntryType")
     development_types: list[str] | None = Field(default=None, alias="developmentTypes")
     residential_building_count: int | None = Field(
         default=None, ge=1, alias="residentialBuildingCount"
@@ -58,20 +39,12 @@ class ImpactAssessmentJob(BaseModel):
     waste_water_treatment_works_id: str | None = Field(
         default=None, alias="wasteWaterTreatmentWorksId"
     )
-    waste_water_treatment_works_name: str | None = Field(
-        default=None, alias="wasteWaterTreatmentWorksName"
-    )
-    email: EmailStr | None = Field(default=None)
-
-    # EDP metadata for result callback to nrf-backend
-    edps: list["EdpInput"] | None = Field(default=None)
 
     model_config = {
         "populate_by_name": True,
         "json_schema_extra": {
             "example": {
                 "reference": "NRF-000001",
-                "boundaryEntryType": "draw",
                 "boundaryGeojson": {
                     "boundaryGeometryOriginal": {
                         "type": "Polygon",
@@ -94,7 +67,6 @@ class ImpactAssessmentJob(BaseModel):
                 },
                 "developmentTypes": ["housing"],
                 "residentialBuildingCount": 25,
-                "email": "developer@example.com",
             }
         },
     }

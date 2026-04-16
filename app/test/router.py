@@ -352,7 +352,6 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
         ),
         development_types=[request.dwelling_type],
         residential_building_count=request.dwellings,
-        email=request.developer_email,
     )
 
     try:
