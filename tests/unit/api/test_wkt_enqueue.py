@@ -21,7 +21,6 @@ _VALID_BODY = {
     "dwelling_type": "house",
     "dwellings": 10,
     "name": "Test Development",
-    "developer_email": "test@example.com",
 }
 
 

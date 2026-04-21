@@ -158,7 +158,6 @@ class WktEnqueueRequest(BaseModel):
     dwelling_type: str = "house"
     dwellings: int = 1
     name: str = ""
-    developer_email: str = "test@example.com"
 
 
 class WktEnqueueResponse(BaseModel):

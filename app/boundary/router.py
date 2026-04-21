@@ -72,12 +72,40 @@ _WGS84_EXTENSIONS = frozenset({_EXT_GEOJSON, _EXT_JSON, _EXT_KML})
 _SUPPORTED_EXTENSIONS = frozenset({_EXT_ZIP, _EXT_GEOJSON, _EXT_JSON, _EXT_KML})
 
 
+def _compute_boundary_metadata(
+    geom_projected,  # Shapely geometry in a metric CRS (e.g. BNG/EPSG:27700)
+    geom_wgs84,  # Shapely geometry in WGS84
+) -> dict:
+    area_sqm = geom_projected.area
+    perimeter_m = geom_projected.length
+    centroid = geom_wgs84.centroid
+    minx, miny, maxx, maxy = geom_wgs84.bounds
+    return {
+        "area": {
+            "hectares": round(area_sqm / 10_000, 4),
+            "acres": round(area_sqm / 4_046.856, 4),
+        },
+        "perimeter": {
+            "kilometres": round(perimeter_m / 1_000, 4),
+            "miles": round(perimeter_m / 1_609.344, 4),
+        },
+        "centre": [round(centroid.y, 6), round(centroid.x, 6)],
+        "bounds": {
+            "topLeft": [round(maxy, 6), round(minx, 6)],
+            "topRight": [round(maxy, 6), round(maxx, 6)],
+            "bottomRight": [round(miny, 6), round(maxx, 6)],
+            "bottomLeft": [round(miny, 6), round(minx, 6)],
+        },
+    }
+
+
 def _make_response(
     status_code: int = 200,
     *,
     boundary_geometry_original: dict | None = None,
     boundary_geometry_wgs84: dict | None = None,
     intersecting_edps: list | None = None,
+    boundary_metadata: dict | None = None,
     error: str | None = None,
 ) -> JSONResponse:
     """Build a consistent JSON response for the check-boundary endpoint."""
@@ -87,6 +115,7 @@ def _make_response(
             "boundaryGeometryOriginal": boundary_geometry_original,
             "boundaryGeometryWgs84": boundary_geometry_wgs84,
             "intersectingEdps": intersecting_edps or [],
+            "boundaryMetadata": boundary_metadata,
             "error": error,
         },
     )
@@ -419,8 +448,11 @@ async def check_boundary(
         first_geom_wgs84 = polygons.geometry.iloc[0]
         boundary_geometry_wgs84 = first_geom_wgs84.__geo_interface__
 
+        boundary_metadata = _compute_boundary_metadata(first_geom, first_geom_wgs84)
+
     return _make_response(
         boundary_geometry_original=boundary_geometry_original,
         boundary_geometry_wgs84=boundary_geometry_wgs84,
         intersecting_edps=intersecting_edps,
+        boundary_metadata=boundary_metadata,
     )
