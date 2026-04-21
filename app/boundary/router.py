@@ -89,12 +89,12 @@ def _compute_boundary_metadata(
             "kilometres": round(perimeter_m / 1_000, 4),
             "miles": round(perimeter_m / 1_609.344, 4),
         },
-        "centre": [round(centroid.y, 6), round(centroid.x, 6)],
+        "centre": [round(centroid.x, 6), round(centroid.y, 6)],
         "bounds": {
-            "topLeft": [round(maxy, 6), round(minx, 6)],
-            "topRight": [round(maxy, 6), round(maxx, 6)],
-            "bottomRight": [round(miny, 6), round(maxx, 6)],
-            "bottomLeft": [round(miny, 6), round(minx, 6)],
+            "topLeft": [round(minx, 6), round(maxy, 6)],
+            "topRight": [round(maxx, 6), round(maxy, 6)],
+            "bottomRight": [round(maxx, 6), round(miny, 6)],
+            "bottomLeft": [round(minx, 6), round(miny, 6)],
         },
     }
 
