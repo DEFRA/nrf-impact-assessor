@@ -33,40 +33,28 @@ def test_quote_payload_from_camel_case():
     """Parse a quote payload with camelCase keys as sent by nrf-backend."""
     payload = {
         "reference": "NRF-000001",
-        "boundaryEntryType": "draw",
         "boundaryGeojson": SAMPLE_GEOJSON,
         "developmentTypes": ["housing"],
         "residentialBuildingCount": 25,
-        "email": "dev@example.com",
         "wasteWaterTreatmentWorksId": "123",
-        "wasteWaterTreatmentWorksName": "Some WwTW",
     }
 
     job = ImpactAssessmentJob.model_validate(payload)
 
     assert job.reference == "NRF-000001"
-    assert job.boundary_entry_type == "draw"
     assert job.boundary_geojson is not None
     assert job.boundary_geojson.boundary_geometry_original["type"] == "Polygon"
     assert len(job.boundary_geojson.intersecting_edps) == 1
     assert job.boundary_geojson.intersecting_edps[0].label == "River Wensum SAC"
     assert job.development_types == ["housing"]
     assert job.residential_building_count == 25
-    assert job.email == "dev@example.com"
     assert job.waste_water_treatment_works_id == "123"
-    assert job.waste_water_treatment_works_name == "Some WwTW"
 
 
 def test_quote_payload_invalid_reference():
     """Invalid reference format raises ValidationError."""
     with pytest.raises(ValidationError):
         ImpactAssessmentJob(reference="INVALID-REF")
-
-
-def test_quote_payload_invalid_email():
-    """Invalid email raises ValidationError."""
-    with pytest.raises(ValidationError):
-        ImpactAssessmentJob(reference="NRF-000001", email="not-an-email")
 
 
 def test_quote_payload_json_roundtrip():
@@ -76,7 +64,6 @@ def test_quote_payload_json_roundtrip():
         "boundaryGeojson": SAMPLE_GEOJSON,
         "developmentTypes": ["housing"],
         "residentialBuildingCount": 25,
-        "email": "dev@example.com",
     }
 
     job = ImpactAssessmentJob.model_validate(payload)

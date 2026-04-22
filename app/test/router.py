@@ -158,7 +158,6 @@ class WktEnqueueRequest(BaseModel):
     dwelling_type: str = "house"
     dwellings: int = 1
     name: str = ""
-    developer_email: str = "test@example.com"
 
 
 class WktEnqueueResponse(BaseModel):
@@ -352,7 +351,6 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
         ),
         development_types=[request.dwelling_type],
         residential_building_count=request.dwellings,
-        email=request.developer_email,
     )
 
     try:

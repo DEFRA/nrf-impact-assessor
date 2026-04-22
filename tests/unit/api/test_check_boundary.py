@@ -580,6 +580,14 @@ class TestCheckBoundaryEdpIntersection:
             "boundaryGeometryOriginal",
             "boundaryGeometryWgs84",
             "intersectingEdps",
+            "boundaryMetadata",
             "error",
         }
         assert body["error"] is None
+        assert body["boundaryMetadata"] is not None
+        assert set(body["boundaryMetadata"].keys()) == {
+            "area",
+            "perimeter",
+            "centre",
+            "bounds",
+        }
