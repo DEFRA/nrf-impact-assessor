@@ -392,7 +392,7 @@ class Repository:
             raw_sql = text("""
                 SELECT rlb_id, dwellings, name, dwelling_category, source,
                        crome_id, lu_curr_n_coeff, lu_curr_p_coeff,
-                       n_resi_coeff, p_resi_coeff, n2k_site_n,
+                       n_resi_coeff, p_resi_coeff, n2k_site_n, n2k_site_id,
                        area_in_nn_catchment_ha
                 FROM (
                     SELECT
@@ -400,6 +400,7 @@ class Repository:
                         c.crome_id, c.lu_curr_n_coeff, c.lu_curr_p_coeff,
                         c.n_resi_coeff, c.p_resi_coeff,
                         nn.attributes->>'N2K_Site_N' AS n2k_site_n,
+                        nn.attributes->>'N2K_Site_ID' AS n2k_site_id,
                         ST_Area(
                             ST_Intersection(ST_Intersection(r.geom, c.geometry), nn.geometry)
                         ) / 10000.0 AS area_in_nn_catchment_ha
@@ -437,6 +438,7 @@ class Repository:
             "n_resi_coeff",
             "p_resi_coeff",
             "n2k_site_n",
+            "n2k_site_id",
             "area_in_nn_catchment_ha",
         ]
         return pd.DataFrame(rows, columns=columns)

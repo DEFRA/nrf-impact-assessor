@@ -154,7 +154,7 @@ def sample_nn_catchments():
     """Create sample NN catchments."""
     return gpd.GeoDataFrame(
         {
-            "attributes": [{"N2K_Site_N": "Solent"}],
+            "attributes": [{"N2K_Site_N": "Solent", "N2K_Site_ID": "1"}],
             "geometry": [
                 Polygon(
                     [
@@ -215,6 +215,7 @@ _LU_COLUMNS = [
     "n_resi_coeff",
     "p_resi_coeff",
     "n2k_site_n",
+    "n2k_site_id",
     "area_in_nn_catchment_ha",
 ]
 
@@ -311,6 +312,9 @@ def _compute_land_use_intersection(input_gdf, coeff_layer, nn_layer) -> pd.DataF
     nn = nn_layer.copy()
     nn["n2k_site_n"] = nn["attributes"].apply(
         lambda x: x.get("N2K_Site_N") if isinstance(x, dict) else None
+    )
+    nn["n2k_site_id"] = nn["attributes"].apply(
+        lambda x: x.get("N2K_Site_ID") if isinstance(x, dict) else None
     )
     intersections = gpd.overlay(intersections, nn, how="intersection")
     if len(intersections) == 0:
