@@ -253,7 +253,7 @@ class ImpactAssessmentResult(BaseModel):
         Returns:
             True if development overlaps any NN catchment
         """
-        return self.spatial.nn_catchment is not None
+        return bool(self.catchment_impacts)
 
     def is_within_wwtw_catchment(self) -> bool:
         """Check if development is within a modeled WwTW catchment.

@@ -34,6 +34,7 @@ def test_development_model_validation():
 def test_assessment_result_model_helpers():
     """Test ImpactAssessmentResult helper methods."""
     from app.models import (
+        CatchmentImpact,
         Development,
         ImpactAssessmentResult,
         LandUseImpact,
@@ -70,6 +71,13 @@ def test_assessment_result_model_helpers():
         ),
         wastewater=None,
         total=NutrientImpact(nitrogen_total_kg_yr=9.0, phosphorus_total_kg_yr=1.8),
+        catchment_impacts=[
+            CatchmentImpact(
+                catchment_name="Test NN Catchment",
+                nitrogen_total_kg_yr=9.0,
+                phosphorus_total_kg_yr=1.8,
+            )
+        ],
     )
 
     # Test helper methods

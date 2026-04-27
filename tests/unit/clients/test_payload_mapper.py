@@ -29,6 +29,8 @@ def _make_result(
     p_total: float = 2.304,
     nn_catchment: str | None = "Test Catchment",
     wwtw_id: int = 1,
+    # When provided explicitly, keep nn_catchment in sync with catchment_impacts
+    # names for internal consistency (though the mapper only reads catchment_impacts).
     catchment_impacts: list[CatchmentImpact] | None = None,
 ):
     if catchment_impacts is None:
