@@ -10,6 +10,7 @@ from app.models.domain import (
     SpatialAssignment,
     WastewaterImpact,
 )
+from app.models.enums import EdpType
 
 
 def _make_catchment_impact(
@@ -31,8 +32,6 @@ def _make_result(
     p_total: float = 2.304,
     nn_catchment: str | None = "Test Catchment",
     wwtw_id: int = 1,
-    # When provided explicitly, keep nn_catchment in sync with catchment_impacts
-    # names for internal consistency (though the mapper only reads catchment_impacts).
     catchment_impacts: list[CatchmentImpact] | None = None,
 ):
     if catchment_impacts is None:
@@ -56,7 +55,6 @@ def _make_result(
             wwtw_id=wwtw_id,
             wwtw_name="Test WwTW",
             lpa_name="Test LPA",
-            nn_catchment=nn_catchment,
             area_in_nn_catchment_ha=0.5,
         ),
         land_use=LandUseImpact(
@@ -94,7 +92,7 @@ def test_build_payload_derives_edp_from_result():
     edp_out = payload["edps"][0]
     assert edp_out["edpId"] == 1
     assert edp_out["edpName"] == "Test Catchment"
-    assert edp_out["edpType"] == "NUTRIENT"
+    assert edp_out["edpType"] == EdpType.NUTRIENT.value
     assert edp_out["impact"]["nitrogenTotal"]["amount"] == 10.51  # NOSONAR
     assert edp_out["impact"]["nitrogenTotal"]["unit"] == "mg/I TP"
     assert edp_out["impact"]["nitrogenTotal"]["band"] == {"min": 4, "max": 4}
@@ -148,7 +146,7 @@ def test_build_payload_multiple_catchments():
     assert 10 in ids
     assert 11 in ids
     for edp in payload["edps"]:
-        assert edp["edpType"] == "NUTRIENT"
+        assert edp["edpType"] == EdpType.NUTRIENT.value
         assert edp["impact"]["nitrogenTotal"]["amount"] == 20.0  # NOSONAR
         assert edp["impact"]["phosphorusTotal"]["amount"] == 2.0  # NOSONAR
 

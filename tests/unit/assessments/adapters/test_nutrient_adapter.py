@@ -33,7 +33,7 @@ def sample_impact_summary():
                 "wwtw_subcatchment": "Test Subcatchment",
                 "majority_name": "Test LPA",
                 "nn_catchment": "Solent",
-                "nn_catchment_entries": "10:Solent",
+                "nn_catchment_entries": [(10, "Solent")],
                 "majority_opcat_name": "Operational Catchment",
                 "area_in_nn_catchment_ha": 0.3,
                 "n_lu_uplift": 5.25,
@@ -68,7 +68,7 @@ def sample_impact_summary():
                 "wwtw_subcatchment": None,
                 "majority_name": "Test LPA",
                 "nn_catchment": "Solent",
-                "nn_catchment_entries": "10:Solent",
+                "nn_catchment_entries": [(10, "Solent")],
                 "majority_opcat_name": "Operational Catchment",
                 "area_in_nn_catchment_ha": 0.8,
                 "n_lu_uplift": 12.50,
@@ -151,7 +151,6 @@ def test_spatial_assignment_conversion(sample_impact_summary):
     assert spatial.wwtw_name == "Test WwTW"
     assert spatial.wwtw_subcatchment == "Test Subcatchment"
     assert spatial.lpa_name == "Test LPA"
-    assert spatial.nn_catchment == "Solent"
     assert spatial.dev_subcatchment == "Operational Catchment"
     assert spatial.area_in_nn_catchment_ha == pytest.approx(0.3)
 
@@ -223,7 +222,6 @@ def test_handles_null_values(sample_impact_summary):
     assert spatial.wwtw_subcatchment is None
 
     # Other fields should still be populated
-    assert spatial.nn_catchment == "Solent"
     assert spatial.area_in_nn_catchment_ha == pytest.approx(0.8)
 
 
@@ -281,7 +279,7 @@ def test_handles_empty_name():
                 "wwtw_subcatchment": None,
                 "majority_name": "Test LPA",
                 "nn_catchment": "Solent",
-                "nn_catchment_entries": "10:Solent",
+                "nn_catchment_entries": [(10, "Solent")],
                 "majority_opcat_name": None,
                 "area_in_nn_catchment_ha": 0.3,
                 "n_lu_uplift": 5.25,
@@ -396,7 +394,7 @@ def test_catchment_impacts_multiple():
                 "wwtw_subcatchment": None,
                 "majority_name": "Test LPA",
                 "nn_catchment": "Broads; Wensum",
-                "nn_catchment_entries": "1:Broads;2:Wensum",
+                "nn_catchment_entries": [(1, "Broads"), (2, "Wensum")],
                 "majority_opcat_name": None,
                 "area_in_nn_catchment_ha": 0.4,
                 "n_lu_uplift": 5.0,

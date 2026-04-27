@@ -4,7 +4,7 @@ These enums are used for discriminator columns in unified models and
 will be created as PostgreSQL ENUM types via Alembic migrations.
 """
 
-from enum import Enum
+from enum import Enum, StrEnum
 
 
 class SpatialLayerType(Enum):
@@ -34,3 +34,10 @@ class AssessmentType(Enum):
 
     NUTRIENT = "nutrient"
     GCN = "gcn"
+
+
+class EdpType(StrEnum):
+    """EDP types sent to nrf-backend in the PATCH /quotes payload."""
+
+    NUTRIENT = "NUTRIENT"
+    GCN = "GCN"

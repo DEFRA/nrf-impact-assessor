@@ -59,7 +59,6 @@ def test_assessment_result_model_helpers():
             wwtw_name="Test WwTW",
             wwtw_subcatchment="Test Sub",
             lpa_name="Test LPA",
-            nn_catchment="Test NN Catchment",
             dev_subcatchment="Test Dev Sub",
             area_in_nn_catchment_ha=0.8,
         ),

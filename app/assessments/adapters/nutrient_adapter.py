@@ -76,33 +76,27 @@ def _build_wastewater(row: pd.Series) -> WastewaterImpact | None:
 
 
 def _build_catchment_impacts(row: pd.Series) -> list[CatchmentImpact]:
-    """Parse nn_catchment_entries paired id:name string into CatchmentImpact entries.
+    """Build one CatchmentImpact per (id, name) entry, carrying RLB-level totals.
 
-    Each catchment in the semicolon-separated string gets its own entry,
-    all carrying the same RLB-level total figures.
+    Per-catchment N/P split is not available without assessment changes, so all
+    entries for one RLB carry the same total values.
     """
-    entries = _opt_str(row, "nn_catchment_entries")
-    if not entries:
+    entries = row.get("nn_catchment_entries")
+    if not isinstance(entries, list) or not entries:
         return []
 
     n_total = float(row["n_total"])
     p_total = float(row["p_total"])
 
-    impacts: list[CatchmentImpact] = []
-    for entry in entries.split(";"):
-        entry = entry.strip()
-        if not entry or ":" not in entry:
-            continue
-        cid, name = entry.split(":", 1)
-        impacts.append(
-            CatchmentImpact(
-                catchment_id=int(cid),
-                catchment_name=name.strip(),
-                nitrogen_total_kg_yr=n_total,
-                phosphorus_total_kg_yr=p_total,
-            )
+    return [
+        CatchmentImpact(
+            catchment_id=cid,
+            catchment_name=name,
+            nitrogen_total_kg_yr=n_total,
+            phosphorus_total_kg_yr=p_total,
         )
-    return impacts
+        for cid, name in entries
+    ]
 
 
 def _row_to_result(row: pd.Series) -> ImpactAssessmentResult:
@@ -122,7 +116,6 @@ def _row_to_result(row: pd.Series) -> ImpactAssessmentResult:
         wwtw_name=_opt_str(row, "wwtw_name"),
         wwtw_subcatchment=_opt_str(row, "wwtw_subcatchment"),
         lpa_name=row["majority_name"],
-        nn_catchment=_opt_str(row, "nn_catchment"),
         dev_subcatchment=_opt_str(row, "majority_opcat_name"),
         area_in_nn_catchment_ha=_opt_float(row, "area_in_nn_catchment_ha"),
     )

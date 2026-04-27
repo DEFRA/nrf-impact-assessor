@@ -374,17 +374,6 @@ class NutrientAssessment:
         land_use_intersections["n_lu_uplift"] = n_uplift
         land_use_intersections["p_lu_uplift"] = p_uplift
 
-        valid_mask = (
-            land_use_intersections["n2k_site_id"].notna()
-            & land_use_intersections["n2k_site_n"].notna()
-        )
-        land_use_intersections["nn_catchment_entry"] = pd.NA
-        land_use_intersections.loc[valid_mask, "nn_catchment_entry"] = (
-            land_use_intersections.loc[valid_mask, "n2k_site_id"].astype(str)
-            + ":"
-            + land_use_intersections.loc[valid_mask, "n2k_site_n"]
-        )
-
         uplift_sum = (
             land_use_intersections.groupby("rlb_id")
             .agg(
@@ -393,17 +382,33 @@ class NutrientAssessment:
                     "n_lu_uplift": "sum",
                     "p_lu_uplift": "sum",
                     "n2k_site_n": lambda x: "; ".join(sorted(set(x.dropna()))),
-                    "nn_catchment_entry": lambda x: "; ".join(sorted(set(x.dropna()))),
                 }
             )
             .reset_index()
-            .rename(
-                columns={
-                    "n2k_site_n": "nn_catchment",
-                    "nn_catchment_entry": "nn_catchment_entries",
-                }
-            )
+            .rename(columns={"n2k_site_n": "nn_catchment"})
         )
+
+        with_nn = land_use_intersections.dropna(subset=["n2k_site_id", "n2k_site_n"])
+        if len(with_nn) > 0:
+            nn_entries = (
+                with_nn.groupby("rlb_id")
+                .apply(
+                    lambda g: sorted(
+                        {
+                            (int(s), n)
+                            for s, n in zip(
+                                g["n2k_site_id"], g["n2k_site_n"], strict=True
+                            )
+                        }
+                    ),
+                    include_groups=False,
+                )
+                .rename("nn_catchment_entries")
+                .reset_index()
+            )
+            uplift_sum = uplift_sum.merge(nn_entries, on="rlb_id", how="left")
+        else:
+            uplift_sum["nn_catchment_entries"] = None
 
         rlb_gdf = rlb_gdf.merge(uplift_sum, on="rlb_id", how="left")
 

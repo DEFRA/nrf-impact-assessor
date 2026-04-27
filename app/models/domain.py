@@ -48,7 +48,6 @@ class SpatialAssignment(BaseModel):
             catchments)
         wwtw_subcatchment: WwTW operational subcatchment
         lpa_name: Local Planning Authority name
-        nn_catchment: Nutrient Neutrality catchment name(s)
         dev_subcatchment: Development's operational subcatchment
         area_in_nn_catchment_ha: Area overlapping NN catchment in hectares
             (None if outside NN catchment)
@@ -62,9 +61,6 @@ class SpatialAssignment(BaseModel):
         default=None, description="WwTW operational subcatchment"
     )
     lpa_name: str = Field(description="Local Planning Authority name")
-    nn_catchment: str | None = Field(
-        default=None, description="Nutrient Neutrality catchment(s)"
-    )
     dev_subcatchment: str | None = Field(
         default=None, description="Development operational subcatchment"
     )

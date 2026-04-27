@@ -456,7 +456,6 @@ def _build_stub_patch_payload(stub_edps: int = 1) -> dict:
             wwtw_name="Test WwTW",
             wwtw_subcatchment="Test Subcatchment",
             lpa_name="Test LPA",
-            nn_catchment="Broads",
             dev_subcatchment="Test Dev Subcatchment",
             area_in_nn_catchment_ha=0.1,
         ),
@@ -532,7 +531,7 @@ def patch_backend(request: PatchBackendRequest) -> PatchBackendResponse:
         max_retries=backend_config.callback_max_retries,
     )
     url = f"{client.base_url}/quotes/{request.reference}"
-    logger.info(f"Test PATCH payload → {url} payload={payload}")
+    logger.info("Test PATCH payload → %s payload=%s", url, payload)
 
     try:
         client.patch_quote(request.reference, payload)

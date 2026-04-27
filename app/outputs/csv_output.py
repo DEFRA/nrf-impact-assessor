@@ -84,7 +84,10 @@ class CSVOutputStrategy:
             "Dev_Area_Ha": result.development.area_ha,
             # Spatial assignments
             "AreaInNNCatchment": result.spatial.area_in_nn_catchment_ha,
-            "NN_Catchment": result.spatial.nn_catchment,
+            "NN_Catchment": "; ".join(
+                ci.catchment_name for ci in result.catchment_impacts
+            )
+            or None,
             "Dev_SubCatchment": result.spatial.dev_subcatchment,
             "Majority_LPA": result.spatial.lpa_name,
             "Majority_WwTw_ID": result.spatial.wwtw_id,
