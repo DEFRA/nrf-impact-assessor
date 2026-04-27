@@ -662,3 +662,16 @@ def test_result_has_no_geometry_column(sample_rlb, mock_repository):
 
     # Geometry column should be dropped for output
     assert "geometry" not in result_df.columns
+
+
+def test_run_assessment_has_nn_catchment_entries(sample_rlb, mock_repository):
+    """impact_summary contains nn_catchment_entries as paired id:name string."""
+    assessment = NutrientAssessment(
+        sample_rlb, {"unique_ref": "20250115123456"}, mock_repository
+    )
+    results = assessment.run()
+    result_df = results["impact_summary"]
+
+    assert "nn_catchment_entries" in result_df.columns
+    # Sample fixture has N2K_Site_ID="1" and N2K_Site_N="Solent"
+    assert result_df["nn_catchment_entries"].iloc[0] == "1:Solent"
