@@ -58,19 +58,11 @@ def build_quote_patch_payload(
         for catchment in result.catchment_impacts
     ]
 
-    n_total = round(result.total.nitrogen_total_kg_yr, 2)
-    p_total = round(result.total.phosphorus_total_kg_yr, 2)
-
+    totals = _impact_block(
+        result.total.nitrogen_total_kg_yr, result.total.phosphorus_total_kg_yr
+    )
     return {
         "edps": edps,
-        "totalNitrogen": {
-            "amount": n_total,
-            "unit": "mg/I TP",
-            "band": {"min": get_band(n_total), "max": get_band(n_total)},
-        },
-        "totalPhosphorus": {
-            "amount": p_total,
-            "unit": "mg/I TP",
-            "band": {"min": get_band(p_total), "max": get_band(p_total)},
-        },
+        "totalNitrogen": totals["nitrogenTotal"],
+        "totalPhosphorus": totals["phosphorusTotal"],
     }

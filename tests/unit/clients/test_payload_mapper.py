@@ -147,6 +147,8 @@ def test_build_payload_multiple_catchments():
         assert edp["edpType"] == "NUTRIENT"
         assert edp["impact"]["nitrogenTotal"]["amount"] == 20.0  # NOSONAR
         assert edp["impact"]["phosphorusTotal"]["amount"] == 2.0  # NOSONAR
+    assert payload["totalNitrogen"]["amount"] == 20.0  # NOSONAR
+    assert payload["totalPhosphorus"]["amount"] == 2.0  # NOSONAR
 
 
 def test_build_payload_empty_results():
