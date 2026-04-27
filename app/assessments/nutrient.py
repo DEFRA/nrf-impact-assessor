@@ -340,6 +340,7 @@ class NutrientAssessment:
             rlb_gdf["n_lu_uplift"] = np.nan
             rlb_gdf["p_lu_uplift"] = np.nan
             rlb_gdf["nn_catchment"] = None
+            rlb_gdf["nn_catchment_entries"] = None
             rlb_gdf["n_lu_post_suds"] = 0.0
             rlb_gdf["p_lu_post_suds"] = 0.0
             return rlb_gdf
