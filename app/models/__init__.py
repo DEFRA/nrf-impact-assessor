@@ -1,6 +1,7 @@
 """Domain models for nutrient impact assessment."""
 
 from app.models.domain import (
+    CatchmentImpact,
     Development,
     ImpactAssessmentResult,
     LandUseImpact,
@@ -16,4 +17,5 @@ __all__ = [
     "WastewaterImpact",
     "NutrientImpact",
     "ImpactAssessmentResult",
+    "CatchmentImpact",
 ]

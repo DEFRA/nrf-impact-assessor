@@ -80,7 +80,7 @@ def test_assessment_result_model_helpers():
 
 def test_catchment_impact_model():
     """Test CatchmentImpact model construction and immutability."""
-    from app.models.domain import CatchmentImpact
+    from app.models import CatchmentImpact
 
     ci = CatchmentImpact(
         catchment_name="Broads",
@@ -98,7 +98,7 @@ def test_catchment_impact_model():
 
 def test_impact_assessment_result_has_catchment_impacts():
     """Test ImpactAssessmentResult has catchment_impacts defaulting to empty list."""
-    from app.models.domain import (
+    from app.models import (
         CatchmentImpact,
         Development,
         ImpactAssessmentResult,
