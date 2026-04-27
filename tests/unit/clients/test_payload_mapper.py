@@ -16,8 +16,10 @@ def _make_catchment_impact(
     name: str = "Test Catchment",
     n: float = 10.505,
     p: float = 2.304,
+    catchment_id: int = 1,
 ) -> CatchmentImpact:
     return CatchmentImpact(
+        catchment_id=catchment_id,
         catchment_name=name,
         nitrogen_total_kg_yr=n,
         phosphorus_total_kg_yr=p,
@@ -103,20 +105,15 @@ def test_build_payload_derives_edp_from_result():
     assert edp_out["levyGbp"]["max"] == 999
 
 
-def test_build_payload_includes_top_level_totals():
-    """Payload includes totalNitrogen and totalPhosphorus at the top level."""
+def test_build_payload_excludes_top_level_totals():
+    """Payload must not include totalNitrogen/totalPhosphorus (rejected by backend)."""
     result = _make_result(n_total=10.505, p_total=2.304)
 
     payload = build_quote_patch_payload([result])
 
-    assert "totalNitrogen" in payload
-    assert "totalPhosphorus" in payload
-    assert payload["totalNitrogen"]["amount"] == 10.51  # NOSONAR
-    assert payload["totalNitrogen"]["unit"] == "mg/I TP"
-    assert payload["totalNitrogen"]["band"] == {"min": 4, "max": 4}
-    assert payload["totalPhosphorus"]["amount"] == 2.30  # NOSONAR
-    assert payload["totalPhosphorus"]["unit"] == "mg/I TP"
-    assert payload["totalPhosphorus"]["band"] == {"min": 3, "max": 3}
+    assert "totalNitrogen" not in payload
+    assert "totalPhosphorus" not in payload
+    assert set(payload.keys()) == {"edps"}
 
 
 def test_build_payload_multiple_catchments():
@@ -127,11 +124,13 @@ def test_build_payload_multiple_catchments():
         nn_catchment=None,
         catchment_impacts=[
             CatchmentImpact(
+                catchment_id=10,
                 catchment_name="Broads",
                 nitrogen_total_kg_yr=20.0,
                 phosphorus_total_kg_yr=2.0,
             ),
             CatchmentImpact(
+                catchment_id=11,
                 catchment_name="Wensum",
                 nitrogen_total_kg_yr=20.0,
                 phosphorus_total_kg_yr=2.0,
@@ -145,12 +144,13 @@ def test_build_payload_multiple_catchments():
     names = [edp["edpName"] for edp in payload["edps"]]
     assert "Broads" in names
     assert "Wensum" in names
+    ids = [edp["edpId"] for edp in payload["edps"]]
+    assert 10 in ids
+    assert 11 in ids
     for edp in payload["edps"]:
         assert edp["edpType"] == "NUTRIENT"
         assert edp["impact"]["nitrogenTotal"]["amount"] == 20.0  # NOSONAR
         assert edp["impact"]["phosphorusTotal"]["amount"] == 2.0  # NOSONAR
-    assert payload["totalNitrogen"]["amount"] == 20.0  # NOSONAR
-    assert payload["totalPhosphorus"]["amount"] == 2.0  # NOSONAR
 
 
 def test_build_payload_empty_results():
@@ -174,5 +174,3 @@ def test_build_payload_rounds_to_two_decimals():
 
     assert payload["edps"][0]["impact"]["nitrogenTotal"]["amount"] == 11.0  # NOSONAR
     assert payload["edps"][0]["impact"]["phosphorusTotal"]["amount"] == 0.0  # NOSONAR
-    assert payload["totalNitrogen"]["amount"] == 11.0  # NOSONAR
-    assert payload["totalPhosphorus"]["amount"] == 0.0  # NOSONAR
