@@ -198,6 +198,25 @@ class NutrientImpact(BaseModel):
     )
 
 
+class CatchmentImpact(BaseModel):
+    """Per-catchment nutrient impact for a single NN catchment.
+
+    Carries the RLB-level total figures for each catchment the development overlaps.
+    Per-catchment N/P split is not available without assessment changes, so all
+    catchment entries for one RLB carry the same total values.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    catchment_name: str = Field(description="NN catchment name")
+    nitrogen_total_kg_yr: float = Field(
+        description="Nitrogen total with buffer (kg/year)"
+    )
+    phosphorus_total_kg_yr: float = Field(
+        description="Phosphorus total with buffer (kg/year)"
+    )
+
+
 class ImpactAssessmentResult(BaseModel):
     """Complete impact assessment result for a development.
 
@@ -210,6 +229,7 @@ class ImpactAssessmentResult(BaseModel):
         land_use: Land use change impacts
         wastewater: Wastewater treatment impacts (None if outside WwTW catchments)
         total: Total nutrient impacts with buffer
+        catchment_impacts: Per-catchment EDP entries; empty if outside all NN catchments
     """
 
     model_config = ConfigDict(frozen=True)
@@ -222,6 +242,10 @@ class ImpactAssessmentResult(BaseModel):
         default=None, description="None if outside WwTW catchments"
     )
     total: NutrientImpact
+    catchment_impacts: list[CatchmentImpact] = Field(
+        default_factory=list,
+        description="Per-catchment EDP entries; empty if outside all NN catchments",
+    )
 
     def is_within_nn_catchment(self) -> bool:
         """Check if development is within a Nutrient Neutrality catchment.

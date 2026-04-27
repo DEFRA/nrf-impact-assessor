@@ -76,3 +76,66 @@ def test_assessment_result_model_helpers():
     assert result.is_within_nn_catchment() is True
     assert result.is_within_wwtw_catchment() is False  # wastewater is None
     assert result.requires_assessment() is True
+
+
+def test_catchment_impact_model():
+    """Test CatchmentImpact model construction and immutability."""
+    from app.models.domain import CatchmentImpact
+
+    ci = CatchmentImpact(
+        catchment_name="Broads",
+        nitrogen_total_kg_yr=10.5,
+        phosphorus_total_kg_yr=2.3,
+    )
+    assert ci.catchment_name == "Broads"
+    assert ci.nitrogen_total_kg_yr == pytest.approx(10.5)
+    assert ci.phosphorus_total_kg_yr == pytest.approx(2.3)
+
+    # Frozen model — mutation must raise
+    with pytest.raises((ValueError, AttributeError)):
+        ci.catchment_name = "Wensum"
+
+
+def test_impact_assessment_result_has_catchment_impacts():
+    """Test ImpactAssessmentResult has catchment_impacts defaulting to empty list."""
+    from app.models.domain import (
+        CatchmentImpact,
+        Development,
+        ImpactAssessmentResult,
+        LandUseImpact,
+        NutrientImpact,
+        SpatialAssignment,
+    )
+
+    result = ImpactAssessmentResult(
+        rlb_id=1,
+        development=Development(
+            id="d1",
+            name="D",
+            dwelling_category="housing",
+            source="web",
+            dwellings=5,
+            area_m2=1000.0,
+            area_ha=0.1,
+        ),
+        spatial=SpatialAssignment(wwtw_id=1, lpa_name="LPA"),
+        land_use=LandUseImpact(),
+        total=NutrientImpact(nitrogen_total_kg_yr=10.0, phosphorus_total_kg_yr=1.0),
+    )
+    # Default is empty list
+    assert result.catchment_impacts == []
+
+    # Can be populated
+    result2 = result.model_copy(
+        update={
+            "catchment_impacts": [
+                CatchmentImpact(
+                    catchment_name="Broads",
+                    nitrogen_total_kg_yr=10.0,
+                    phosphorus_total_kg_yr=1.0,
+                )
+            ]
+        }
+    )
+    assert len(result2.catchment_impacts) == 1
+    assert result2.catchment_impacts[0].catchment_name == "Broads"
