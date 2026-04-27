@@ -203,8 +203,7 @@ class JobOrchestrator:
                 return
 
             result = results[0]
-            nn_catchment = result.spatial.nn_catchment
-            if not nn_catchment:
+            if not result.catchment_impacts:
                 logger.error(
                     f"No NN catchment found for quote {job.reference}, "
                     "cannot derive EDP for PATCH callback"
@@ -220,9 +219,11 @@ class JobOrchestrator:
                 return
 
             self.backend_client.patch_quote(job.reference, payload)
+            edp_count = len(payload["edps"])
+            edp_names = ", ".join(e["edpName"] for e in payload["edps"])
             logger.info(
                 f"Sent assessment results to nrf-backend for quote {job.reference} "
-                f"(edpId={payload['edps'][0]['edpId']}, edpName={nn_catchment})"
+                f"({edp_count} EDP(s): {edp_names})"
             )
         except Exception as e:
             logger.error(
