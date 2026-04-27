@@ -8,6 +8,7 @@ import pandas as pd
 
 from app.config import RequiredColumns
 from app.models.domain import (
+    CatchmentImpact,
     Development,
     ImpactAssessmentResult,
     LandUseImpact,
@@ -74,6 +75,30 @@ def _build_wastewater(row: pd.Series) -> WastewaterImpact | None:
     )
 
 
+def _build_catchment_impacts(row: pd.Series) -> list[CatchmentImpact]:
+    """Parse nn_catchment string into CatchmentImpact entries.
+
+    Each catchment in the semicolon-separated string gets its own entry,
+    all carrying the same RLB-level total figures.
+    """
+    nn_catchment = _opt_str(row, "nn_catchment")
+    if not nn_catchment:
+        return []
+
+    n_total = float(row["n_total"])
+    p_total = float(row["p_total"])
+
+    return [
+        CatchmentImpact(
+            catchment_name=name.strip(),
+            nitrogen_total_kg_yr=n_total,
+            phosphorus_total_kg_yr=p_total,
+        )
+        for name in nn_catchment.split(";")
+        if name.strip()
+    ]
+
+
 def _row_to_result(row: pd.Series) -> ImpactAssessmentResult:
     """Convert a single DataFrame row to ImpactAssessmentResult."""
     development = Development(
@@ -115,4 +140,5 @@ def _row_to_result(row: pd.Series) -> ImpactAssessmentResult:
         land_use=land_use,
         wastewater=_build_wastewater(row),
         total=total,
+        catchment_impacts=_build_catchment_impacts(row),
     )
