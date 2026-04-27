@@ -373,6 +373,17 @@ class NutrientAssessment:
         land_use_intersections["n_lu_uplift"] = n_uplift
         land_use_intersections["p_lu_uplift"] = p_uplift
 
+        valid_mask = (
+            land_use_intersections["n2k_site_id"].notna()
+            & land_use_intersections["n2k_site_n"].notna()
+        )
+        land_use_intersections["nn_catchment_entry"] = pd.NA
+        land_use_intersections.loc[valid_mask, "nn_catchment_entry"] = (
+            land_use_intersections.loc[valid_mask, "n2k_site_id"].astype(str)
+            + ":"
+            + land_use_intersections.loc[valid_mask, "n2k_site_n"]
+        )
+
         uplift_sum = (
             land_use_intersections.groupby("rlb_id")
             .agg(
@@ -381,10 +392,16 @@ class NutrientAssessment:
                     "n_lu_uplift": "sum",
                     "p_lu_uplift": "sum",
                     "n2k_site_n": lambda x: "; ".join(sorted(set(x.dropna()))),
+                    "nn_catchment_entry": lambda x: "; ".join(sorted(set(x.dropna()))),
                 }
             )
             .reset_index()
-            .rename(columns={"n2k_site_n": "nn_catchment"})
+            .rename(
+                columns={
+                    "n2k_site_n": "nn_catchment",
+                    "nn_catchment_entry": "nn_catchment_entries",
+                }
+            )
         )
 
         rlb_gdf = rlb_gdf.merge(uplift_sum, on="rlb_id", how="left")
