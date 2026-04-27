@@ -21,9 +21,9 @@ def _impact_block(n_total: float, p_total: float) -> dict:
     }
 
 
-def _edp_entry(wwtw_id: int, catchment: CatchmentImpact) -> dict:
+def _edp_entry(catchment: CatchmentImpact) -> dict:
     return {
-        "edpId": wwtw_id,
+        "edpId": catchment.catchment_id,
         "edpName": catchment.catchment_name,
         "edpType": "NUTRIENT",
         "impact": _impact_block(
@@ -53,16 +53,6 @@ def build_quote_patch_payload(
     if not result.catchment_impacts:
         return {"edps": []}
 
-    edps = [
-        _edp_entry(result.spatial.wwtw_id, catchment)
-        for catchment in result.catchment_impacts
-    ]
+    edps = [_edp_entry(catchment) for catchment in result.catchment_impacts]
 
-    totals = _impact_block(
-        result.total.nitrogen_total_kg_yr, result.total.phosphorus_total_kg_yr
-    )
-    return {
-        "edps": edps,
-        "totalNitrogen": totals["nitrogenTotal"],
-        "totalPhosphorus": totals["phosphorusTotal"],
-    }
+    return {"edps": edps}

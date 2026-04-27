@@ -27,7 +27,7 @@ import geopandas as gpd
 import httpx
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from shapely import wkt as shapely_wkt
 from shapely.geometry import mapping
 from sqlalchemy import func, select, text
@@ -38,6 +38,7 @@ from app.clients.payload_mapper import build_quote_patch_payload
 from app.config import AWSConfig, BackendConfig, DatabaseSettings
 from app.models.db import CoefficientLayer, EdpBoundaryLayer, LookupTable, SpatialLayer
 from app.models.domain import (
+    CatchmentImpact,
     Development,
     ImpactAssessmentResult,
     LandUseImpact,
@@ -388,12 +389,19 @@ class PatchBackendRequest(BaseModel):
 
     reference: str = "NRF-000001"
     payload: dict | None = None
+    stub_edps: int = Field(
+        default=1,
+        ge=1,
+        le=10,
+        description="Number of stub EDP catchments to generate when payload is omitted",
+    )
 
     model_config = {
         "json_schema_extra": {
             "example": {
                 "reference": "NRF-000001",
                 "payload": None,
+                "stub_edps": 1,
             }
         }
     }
@@ -407,12 +415,31 @@ class PatchBackendResponse(BaseModel):
     status: str
 
 
-def _build_stub_patch_payload() -> dict:
-    """Build a stub PATCH payload via the real payload_mapper.
+_STUB_CATCHMENTS = [
+    (1, "Broads", 12.34, 5.67),
+    (2, "Wensum", 30.00, 8.10),
+    (3, "Norfolk Fens", 18.75, 3.22),
+    (4, "Stour", 9.50, 2.40),
+    (5, "Ant", 6.00, 1.80),
+    (6, "Yare", 14.20, 4.55),
+    (7, "Waveney", 22.60, 6.30),
+    (8, "Thurne", 5.40, 1.10),
+    (9, "Bure", 11.90, 3.70),
+    (10, "Chet", 3.80, 0.95),
+]
 
-    Routes through build_quote_patch_payload with a fully-typed
-    ImpactAssessmentResult so the complete domain model chain is exercised.
-    """
+
+def _build_stub_patch_payload(stub_edps: int = 1) -> dict:
+    """Build a stub PATCH payload via the real payload_mapper."""
+    catchments = [
+        CatchmentImpact(
+            catchment_id=cid,
+            catchment_name=name,
+            nitrogen_total_kg_yr=n,
+            phosphorus_total_kg_yr=p,
+        )
+        for cid, name, n, p in _STUB_CATCHMENTS[:stub_edps]
+    ]
     stub_result = ImpactAssessmentResult(
         rlb_id=1,
         development=Development(
@@ -452,10 +479,8 @@ def _build_stub_patch_payload() -> dict:
             nitrogen_perm_kg_yr=1.93,
             phosphorus_perm_kg_yr=0.39,
         ),
-        total=NutrientImpact(
-            nitrogen_total_kg_yr=12.34,
-            phosphorus_total_kg_yr=5.67,
-        ),
+        total=NutrientImpact(nitrogen_total_kg_yr=0.0, phosphorus_total_kg_yr=0.0),
+        catchment_impacts=catchments,
     )
     return build_quote_patch_payload([stub_result])
 
@@ -496,7 +521,9 @@ def patch_backend(request: PatchBackendRequest) -> PatchBackendResponse:
         )
 
     payload = (
-        request.payload if request.payload is not None else _build_stub_patch_payload()
+        request.payload
+        if request.payload is not None
+        else _build_stub_patch_payload(request.stub_edps)
     )
 
     client = BackendClient(
@@ -505,7 +532,7 @@ def patch_backend(request: PatchBackendRequest) -> PatchBackendResponse:
         max_retries=backend_config.callback_max_retries,
     )
     url = f"{client.base_url}/quotes/{request.reference}"
-    logger.info(f"Test PATCH → {url}")
+    logger.info(f"Test PATCH payload → {url} payload={payload}")
 
     try:
         client.patch_quote(request.reference, payload)
