@@ -400,7 +400,7 @@ class Repository:
                         c.crome_id, c.lu_curr_n_coeff, c.lu_curr_p_coeff,
                         c.n_resi_coeff, c.p_resi_coeff,
                         nn.attributes->>'N2K_Site_N' AS n2k_site_n,
-                        nn.attributes->>'N2K_Site_ID' AS n2k_site_id,
+                        nn.attributes->>'OID' AS n2k_site_id,
                         ST_Area(
                             ST_Intersection(ST_Intersection(r.geom, c.geometry), nn.geometry)
                         ) / 10000.0 AS area_in_nn_catchment_ha

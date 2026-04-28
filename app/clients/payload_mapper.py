@@ -25,11 +25,12 @@ def _edp_entry(catchment: CatchmentImpact) -> dict:
     return {
         "edpId": catchment.catchment_id,
         "edpName": catchment.catchment_name,
-        "edpType": EdpType.NUTRIENT.value,
+        "edpType": EdpType.NUTRIENT,
         "impact": _impact_block(
             catchment.nitrogen_total_kg_yr,
             catchment.phosphorus_total_kg_yr,
         ),
+        # TODO: replace with real levy once finance calculation in place
         "levyGbp": {"min": 999, "max": 999},
     }
 

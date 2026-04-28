@@ -72,7 +72,7 @@ def test_assessment_result_model_helpers():
         total=NutrientImpact(nitrogen_total_kg_yr=9.0, phosphorus_total_kg_yr=1.8),
         catchment_impacts=[
             CatchmentImpact(
-                catchment_id=1,
+                catchment_id="1",
                 catchment_name="Test NN Catchment",
                 nitrogen_total_kg_yr=9.0,
                 phosphorus_total_kg_yr=1.8,
@@ -91,12 +91,12 @@ def test_catchment_impact_model():
     from app.models import CatchmentImpact
 
     ci = CatchmentImpact(
-        catchment_id=42,
+        catchment_id="42",
         catchment_name="Broads",
         nitrogen_total_kg_yr=10.5,
         phosphorus_total_kg_yr=2.3,
     )
-    assert ci.catchment_id == 42
+    assert ci.catchment_id == "42"
     assert ci.catchment_name == "Broads"
     assert ci.nitrogen_total_kg_yr == pytest.approx(10.5)
     assert ci.phosphorus_total_kg_yr == pytest.approx(2.3)
@@ -139,7 +139,7 @@ def test_impact_assessment_result_has_catchment_impacts():
         update={
             "catchment_impacts": [
                 CatchmentImpact(
-                    catchment_id=1,
+                    catchment_id="1",
                     catchment_name="Broads",
                     nitrogen_total_kg_yr=10.0,
                     phosphorus_total_kg_yr=1.0,

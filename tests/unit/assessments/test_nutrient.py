@@ -154,7 +154,7 @@ def sample_nn_catchments():
     """Create sample NN catchments."""
     return gpd.GeoDataFrame(
         {
-            "attributes": [{"N2K_Site_N": "Solent", "N2K_Site_ID": "1"}],
+            "attributes": [{"N2K_Site_N": "Solent", "OID": "1"}],
             "geometry": [
                 Polygon(
                     [
@@ -314,7 +314,7 @@ def _compute_land_use_intersection(input_gdf, coeff_layer, nn_layer) -> pd.DataF
         lambda x: x.get("N2K_Site_N") if isinstance(x, dict) else None
     )
     nn["n2k_site_id"] = nn["attributes"].apply(
-        lambda x: x.get("N2K_Site_ID") if isinstance(x, dict) else None
+        lambda x: x.get("OID") if isinstance(x, dict) else None
     )
     intersections = gpd.overlay(intersections, nn, how="intersection")
     if len(intersections) == 0:
@@ -673,5 +673,5 @@ def test_run_assessment_has_nn_catchment_entries(sample_rlb, mock_repository):
     result_df = results["impact_summary"]
 
     assert "nn_catchment_entries" in result_df.columns
-    # Sample fixture has N2K_Site_ID="1" and N2K_Site_N="Solent"
-    assert result_df["nn_catchment_entries"].iloc[0] == [(1, "Solent")]
+    # Sample fixture has OID="1" and N2K_Site_N="Solent"
+    assert result_df["nn_catchment_entries"].iloc[0] == [("1", "Solent")]

@@ -204,7 +204,7 @@ class CatchmentImpact(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    catchment_id: int = Field(description="NN catchment EDP ID (N2K_Site_ID)")
+    catchment_id: str = Field(description="NN catchment EDP ID (OID)")
     catchment_name: str = Field(description="NN catchment name")
     nitrogen_total_kg_yr: float = Field(
         description="Nitrogen total with buffer (kg/year)"

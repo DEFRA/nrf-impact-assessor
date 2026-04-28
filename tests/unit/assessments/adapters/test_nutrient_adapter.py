@@ -33,7 +33,7 @@ def sample_impact_summary():
                 "wwtw_subcatchment": "Test Subcatchment",
                 "majority_name": "Test LPA",
                 "nn_catchment": "Solent",
-                "nn_catchment_entries": [(10, "Solent")],
+                "nn_catchment_entries": [("10", "Solent")],
                 "majority_opcat_name": "Operational Catchment",
                 "area_in_nn_catchment_ha": 0.3,
                 "n_lu_uplift": 5.25,
@@ -68,7 +68,7 @@ def sample_impact_summary():
                 "wwtw_subcatchment": None,
                 "majority_name": "Test LPA",
                 "nn_catchment": "Solent",
-                "nn_catchment_entries": [(10, "Solent")],
+                "nn_catchment_entries": [("10", "Solent")],
                 "majority_opcat_name": "Operational Catchment",
                 "area_in_nn_catchment_ha": 0.8,
                 "n_lu_uplift": 12.50,
@@ -279,7 +279,7 @@ def test_handles_empty_name():
                 "wwtw_subcatchment": None,
                 "majority_name": "Test LPA",
                 "nn_catchment": "Solent",
-                "nn_catchment_entries": [(10, "Solent")],
+                "nn_catchment_entries": [("10", "Solent")],
                 "majority_opcat_name": None,
                 "area_in_nn_catchment_ha": 0.3,
                 "n_lu_uplift": 5.25,
@@ -366,7 +366,7 @@ def test_catchment_impacts_single(sample_impact_summary):
     impacts = result["assessment_results"][0].catchment_impacts
     assert len(impacts) == 1
     assert isinstance(impacts[0], CatchmentImpact)
-    assert impacts[0].catchment_id == 10
+    assert impacts[0].catchment_id == "10"
     assert impacts[0].catchment_name == "Solent"
     assert impacts[0].nitrogen_total_kg_yr == pytest.approx(18.35)
     assert impacts[0].phosphorus_total_kg_yr == pytest.approx(1.75)
@@ -394,7 +394,7 @@ def test_catchment_impacts_multiple():
                 "wwtw_subcatchment": None,
                 "majority_name": "Test LPA",
                 "nn_catchment": "Broads; Wensum",
-                "nn_catchment_entries": [(1, "Broads"), (2, "Wensum")],
+                "nn_catchment_entries": [("1", "Broads"), ("2", "Wensum")],
                 "majority_opcat_name": None,
                 "area_in_nn_catchment_ha": 0.4,
                 "n_lu_uplift": 5.0,
@@ -426,8 +426,8 @@ def test_catchment_impacts_multiple():
     ids = [ci.catchment_id for ci in impacts]
     assert "Broads" in names
     assert "Wensum" in names
-    assert 1 in ids
-    assert 2 in ids
+    assert "1" in ids
+    assert "2" in ids
     for ci in impacts:
         assert isinstance(ci, CatchmentImpact)
         assert ci.nitrogen_total_kg_yr == pytest.approx(20.0)

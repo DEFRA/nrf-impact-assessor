@@ -395,7 +395,7 @@ class NutrientAssessment:
                 .apply(
                     lambda g: sorted(
                         {
-                            (int(s), n)
+                            (s, n)
                             for s, n in zip(
                                 g["n2k_site_id"], g["n2k_site_n"], strict=True
                             )

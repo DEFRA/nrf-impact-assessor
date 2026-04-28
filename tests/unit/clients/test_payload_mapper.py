@@ -17,7 +17,7 @@ def _make_catchment_impact(
     name: str = "Test Catchment",
     n: float = 10.505,
     p: float = 2.304,
-    catchment_id: int = 1,
+    catchment_id: str = "1",
 ) -> CatchmentImpact:
     return CatchmentImpact(
         catchment_id=catchment_id,
@@ -90,7 +90,7 @@ def test_build_payload_derives_edp_from_result():
 
     assert len(payload["edps"]) == 1
     edp_out = payload["edps"][0]
-    assert edp_out["edpId"] == 1
+    assert edp_out["edpId"] == "1"
     assert edp_out["edpName"] == "Test Catchment"
     assert edp_out["edpType"] == EdpType.NUTRIENT.value
     assert edp_out["impact"]["nitrogenTotal"]["amount"] == 10.51  # NOSONAR
@@ -122,13 +122,13 @@ def test_build_payload_multiple_catchments():
         nn_catchment=None,
         catchment_impacts=[
             CatchmentImpact(
-                catchment_id=10,
+                catchment_id="10",
                 catchment_name="Broads",
                 nitrogen_total_kg_yr=20.0,
                 phosphorus_total_kg_yr=2.0,
             ),
             CatchmentImpact(
-                catchment_id=11,
+                catchment_id="11",
                 catchment_name="Wensum",
                 nitrogen_total_kg_yr=20.0,
                 phosphorus_total_kg_yr=2.0,
@@ -143,8 +143,8 @@ def test_build_payload_multiple_catchments():
     assert "Broads" in names
     assert "Wensum" in names
     ids = [edp["edpId"] for edp in payload["edps"]]
-    assert 10 in ids
-    assert 11 in ids
+    assert "10" in ids
+    assert "11" in ids
     for edp in payload["edps"]:
         assert edp["edpType"] == EdpType.NUTRIENT.value
         assert edp["impact"]["nitrogenTotal"]["amount"] == 20.0  # NOSONAR
