@@ -76,11 +76,7 @@ def _build_wastewater(row: pd.Series) -> WastewaterImpact | None:
 
 
 def _build_catchment_impacts(row: pd.Series) -> list[CatchmentImpact]:
-    """Build one CatchmentImpact per (id, name) entry, carrying RLB-level totals.
-
-    Per-catchment N/P split is not available without assessment changes, so all
-    entries for one RLB carry the same total values.
-    """
+    """Build one CatchmentImpact per (id, name) entry, carrying RLB-level totals."""
     entries = row.get("nn_catchment_entries")
     if not isinstance(entries, list) or not entries:
         return []

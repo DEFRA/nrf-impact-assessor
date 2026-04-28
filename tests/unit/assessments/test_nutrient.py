@@ -215,7 +215,7 @@ _LU_COLUMNS = [
     "n_resi_coeff",
     "p_resi_coeff",
     "n2k_site_n",
-    "n2k_site_id",
+    "oid",
     "area_in_nn_catchment_ha",
 ]
 
@@ -313,7 +313,7 @@ def _compute_land_use_intersection(input_gdf, coeff_layer, nn_layer) -> pd.DataF
     nn["n2k_site_n"] = nn["attributes"].apply(
         lambda x: x.get("N2K_Site_N") if isinstance(x, dict) else None
     )
-    nn["n2k_site_id"] = nn["attributes"].apply(
+    nn["oid"] = nn["attributes"].apply(
         lambda x: x.get("OID") if isinstance(x, dict) else None
     )
     intersections = gpd.overlay(intersections, nn, how="intersection")
