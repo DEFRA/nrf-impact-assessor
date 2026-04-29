@@ -1,7 +1,38 @@
 """Map assessment results to nrf-backend PATCH /quotes/{reference} payload."""
 
 from app.clients.bands import get_band
-from app.models.domain import ImpactAssessmentResult
+from app.models.domain import CatchmentImpact, ImpactAssessmentResult
+from app.models.enums import EdpType
+
+
+def _amount_block(value: float) -> dict:
+    band = get_band(value)
+    return {
+        "amount": value,
+        "unit": "mg/I TP",
+        "band": {"min": band, "max": band},
+    }
+
+
+def _impact_block(n_total: float, p_total: float) -> dict:
+    return {
+        "nitrogenTotal": _amount_block(round(n_total, 2)),
+        "phosphorusTotal": _amount_block(round(p_total, 2)),
+    }
+
+
+def _edp_entry(catchment: CatchmentImpact) -> dict:
+    return {
+        "edpId": catchment.catchment_id,
+        "edpName": catchment.catchment_name,
+        "edpType": EdpType.NUTRIENT,
+        "impact": _impact_block(
+            catchment.nitrogen_total_kg_yr,
+            catchment.phosphorus_total_kg_yr,
+        ),
+        # TODO: replace with real levy once finance calculation in place
+        "levyGbp": {"min": 999, "max": 999},
+    }
 
 
 def build_quote_patch_payload(
@@ -9,51 +40,20 @@ def build_quote_patch_payload(
 ) -> dict:
     """Build the PATCH body for nrf-backend from assessment results.
 
-    Derives EDP entries from the assessment results using nn_catchment as
-    the EDP name and a placeholder OID/levy until nrf-backend provides
-    real EDP metadata.
-
     Args:
         results: Assessment results (typically one per development).
 
     Returns:
         Dict matching the nrf-backend PATCH /quotes/{reference} schema.
+        Returns {"edps": []} when there are no results or no catchment impacts.
     """
     if not results:
         return {"edps": []}
 
     result = results[0]
-    n_total = round(result.total.nitrogen_total_kg_yr, 2)
-    p_total = round(result.total.phosphorus_total_kg_yr, 2)
-    n_band = get_band(n_total)
-    p_band = get_band(p_total)
-
-    nn_catchment = result.spatial.nn_catchment
-    if not nn_catchment:
+    if not result.catchment_impacts:
         return {"edps": []}
 
-    mapped_edps = [
-        {
-            "edpId": result.spatial.wwtw_id,
-            "edpName": nn_catchment,
-            "edpType": "NUTRIENT",
-            "impact": {
-                "nitrogenTotal": {
-                    "amount": n_total,
-                    "unit": "mg/I TP",
-                    "band": {"min": n_band, "max": n_band},
-                },
-                "phosphorusTotal": {
-                    "amount": p_total,
-                    "unit": "mg/I TP",
-                    "band": {"min": p_band, "max": p_band},
-                },
-            },
-            "levyGbp": {
-                "min": 999,
-                "max": 999,
-            },
-        }
-    ]
+    edps = [_edp_entry(catchment) for catchment in result.catchment_impacts]
 
-    return {"edps": mapped_edps}
+    return {"edps": edps}

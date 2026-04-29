@@ -340,6 +340,7 @@ class NutrientAssessment:
             rlb_gdf["n_lu_uplift"] = np.nan
             rlb_gdf["p_lu_uplift"] = np.nan
             rlb_gdf["nn_catchment"] = None
+            rlb_gdf["nn_catchment_entries"] = None
             rlb_gdf["n_lu_post_suds"] = 0.0
             rlb_gdf["p_lu_post_suds"] = 0.0
             return rlb_gdf
@@ -373,6 +374,14 @@ class NutrientAssessment:
         land_use_intersections["n_lu_uplift"] = n_uplift
         land_use_intersections["p_lu_uplift"] = p_uplift
 
+        land_use_intersections["_nn_entry"] = [
+            (s, n) if pd.notna(s) and pd.notna(n) else None
+            for s, n in zip(
+                land_use_intersections["oid"],
+                land_use_intersections["n2k_site_n"],
+                strict=True,
+            )
+        ]
         uplift_sum = (
             land_use_intersections.groupby("rlb_id")
             .agg(
@@ -381,10 +390,18 @@ class NutrientAssessment:
                     "n_lu_uplift": "sum",
                     "p_lu_uplift": "sum",
                     "n2k_site_n": lambda x: "; ".join(sorted(set(x.dropna()))),
+                    "_nn_entry": lambda x: (
+                        sorted({e for e in x if e is not None}) or None
+                    ),
                 }
             )
             .reset_index()
-            .rename(columns={"n2k_site_n": "nn_catchment"})
+            .rename(
+                columns={
+                    "n2k_site_n": "nn_catchment",
+                    "_nn_entry": "nn_catchment_entries",
+                }
+            )
         )
 
         rlb_gdf = rlb_gdf.merge(uplift_sum, on="rlb_id", how="left")

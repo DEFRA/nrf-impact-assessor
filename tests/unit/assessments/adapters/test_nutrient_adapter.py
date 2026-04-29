@@ -33,6 +33,7 @@ def sample_impact_summary():
                 "wwtw_subcatchment": "Test Subcatchment",
                 "majority_name": "Test LPA",
                 "nn_catchment": "Solent",
+                "nn_catchment_entries": [("10", "Solent")],
                 "majority_opcat_name": "Operational Catchment",
                 "area_in_nn_catchment_ha": 0.3,
                 "n_lu_uplift": 5.25,
@@ -67,6 +68,7 @@ def sample_impact_summary():
                 "wwtw_subcatchment": None,
                 "majority_name": "Test LPA",
                 "nn_catchment": "Solent",
+                "nn_catchment_entries": [("10", "Solent")],
                 "majority_opcat_name": "Operational Catchment",
                 "area_in_nn_catchment_ha": 0.8,
                 "n_lu_uplift": 12.50,
@@ -149,7 +151,6 @@ def test_spatial_assignment_conversion(sample_impact_summary):
     assert spatial.wwtw_name == "Test WwTW"
     assert spatial.wwtw_subcatchment == "Test Subcatchment"
     assert spatial.lpa_name == "Test LPA"
-    assert spatial.nn_catchment == "Solent"
     assert spatial.dev_subcatchment == "Operational Catchment"
     assert spatial.area_in_nn_catchment_ha == pytest.approx(0.3)
 
@@ -221,7 +222,6 @@ def test_handles_null_values(sample_impact_summary):
     assert spatial.wwtw_subcatchment is None
 
     # Other fields should still be populated
-    assert spatial.nn_catchment == "Solent"
     assert spatial.area_in_nn_catchment_ha == pytest.approx(0.8)
 
 
@@ -241,6 +241,7 @@ def test_handles_empty_dataframe():
             "wwtw_name",
             "majority_name",
             "nn_catchment",
+            "nn_catchment_entries",
             "majority_opcat_name",
             "area_in_nn_catchment_ha",
             "n_lu_uplift",
@@ -278,6 +279,7 @@ def test_handles_empty_name():
                 "wwtw_subcatchment": None,
                 "majority_name": "Test LPA",
                 "nn_catchment": "Solent",
+                "nn_catchment_entries": [("10", "Solent")],
                 "majority_opcat_name": None,
                 "area_in_nn_catchment_ha": 0.3,
                 "n_lu_uplift": 5.25,
@@ -327,6 +329,7 @@ def test_handles_partial_land_use():
                 "wwtw_subcatchment": None,
                 "majority_name": "Test LPA",
                 "nn_catchment": None,
+                "nn_catchment_entries": None,
                 "majority_opcat_name": None,
                 "area_in_nn_catchment_ha": None,
                 "n_lu_uplift": None,
@@ -350,3 +353,121 @@ def test_handles_partial_land_use():
     assert land_use.phosphorus_kg_yr is None
     assert land_use.nitrogen_post_suds_kg_yr is None
     assert land_use.phosphorus_post_suds_kg_yr is None
+
+
+def test_catchment_impacts_single(sample_impact_summary):
+    """Single catchment name produces one CatchmentImpact entry."""
+    from app.models.domain import CatchmentImpact
+
+    dataframes = {"impact_summary": sample_impact_summary}
+    result = to_domain_models(dataframes)
+
+    # First row has nn_catchment="Solent", n_total=18.35, p_total=1.75
+    impacts = result["assessment_results"][0].catchment_impacts
+    assert len(impacts) == 1
+    assert isinstance(impacts[0], CatchmentImpact)
+    assert impacts[0].catchment_id == "10"
+    assert impacts[0].catchment_name == "Solent"
+    assert impacts[0].nitrogen_total_kg_yr == pytest.approx(18.35)
+    assert impacts[0].phosphorus_total_kg_yr == pytest.approx(1.75)
+
+
+def test_catchment_impacts_multiple():
+    """Semicolon-joined nn_catchment produces one CatchmentImpact per catchment."""
+    import pandas as pd
+
+    from app.models.domain import CatchmentImpact
+
+    df = pd.DataFrame(
+        [
+            {
+                "rlb_id": 1,
+                "id": "site_001",
+                "name": "Test",
+                "dwelling_category": "Small",
+                "source": "LPA",
+                "dwellings": 10,
+                "shape_area": 5000.0,
+                "dev_area_ha": 0.5,
+                "majority_wwtw_id": 42,
+                "wwtw_name": "Test WwTW",
+                "wwtw_subcatchment": None,
+                "majority_name": "Test LPA",
+                "nn_catchment": "Broads; Wensum",
+                "nn_catchment_entries": [("1", "Broads"), ("2", "Wensum")],
+                "majority_opcat_name": None,
+                "area_in_nn_catchment_ha": 0.4,
+                "n_lu_uplift": 5.0,
+                "p_lu_uplift": 0.5,
+                "n_lu_post_suds": 4.5,
+                "p_lu_post_suds": 0.45,
+                "occupancy_rate": 2.4,
+                "water_usage_L_per_person_day": 110.0,
+                "daily_water_usage_L": 2640.0,
+                "nitrogen_conc_2025_2030_mg_L": 15.0,
+                "phosphorus_conc_2025_2030_mg_L": 2.0,
+                "nitrogen_conc_2030_onwards_mg_L": 10.0,
+                "phosphorus_conc_2030_onwards_mg_L": 1.0,
+                "n_wwtw_temp": 4.0,
+                "p_wwtw_temp": 0.5,
+                "n_wwtw_perm": 3.0,
+                "p_wwtw_perm": 0.4,
+                "n_total": 20.0,
+                "p_total": 2.0,
+            }
+        ]
+    )
+
+    result = to_domain_models({"impact_summary": df})
+    impacts = result["assessment_results"][0].catchment_impacts
+
+    assert len(impacts) == 2
+    names = [ci.catchment_name for ci in impacts]
+    ids = [ci.catchment_id for ci in impacts]
+    assert "Broads" in names
+    assert "Wensum" in names
+    assert "1" in ids
+    assert "2" in ids
+    for ci in impacts:
+        assert isinstance(ci, CatchmentImpact)
+        assert ci.nitrogen_total_kg_yr == pytest.approx(20.0)
+        assert ci.phosphorus_total_kg_yr == pytest.approx(2.0)
+
+
+def test_catchment_impacts_null_nn_catchment():
+    """Null nn_catchment produces empty catchment_impacts list."""
+    import pandas as pd
+
+    df = pd.DataFrame(
+        [
+            {
+                "rlb_id": 1,
+                "id": "site_001",
+                "name": "Test",
+                "dwelling_category": "Small",
+                "source": "LPA",
+                "dwellings": 10,
+                "shape_area": 5000.0,
+                "dev_area_ha": 0.5,
+                "majority_wwtw_id": 42,
+                "wwtw_name": "Test WwTW",
+                "wwtw_subcatchment": None,
+                "majority_name": "Test LPA",
+                "nn_catchment": None,
+                "nn_catchment_entries": None,
+                "majority_opcat_name": None,
+                "area_in_nn_catchment_ha": None,
+                "n_lu_uplift": None,
+                "p_lu_uplift": None,
+                "n_lu_post_suds": None,
+                "p_lu_post_suds": None,
+                "n_wwtw_perm": 3.0,
+                "p_wwtw_perm": 0.4,
+                "n_total": 3.5,
+                "p_total": 0.45,
+            }
+        ]
+    )
+
+    result = to_domain_models({"impact_summary": df})
+    assert result["assessment_results"][0].catchment_impacts == []

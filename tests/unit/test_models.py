@@ -34,6 +34,7 @@ def test_development_model_validation():
 def test_assessment_result_model_helpers():
     """Test ImpactAssessmentResult helper methods."""
     from app.models import (
+        CatchmentImpact,
         Development,
         ImpactAssessmentResult,
         LandUseImpact,
@@ -58,7 +59,6 @@ def test_assessment_result_model_helpers():
             wwtw_name="Test WwTW",
             wwtw_subcatchment="Test Sub",
             lpa_name="Test LPA",
-            nn_catchment="Test NN Catchment",
             dev_subcatchment="Test Dev Sub",
             area_in_nn_catchment_ha=0.8,
         ),
@@ -70,9 +70,82 @@ def test_assessment_result_model_helpers():
         ),
         wastewater=None,
         total=NutrientImpact(nitrogen_total_kg_yr=9.0, phosphorus_total_kg_yr=1.8),
+        catchment_impacts=[
+            CatchmentImpact(
+                catchment_id="1",
+                catchment_name="Test NN Catchment",
+                nitrogen_total_kg_yr=9.0,
+                phosphorus_total_kg_yr=1.8,
+            )
+        ],
     )
 
     # Test helper methods
     assert result.is_within_nn_catchment() is True
     assert result.is_within_wwtw_catchment() is False  # wastewater is None
     assert result.requires_assessment() is True
+
+
+def test_catchment_impact_model():
+    """Test CatchmentImpact model construction and immutability."""
+    from app.models import CatchmentImpact
+
+    ci = CatchmentImpact(
+        catchment_id="42",
+        catchment_name="Broads",
+        nitrogen_total_kg_yr=10.5,
+        phosphorus_total_kg_yr=2.3,
+    )
+    assert ci.catchment_id == "42"
+    assert ci.catchment_name == "Broads"
+    assert ci.nitrogen_total_kg_yr == pytest.approx(10.5)
+    assert ci.phosphorus_total_kg_yr == pytest.approx(2.3)
+
+    with pytest.raises((ValueError, AttributeError)):
+        ci.catchment_name = "Wensum"
+
+
+def test_impact_assessment_result_has_catchment_impacts():
+    """Test ImpactAssessmentResult has catchment_impacts defaulting to empty list."""
+    from app.models import (
+        CatchmentImpact,
+        Development,
+        ImpactAssessmentResult,
+        LandUseImpact,
+        NutrientImpact,
+        SpatialAssignment,
+    )
+
+    result = ImpactAssessmentResult(
+        rlb_id=1,
+        development=Development(
+            id="d1",
+            name="D",
+            dwelling_category="housing",
+            source="web",
+            dwellings=5,
+            area_m2=1000.0,
+            area_ha=0.1,
+        ),
+        spatial=SpatialAssignment(wwtw_id=1, lpa_name="LPA"),
+        land_use=LandUseImpact(),
+        total=NutrientImpact(nitrogen_total_kg_yr=10.0, phosphorus_total_kg_yr=1.0),
+    )
+    # Default is empty list
+    assert result.catchment_impacts == []
+
+    # Can be populated
+    result2 = result.model_copy(
+        update={
+            "catchment_impacts": [
+                CatchmentImpact(
+                    catchment_id="1",
+                    catchment_name="Broads",
+                    nitrogen_total_kg_yr=10.0,
+                    phosphorus_total_kg_yr=1.0,
+                )
+            ]
+        }
+    )
+    assert len(result2.catchment_impacts) == 1
+    assert result2.catchment_impacts[0].catchment_name == "Broads"

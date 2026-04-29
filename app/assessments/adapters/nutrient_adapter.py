@@ -8,6 +8,7 @@ import pandas as pd
 
 from app.config import RequiredColumns
 from app.models.domain import (
+    CatchmentImpact,
     Development,
     ImpactAssessmentResult,
     LandUseImpact,
@@ -74,6 +75,26 @@ def _build_wastewater(row: pd.Series) -> WastewaterImpact | None:
     )
 
 
+def _build_catchment_impacts(row: pd.Series) -> list[CatchmentImpact]:
+    """Build one CatchmentImpact per (id, name) entry, carrying RLB-level totals."""
+    entries = row.get("nn_catchment_entries")
+    if not isinstance(entries, list) or not entries:
+        return []
+
+    n_total = float(row["n_total"])
+    p_total = float(row["p_total"])
+
+    return [
+        CatchmentImpact(
+            catchment_id=cid,
+            catchment_name=name,
+            nitrogen_total_kg_yr=n_total,
+            phosphorus_total_kg_yr=p_total,
+        )
+        for cid, name in entries
+    ]
+
+
 def _row_to_result(row: pd.Series) -> ImpactAssessmentResult:
     """Convert a single DataFrame row to ImpactAssessmentResult."""
     development = Development(
@@ -91,7 +112,6 @@ def _row_to_result(row: pd.Series) -> ImpactAssessmentResult:
         wwtw_name=_opt_str(row, "wwtw_name"),
         wwtw_subcatchment=_opt_str(row, "wwtw_subcatchment"),
         lpa_name=row["majority_name"],
-        nn_catchment=_opt_str(row, "nn_catchment"),
         dev_subcatchment=_opt_str(row, "majority_opcat_name"),
         area_in_nn_catchment_ha=_opt_float(row, "area_in_nn_catchment_ha"),
     )
@@ -115,4 +135,5 @@ def _row_to_result(row: pd.Series) -> ImpactAssessmentResult:
         land_use=land_use,
         wastewater=_build_wastewater(row),
         total=total,
+        catchment_impacts=_build_catchment_impacts(row),
     )

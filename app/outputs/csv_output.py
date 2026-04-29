@@ -11,6 +11,20 @@ import pandas as pd
 
 from app.models.domain import ImpactAssessmentResult
 
+_WASTEWATER_FIELDS: dict[str, str] = {
+    "Occ_Rate": "occupancy_rate",
+    "Water_Usage_L_Day": "water_usage_L_per_person_day",
+    "Litres_used": "daily_water_usage_L",
+    "Nitrogen_2025_2030": "nitrogen_conc_2025_2030_mg_L",
+    "Nitrogen_2030_onwards": "nitrogen_conc_2030_onwards_mg_L",
+    "Phosphorus_2025_2030": "phosphorus_conc_2025_2030_mg_L",
+    "Phosphorus_2030_onwards": "phosphorus_conc_2030_onwards_mg_L",
+    "N_WwTW_Temp": "nitrogen_temp_kg_yr",
+    "P_WwTW_Temp": "phosphorus_temp_kg_yr",
+    "N_WwTW_Perm": "nitrogen_perm_kg_yr",
+    "P_WwTW_Perm": "phosphorus_perm_kg_yr",
+}
+
 
 class CSVOutputStrategy:
     """Writes impact assessment results to CSV in legacy format.
@@ -84,7 +98,10 @@ class CSVOutputStrategy:
             "Dev_Area_Ha": result.development.area_ha,
             # Spatial assignments
             "AreaInNNCatchment": result.spatial.area_in_nn_catchment_ha,
-            "NN_Catchment": result.spatial.nn_catchment,
+            "NN_Catchment": "; ".join(
+                ci.catchment_name for ci in result.catchment_impacts
+            )
+            or None,
             "Dev_SubCatchment": result.spatial.dev_subcatchment,
             "Majority_LPA": result.spatial.lpa_name,
             "Majority_WwTw_ID": result.spatial.wwtw_id,
@@ -97,40 +114,15 @@ class CSVOutputStrategy:
             "P_LU_postSuDS": result.land_use.phosphorus_post_suds_kg_yr,
         }
 
-        # Wastewater impacts (may be None if outside WwTW catchments)
         if result.wastewater:
             row.update(
                 {
-                    "Occ_Rate": result.wastewater.occupancy_rate,
-                    "Water_Usage_L_Day": result.wastewater.water_usage_L_per_person_day,
-                    "Litres_used": result.wastewater.daily_water_usage_L,
-                    "Nitrogen_2025_2030": result.wastewater.nitrogen_conc_2025_2030_mg_L,
-                    "Nitrogen_2030_onwards": result.wastewater.nitrogen_conc_2030_onwards_mg_L,
-                    "Phosphorus_2025_2030": result.wastewater.phosphorus_conc_2025_2030_mg_L,
-                    "Phosphorus_2030_onwards": result.wastewater.phosphorus_conc_2030_onwards_mg_L,
-                    "N_WwTW_Temp": result.wastewater.nitrogen_temp_kg_yr,
-                    "P_WwTW_Temp": result.wastewater.phosphorus_temp_kg_yr,
-                    "N_WwTW_Perm": result.wastewater.nitrogen_perm_kg_yr,
-                    "P_WwTW_Perm": result.wastewater.phosphorus_perm_kg_yr,
+                    k: getattr(result.wastewater, v)
+                    for k, v in _WASTEWATER_FIELDS.items()
                 }
             )
         else:
-            # Fill with None for developments outside WwTW catchments
-            row.update(
-                {
-                    "Occ_Rate": None,
-                    "Water_Usage_L_Day": None,
-                    "Litres_used": None,
-                    "Nitrogen_2025_2030": None,
-                    "Nitrogen_2030_onwards": None,
-                    "Phosphorus_2025_2030": None,
-                    "Phosphorus_2030_onwards": None,
-                    "N_WwTW_Temp": None,
-                    "P_WwTW_Temp": None,
-                    "N_WwTW_Perm": None,
-                    "P_WwTW_Perm": None,
-                }
-            )
+            row.update(dict.fromkeys(_WASTEWATER_FIELDS, None))
 
         # Total nutrient impacts
         row.update(

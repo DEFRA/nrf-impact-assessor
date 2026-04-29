@@ -154,7 +154,7 @@ def sample_nn_catchments():
     """Create sample NN catchments."""
     return gpd.GeoDataFrame(
         {
-            "attributes": [{"N2K_Site_N": "Solent"}],
+            "attributes": [{"N2K_Site_N": "Solent", "OID": "1"}],
             "geometry": [
                 Polygon(
                     [
@@ -215,6 +215,7 @@ _LU_COLUMNS = [
     "n_resi_coeff",
     "p_resi_coeff",
     "n2k_site_n",
+    "oid",
     "area_in_nn_catchment_ha",
 ]
 
@@ -311,6 +312,9 @@ def _compute_land_use_intersection(input_gdf, coeff_layer, nn_layer) -> pd.DataF
     nn = nn_layer.copy()
     nn["n2k_site_n"] = nn["attributes"].apply(
         lambda x: x.get("N2K_Site_N") if isinstance(x, dict) else None
+    )
+    nn["oid"] = nn["attributes"].apply(
+        lambda x: x.get("OID") if isinstance(x, dict) else None
     )
     intersections = gpd.overlay(intersections, nn, how="intersection")
     if len(intersections) == 0:
@@ -658,3 +662,16 @@ def test_result_has_no_geometry_column(sample_rlb, mock_repository):
 
     # Geometry column should be dropped for output
     assert "geometry" not in result_df.columns
+
+
+def test_run_assessment_has_nn_catchment_entries(sample_rlb, mock_repository):
+    """impact_summary contains nn_catchment_entries as a list of (id, name) tuples."""
+    assessment = NutrientAssessment(
+        sample_rlb, {"unique_ref": "20250115123456"}, mock_repository
+    )
+    results = assessment.run()
+    result_df = results["impact_summary"]
+
+    assert "nn_catchment_entries" in result_df.columns
+    # Sample fixture has OID="1" and N2K_Site_N="Solent"
+    assert result_df["nn_catchment_entries"].iloc[0] == [("1", "Solent")]
