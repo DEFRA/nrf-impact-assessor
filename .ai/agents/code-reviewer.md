@@ -28,4 +28,12 @@ Flag any of the following as findings:
 - Spatial database behaviour mocked instead of tested against real PostGIS.
 - Schema change without a corresponding Alembic migration under `alembic/versions/`.
 
+### FastAPI
+
+- Sync SQLAlchemy or PostGIS called directly inside `async def` without `asyncio.to_thread()` — blocks the event loop.
+- Route handler containing business, geospatial, or assessment logic instead of delegating to a service, helper, or repository.
+- `@app.on_event("startup")` or `@app.on_event("shutdown")` used instead of a `lifespan` context manager.
+- Public endpoint missing `response_model`.
+- Raw exception text or internal traceback returned from a public endpoint.
+
 Return only the structured findings report and one-line summary. No preamble or narration.
