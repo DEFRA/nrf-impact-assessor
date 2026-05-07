@@ -27,4 +27,14 @@ class TraceIdMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
         ctx_response.set({"status_code": response.status_code})
+
+        if response.status_code >= 400:
+            level = "warning" if response.status_code < 500 else "error"
+            detail = getattr(request.state, "error_detail", None)
+            msg = "HTTP %d: %s %s" + (" - %s" if detail else "")
+            args = (response.status_code, request.method, request.url.path)
+            if detail:
+                args = (*args, detail)
+            getattr(logger, level)(msg, *args)
+
         return response

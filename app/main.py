@@ -2,7 +2,11 @@ from contextlib import asynccontextmanager
 from logging import getLogger
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exception_handlers import (
+    http_exception_handler as default_http_exception_handler,
+)
+from fastapi.responses import Response
 
 from app.assess.router import router as assess_router
 from app.boundary.router import router as boundary_router
@@ -33,6 +37,13 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="NRF Impact Assessor API", lifespan=lifespan)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException) -> Response:
+    request.state.error_detail = exc.detail
+    return await default_http_exception_handler(request, exc)
+
 
 # Setup middleware
 app.add_middleware(TraceIdMiddleware)
