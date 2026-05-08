@@ -258,8 +258,10 @@ In order to make this library work in the environments, the environment variable
 
 ### Dependabot
 
-We have added an example dependabot configuration file to the repository. You can enable it by renaming
-the [.github/example.dependabot.yml](.github/example.dependabot.yml) to `.github/dependabot.yml`
+Dependabot is configured in [.github/dependabot.yml](.github/dependabot.yml) to check for updates weekly (Mondays, 08:30 London time) for:
+
+- **Python** packages (`pip` / `pyproject.toml`) — direct dependencies only
+- **Docker** base images (`Dockerfile`, `Dockerfile.vector`)
 
 ### SonarCloud
 
