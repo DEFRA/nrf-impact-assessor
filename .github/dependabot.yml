@@ -1,0 +1,21 @@
+version: 2
+
+updates:
+  # Update Python packages
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      time: '08:30'
+      timezone: 'Europe/London'
+    versioning-strategy: increase
+    allow:
+      - dependency-type: direct
+
+  # Update Docker base images
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      time: '08:30'
+      timezone: 'Europe/London'
