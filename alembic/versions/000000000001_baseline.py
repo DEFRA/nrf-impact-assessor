@@ -73,25 +73,25 @@ def upgrade() -> None:
         schema="public",
     )
     op.create_index(
-        "ix_nrf_reference_coefficient_layer_crome_id",
+        "ix_public_coefficient_layer_crome_id",
         "coefficient_layer",
         ["crome_id"],
         schema="public",
     )
     op.create_index(
-        "ix_nrf_reference_coefficient_layer_nn_catchment",
+        "ix_public_coefficient_layer_nn_catchment",
         "coefficient_layer",
         ["nn_catchment"],
         schema="public",
     )
     op.create_index(
-        "ix_nrf_reference_coefficient_layer_subcatchment",
+        "ix_public_coefficient_layer_subcatchment",
         "coefficient_layer",
         ["subcatchment"],
         schema="public",
     )
     op.create_index(
-        "ix_nrf_reference_coefficient_layer_version",
+        "ix_public_coefficient_layer_version",
         "coefficient_layer",
         ["version"],
         schema="public",
@@ -100,7 +100,7 @@ def upgrade() -> None:
     # Partial GiST covering only version 1 — add an equivalent when loading a new version
     op.execute(
         sa.text(
-            "CREATE INDEX ix_nrf_reference_coefficient_layer_geom_v1 "
+            "CREATE INDEX ix_public_coefficient_layer_geom_v1 "
             "ON public.coefficient_layer USING GIST (geometry) WHERE version = 1"
         )
     )
@@ -123,13 +123,13 @@ def upgrade() -> None:
         schema="public",
     )
     op.create_index(
-        "ix_nrf_reference_lookup_table_name",
+        "ix_public_lookup_table_name",
         "lookup_table",
         ["name"],
         schema="public",
     )
     op.create_index(
-        "ix_nrf_reference_lookup_table_version",
+        "ix_public_lookup_table_version",
         "lookup_table",
         ["version"],
         schema="public",
@@ -175,19 +175,19 @@ def upgrade() -> None:
         schema="public",
     )
     op.create_index(
-        "ix_nrf_reference_spatial_layer_layer_type",
+        "ix_public_spatial_layer_layer_type",
         "spatial_layer",
         ["layer_type"],
         schema="public",
     )
     op.create_index(
-        "ix_nrf_reference_spatial_layer_name",
+        "ix_public_spatial_layer_name",
         "spatial_layer",
         ["name"],
         schema="public",
     )
     op.create_index(
-        "ix_nrf_reference_spatial_layer_version",
+        "ix_public_spatial_layer_version",
         "spatial_layer",
         ["version"],
         schema="public",
@@ -222,20 +222,20 @@ def upgrade() -> None:
         schema="public",
     )
     op.create_index(
-        "ix_nrf_reference_edp_boundary_layer_name",
+        "ix_public_edp_boundary_layer_name",
         "edp_boundary_layer",
         ["name"],
         schema="public",
     )
     op.create_index(
-        "ix_nrf_reference_edp_boundary_layer_version",
+        "ix_public_edp_boundary_layer_version",
         "edp_boundary_layer",
         ["version"],
         schema="public",
     )
     op.execute(
         sa.text(
-            "CREATE INDEX ix_nrf_reference_edp_boundary_layer_geometry "
+            "CREATE INDEX ix_public_edp_boundary_layer_geometry "
             "ON public.edp_boundary_layer USING GIST (geometry)"
         )
     )

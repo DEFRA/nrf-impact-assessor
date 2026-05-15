@@ -15,7 +15,6 @@ from fastapi.responses import Response
 from sqlalchemy import text
 
 from app.config import DatabaseSettings, TileServerConfig
-from app.models.enums import SpatialLayerType
 from app.repositories.engine import create_db_engine
 from app.repositories.repository import Repository
 
@@ -23,16 +22,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Validated whitelist: URL slug → SpatialLayerType enum
+# Validated whitelist: URL slug → qualified table name in public schema.
 # The slug (not raw user input) is used as the MVT layer label in SQL.
-TILE_LAYERS: dict[str, SpatialLayerType] = {
-    "nn_catchments": SpatialLayerType.NN_CATCHMENTS,
-    "lpa_boundaries": SpatialLayerType.LPA_BOUNDARIES,
-    "wwtw_catchments": SpatialLayerType.WWTW_CATCHMENTS,
-    "subcatchments": SpatialLayerType.SUBCATCHMENTS,
+TILE_LAYERS: dict[str, str] = {
+    "nn_catchments": "public.nn_catchments",
+    "lpa_boundaries": "public.lpa_boundaries",
+    "wwtw_catchments": "public.wwtw_catchments",
+    "subcatchments": "public.subcatchments",
 }
 
-# Layers served from public.edp_boundary_layer (no layer_type discriminator)
 EDP_TILE_LAYERS: frozenset[str] = frozenset({"edp_boundaries"})
 
 _tile_config = TileServerConfig()
@@ -44,8 +42,8 @@ _tile_config = TileServerConfig()
 _repository: Repository | None = None
 _repository_lock = threading.Lock()
 
-# Per-layer resolved version cache: SpatialLayerType → (version, expiry)
-_version_cache: dict[SpatialLayerType, tuple[int, float]] = {}
+# Per-layer resolved version cache: slug → (version, expiry)
+_version_cache: dict[str, tuple[int, float]] = {}
 _version_cache_lock = threading.Lock()
 
 # Version cache for edp_boundary_layer (single table, no layer_type key)
@@ -59,7 +57,7 @@ _tile_cache_lock = threading.Lock()
 # Prepared SQL (reusable text() clauses)
 # ---------------------------------------------------------------------------
 
-_TILE_SQL = text("""
+_TILE_SQL_TEMPLATE = """
     SELECT ST_AsMVT(q, :layer_name, 4096, 'geom') AS mvt
     FROM (
         SELECT
@@ -72,16 +70,15 @@ _TILE_SQL = text("""
             ) AS geom,
             sl.name,
             sl.attributes
-        FROM public.spatial_layer sl
-        WHERE sl.layer_type = CAST(:layer_type_name AS public.spatial_layer_type)
-          AND sl.version = :version
+        FROM {table} sl
+        WHERE sl.version = :version
           AND ST_Intersects(
                 sl.geometry,
                 ST_Transform(ST_TileEnvelope(:z, :x, :y), 27700)
               )
     ) q
     WHERE q.geom IS NOT NULL
-""")
+"""
 
 _EDP_TILE_SQL = text("""
     SELECT ST_AsMVT(q, :layer_name, 4096, 'geom') AS mvt
@@ -131,29 +128,26 @@ def _get_repository() -> Repository:
         return _repository
 
 
-def _resolve_layer_version(layer_type: SpatialLayerType) -> int:
+def _resolve_layer_version(slug: str) -> int:
     """Return the current max version for the given layer, cached with TTL."""
     now = time.monotonic()
 
     with _version_cache_lock:
-        if layer_type in _version_cache:
-            version, expiry = _version_cache[layer_type]
+        if slug in _version_cache:
+            version, expiry = _version_cache[slug]
             if now < expiry:
                 return version
 
+    table = TILE_LAYERS[slug]
     repo = _get_repository()
     with repo.engine.connect() as conn:
         row = conn.execute(
-            text(
-                "SELECT MAX(version) FROM public.spatial_layer "
-                "WHERE layer_type = CAST(:layer_type_name AS public.spatial_layer_type)"
-            ),
-            {"layer_type_name": layer_type.name},
+            text(f"SELECT MAX(version) FROM {table}"),  # noqa: S608
         ).fetchone()
 
     version = row[0] if row and row[0] is not None else 1
     with _version_cache_lock:
-        _version_cache[layer_type] = (version, now + _tile_config.version_ttl_seconds)
+        _version_cache[slug] = (version, now + _tile_config.version_ttl_seconds)
     return version
 
 
@@ -181,26 +175,16 @@ def _resolve_edp_version() -> int:
 
 
 def _query_tile(
-    z: int,
-    x: int,
-    y: int,
-    layer_type: SpatialLayerType,
-    layer_name: str,
-    version: int,
+    z: int, x: int, y: int, slug: str, layer_name: str, version: int
 ) -> bytes:
-    """Execute the MVT SQL query against spatial_layer and return raw tile bytes."""
+    """Execute the MVT SQL query against the dedicated layer table and return raw tile bytes."""
+    table = TILE_LAYERS[slug]
+    sql = text(_TILE_SQL_TEMPLATE.format(table=table))
     repo = _get_repository()
     with repo.engine.connect() as conn:
         row = conn.execute(
-            _TILE_SQL,
-            {
-                "layer_name": layer_name,
-                "z": z,
-                "x": x,
-                "y": y,
-                "layer_type_name": layer_type.name,
-                "version": version,
-            },
+            sql,
+            {"layer_name": layer_name, "z": z, "x": x, "y": y, "version": version},
         ).fetchone()
     return bytes(row[0]) if row and row[0] else b""
 
@@ -221,7 +205,7 @@ def _get_tile(layer_slug: str, z: int, x: int, y: int) -> bytes:
     if layer_slug in EDP_TILE_LAYERS:
         version = _resolve_edp_version()
     else:
-        version = _resolve_layer_version(TILE_LAYERS[layer_slug])
+        version = _resolve_layer_version(layer_slug)
 
     cache_key = (layer_slug, z, x, y, version)
     now = time.monotonic()
@@ -237,7 +221,7 @@ def _get_tile(layer_slug: str, z: int, x: int, y: int) -> bytes:
     if layer_slug in EDP_TILE_LAYERS:
         tile_bytes = _query_edp_tile(z, x, y, layer_slug, version)
     else:
-        tile_bytes = _query_tile(z, x, y, TILE_LAYERS[layer_slug], layer_slug, version)
+        tile_bytes = _query_tile(z, x, y, layer_slug, layer_slug, version)
 
     with _tile_cache_lock:
         # Evict oldest entries when at capacity
@@ -285,7 +269,7 @@ def get_tile(request: Request, layer: str, z: int, x: int, y: int) -> Response:
     if layer in EDP_TILE_LAYERS:
         version = _edp_version_cache[0] if _edp_version_cache else 1
     else:
-        version = _version_cache.get(TILE_LAYERS[layer], (1, 0.0))[0]
+        version = _version_cache.get(layer, (1, 0.0))[0]
     etag = hashlib.sha256(f"{layer}:{z}:{x}:{y}:{version}".encode()).hexdigest()
     quoted_etag = f'"{etag}"'
 

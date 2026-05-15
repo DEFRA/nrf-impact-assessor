@@ -1,28 +1,13 @@
-"""SQLAlchemy database models for PostGIS reference data.
-
-This module defines the database schema for storing spatial reference data
-and lookup tables in PostgreSQL with PostGIS extension.
-"""
+"""SQLAlchemy database models for PostGIS reference data."""
 
 from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
 from geoalchemy2 import Geometry
-from sqlalchemy import (
-    DateTime,
-    Enum,
-    Float,
-    Index,
-    Integer,
-    String,
-    UniqueConstraint,
-    func,
-)
+from sqlalchemy import DateTime, Float, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-
-from app.models.enums import SpatialLayerType
 
 
 class Base(DeclarativeBase):
@@ -80,23 +65,84 @@ class CoefficientLayer(Base):
         return f"<CoefficientLayer(id={self.id}, crome_id={self.crome_id})>"
 
 
-class SpatialLayer(SpatialLayerMixin, Base):
-    """Unified model for supporting spatial data (catchments, boundaries)."""
+# ---------------------------------------------------------------------------
+# Nutrient mitigation layers
+# ---------------------------------------------------------------------------
 
-    __tablename__ = "spatial_layer"
-    __table_args__ = (
-        Index("ix_spatial_layer_type_version", "layer_type", "version"),
-        {"schema": "public"},
-    )
 
-    layer_type: Mapped[SpatialLayerType] = mapped_column(
-        Enum(SpatialLayerType, name="spatial_layer_type", schema="public"),
-        nullable=False,
-        index=True,
-    )
+class WwtwCatchments(SpatialLayerMixin, Base):
+    """WwTW (wastewater treatment works) catchment polygons."""
+
+    __tablename__ = "wwtw_catchments"
+    __table_args__ = {"schema": "public"}
 
     def __repr__(self) -> str:
-        return f"<SpatialLayer(id={self.id}, layer_type={self.layer_type}, name={self.name})>"
+        return f"<WwtwCatchments(id={self.id}, name={self.name})>"
+
+
+class LpaBoundaries(SpatialLayerMixin, Base):
+    """Local planning authority boundary polygons."""
+
+    __tablename__ = "lpa_boundaries"
+    __table_args__ = {"schema": "public"}
+
+    def __repr__(self) -> str:
+        return f"<LpaBoundaries(id={self.id}, name={self.name})>"
+
+
+class NnCatchments(SpatialLayerMixin, Base):
+    """Nutrient neutrality catchment polygons."""
+
+    __tablename__ = "nn_catchments"
+    __table_args__ = {"schema": "public"}
+
+    def __repr__(self) -> str:
+        return f"<NnCatchments(id={self.id}, name={self.name})>"
+
+
+class Subcatchments(SpatialLayerMixin, Base):
+    """Sub-catchment polygons."""
+
+    __tablename__ = "subcatchments"
+    __table_args__ = {"schema": "public"}
+
+    def __repr__(self) -> str:
+        return f"<Subcatchments(id={self.id}, name={self.name})>"
+
+
+# ---------------------------------------------------------------------------
+# GCN assessment layers
+# ---------------------------------------------------------------------------
+
+
+class GcnRiskZones(SpatialLayerMixin, Base):
+    """GCN (great crested newt) risk zone polygons (red/amber/green)."""
+
+    __tablename__ = "gcn_risk_zones"
+    __table_args__ = {"schema": "public"}
+
+    def __repr__(self) -> str:
+        return f"<GcnRiskZones(id={self.id}, name={self.name})>"
+
+
+class GcnPonds(SpatialLayerMixin, Base):
+    """National ponds dataset used for GCN assessment."""
+
+    __tablename__ = "gcn_ponds"
+    __table_args__ = {"schema": "public"}
+
+    def __repr__(self) -> str:
+        return f"<GcnPonds(id={self.id}, name={self.name})>"
+
+
+class EdpEdges(SpatialLayerMixin, Base):
+    """Environmental designation polygon edges used in GCN assessment."""
+
+    __tablename__ = "edp_edges"
+    __table_args__ = {"schema": "public"}
+
+    def __repr__(self) -> str:
+        return f"<EdpEdges(id={self.id}, name={self.name})>"
 
 
 class EdpBoundaryLayer(SpatialLayerMixin, Base):

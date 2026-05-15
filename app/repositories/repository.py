@@ -17,7 +17,6 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.db import Base
-from app.models.enums import SpatialLayerType
 
 logger = logging.getLogger(__name__)
 
@@ -408,9 +407,8 @@ class Repository:
                     JOIN public.coefficient_layer c
                         ON c.version = :coeff_version
                         AND ST_Intersects(r.geom, c.geometry)
-                    JOIN public.spatial_layer nn
-                        ON nn.layer_type = CAST(:nn_layer_type AS public.spatial_layer_type)
-                        AND nn.version = :nn_version
+                    JOIN public.nn_catchments nn
+                        ON nn.version = :nn_version
                         AND ST_Intersects(r.geom, nn.geometry)
                         AND ST_Intersects(c.geometry, nn.geometry)
                 ) sub
@@ -422,7 +420,6 @@ class Repository:
                 {
                     "coeff_version": coeff_version,
                     "nn_version": nn_version,
-                    "nn_layer_type": SpatialLayerType.NN_CATCHMENTS.name,
                 },
             ).fetchall()
 

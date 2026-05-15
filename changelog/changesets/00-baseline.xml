@@ -45,19 +45,19 @@
                 <constraints nullable="false"/>
             </column>
         </createTable>
-        <createIndex indexName="ix_nrf_reference_coefficient_layer_crome_id"
+        <createIndex indexName="ix_public_coefficient_layer_crome_id"
                      tableName="coefficient_layer" schemaName="public">
             <column name="crome_id"/>
         </createIndex>
-        <createIndex indexName="ix_nrf_reference_coefficient_layer_nn_catchment"
+        <createIndex indexName="ix_public_coefficient_layer_nn_catchment"
                      tableName="coefficient_layer" schemaName="public">
             <column name="nn_catchment"/>
         </createIndex>
-        <createIndex indexName="ix_nrf_reference_coefficient_layer_subcatchment"
+        <createIndex indexName="ix_public_coefficient_layer_subcatchment"
                      tableName="coefficient_layer" schemaName="public">
             <column name="subcatchment"/>
         </createIndex>
-        <createIndex indexName="ix_nrf_reference_coefficient_layer_version"
+        <createIndex indexName="ix_public_coefficient_layer_version"
                      tableName="coefficient_layer" schemaName="public">
             <column name="version"/>
         </createIndex>
@@ -66,7 +66,7 @@
             ON public.coefficient_layer USING GIST (geometry)
         </sql>
         <sql>
-            CREATE INDEX ix_nrf_reference_coefficient_layer_geom_v1
+            CREATE INDEX ix_public_coefficient_layer_geom_v1
             ON public.coefficient_layer USING GIST (geometry)
             WHERE version = 1
         </sql>
@@ -95,11 +95,11 @@
         <addUniqueConstraint tableName="lookup_table" schemaName="public"
                              columnNames="name, version"
                              constraintName="uq_lookup_name_version"/>
-        <createIndex indexName="ix_nrf_reference_lookup_table_name"
+        <createIndex indexName="ix_public_lookup_table_name"
                      tableName="lookup_table" schemaName="public">
             <column name="name"/>
         </createIndex>
-        <createIndex indexName="ix_nrf_reference_lookup_table_version"
+        <createIndex indexName="ix_public_lookup_table_version"
                      tableName="lookup_table" schemaName="public">
             <column name="version"/>
         </createIndex>
@@ -123,15 +123,15 @@
                 <constraints nullable="false"/>
             </column>
         </createTable>
-        <createIndex indexName="ix_nrf_reference_spatial_layer_layer_type"
+        <createIndex indexName="ix_public_spatial_layer_layer_type"
                      tableName="spatial_layer" schemaName="public">
             <column name="layer_type"/>
         </createIndex>
-        <createIndex indexName="ix_nrf_reference_spatial_layer_name"
+        <createIndex indexName="ix_public_spatial_layer_name"
                      tableName="spatial_layer" schemaName="public">
             <column name="name"/>
         </createIndex>
-        <createIndex indexName="ix_nrf_reference_spatial_layer_version"
+        <createIndex indexName="ix_public_spatial_layer_version"
                      tableName="spatial_layer" schemaName="public">
             <column name="version"/>
         </createIndex>
@@ -161,16 +161,16 @@
                 <constraints nullable="false"/>
             </column>
         </createTable>
-        <createIndex indexName="ix_nrf_reference_edp_boundary_layer_name"
+        <createIndex indexName="ix_public_edp_boundary_layer_name"
                      tableName="edp_boundary_layer" schemaName="public">
             <column name="name"/>
         </createIndex>
-        <createIndex indexName="ix_nrf_reference_edp_boundary_layer_version"
+        <createIndex indexName="ix_public_edp_boundary_layer_version"
                      tableName="edp_boundary_layer" schemaName="public">
             <column name="version"/>
         </createIndex>
         <sql>
-            CREATE INDEX ix_nrf_reference_edp_boundary_layer_geometry
+            CREATE INDEX ix_public_edp_boundary_layer_geometry
             ON public.edp_boundary_layer USING GIST (geometry)
         </sql>
 

@@ -10,8 +10,7 @@ import pytest
 from geoalchemy2.functions import ST_Intersects
 from sqlalchemy import func, select
 
-from app.models.db import CoefficientLayer, LookupTable, SpatialLayer
-from app.models.enums import SpatialLayerType
+from app.models.db import CoefficientLayer, LookupTable, NnCatchments
 from app.repositories.repository import Repository
 
 # Mark all tests in this module as integration tests
@@ -93,39 +92,24 @@ class TestRepositoryCoefficientQueries:
 
 
 class TestRepositorySpatialLayerQueries:
-    """Test queries against spatial_layer table."""
+    """Test queries against nn_catchments table."""
 
     def test_query_all_spatial_features(
         self, repository: Repository, sample_spatial_data: gpd.GeoDataFrame
     ):
-        """Test querying all spatial layer features."""
-        stmt = select(SpatialLayer)
+        """Test querying all NN catchment features."""
+        stmt = select(NnCatchments)
 
         result = repository.execute_query(stmt, as_gdf=True)
 
         assert len(result) == 2
-        # layer_type is returned as enum object in GeoDataFrame
-        assert all(result["layer_type"] == SpatialLayerType.NN_CATCHMENTS)
         assert set(result["name"]) == {"Solent", "Avon"}
-
-    def test_filter_by_layer_type(
-        self, repository: Repository, sample_spatial_data: gpd.GeoDataFrame
-    ):
-        """Test filtering by layer type discriminator."""
-        stmt = select(SpatialLayer).where(
-            SpatialLayer.layer_type == SpatialLayerType.NN_CATCHMENTS
-        )
-
-        result = repository.execute_query(stmt, as_gdf=False)
-
-        assert len(result) == 2
-        assert all(obj.layer_type == SpatialLayerType.NN_CATCHMENTS for obj in result)
 
     def test_filter_by_name(
         self, repository: Repository, sample_spatial_data: gpd.GeoDataFrame
     ):
         """Test filtering by feature name."""
-        stmt = select(SpatialLayer).where(SpatialLayer.name == "Solent")
+        stmt = select(NnCatchments).where(NnCatchments.name == "Solent")
 
         result = repository.execute_query(stmt, as_gdf=True)
 
@@ -136,7 +120,7 @@ class TestRepositorySpatialLayerQueries:
         self, repository: Repository, sample_spatial_data: gpd.GeoDataFrame
     ):
         """Test count query using SQLAlchemy func.count()."""
-        stmt = select(func.count()).select_from(SpatialLayer)
+        stmt = select(func.count()).select_from(NnCatchments)
 
         with repository.session() as session:
             count = session.scalar(stmt)
@@ -214,7 +198,7 @@ class TestRepositoryMultiTableQueries:
         stmt_coeff = select(func.count()).select_from(CoefficientLayer)
 
         # Query spatial count
-        stmt_spatial = select(func.count()).select_from(SpatialLayer)
+        stmt_spatial = select(func.count()).select_from(NnCatchments)
 
         with repository.session() as session:
             coeff_count = session.scalar(stmt_coeff)

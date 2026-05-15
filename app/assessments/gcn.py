@@ -14,8 +14,7 @@ from shapely.ops import unary_union
 from sqlalchemy import select
 
 from app.config import DEFAULT_GCN_CONFIG, GcnConfig
-from app.models.db import SpatialLayer
-from app.models.enums import SpatialLayerType
+from app.models.db import GcnPonds, GcnRiskZones
 from app.repositories.repository import Repository
 from app.spatial.operations import (
     clip_gdf,
@@ -76,8 +75,8 @@ class GcnAssessment:
         logger.info("Loading risk zones from repository (server-side clipped)")
         risk_zones_clipped = self.repository.intersection_postgis(
             input_gdf=combined_extent,
-            overlay_table=SpatialLayer,
-            overlay_filter=(SpatialLayer.layer_type == SpatialLayerType.GCN_RISK_ZONES),
+            overlay_table=GcnRiskZones,
+            overlay_filter=(GcnRiskZones.version >= 1),
             overlay_columns=[],
             json_extracts={"attributes": ["RZ"]},
         )
@@ -104,10 +103,10 @@ class GcnAssessment:
                 ponds["TmpImp"] = "F"
         else:
             logger.info("Loading national ponds with spatial filtering")
-            stmt = select(SpatialLayer.geometry).where(
-                SpatialLayer.layer_type == SpatialLayerType.GCN_PONDS,
+            stmt = select(GcnPonds.geometry).where(
+                GcnPonds.version >= 1,
                 ST_Intersects(
-                    SpatialLayer.geometry,
+                    GcnPonds.geometry,
                     ST_SetSRID(ST_GeomFromText(filter_wkt), target_srid),
                 ),
             )

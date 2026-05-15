@@ -13,7 +13,7 @@ from app.assessments.gcn import (
     _calculate_pond_frequency,
 )
 from app.config import GcnConfig
-from app.models.enums import SpatialLayerType
+from app.models.db import GcnPonds, GcnRiskZones
 
 
 @pytest.fixture
@@ -110,38 +110,17 @@ def sample_edp_edges():
     )
 
 
-def _extract_layer_type(where) -> SpatialLayerType | None:
-    """Extract SpatialLayerType from a simple or compound SQLAlchemy WHERE clause."""
-    try:
-        return where.right.value
-    except AttributeError:
-        pass
-    try:
-        for clause in where.clauses:
-            if (
-                hasattr(clause, "right")
-                and hasattr(clause.right, "value")
-                and isinstance(clause.right.value, SpatialLayerType)
-            ):
-                return clause.right.value
-    except AttributeError:
-        pass
-    return None
-
-
-def _gdf_for_layer_type(
-    layer_type: SpatialLayerType | None,
+def _gdf_for_table(
+    overlay_table: type | None,
     risk_zones: gpd.GeoDataFrame,
     ponds: gpd.GeoDataFrame,
     edp_edges: gpd.GeoDataFrame,
 ) -> gpd.GeoDataFrame:
-    """Return a copy of the sample GDF matching the given layer type."""
-    if layer_type == SpatialLayerType.GCN_RISK_ZONES:
+    """Return a copy of the sample GDF matching the given model class."""
+    if overlay_table is GcnRiskZones:
         return risk_zones.copy()
-    if layer_type == SpatialLayerType.GCN_PONDS:
+    if overlay_table is GcnPonds:
         return ponds.copy()
-    if layer_type == SpatialLayerType.EDP_EDGES:
-        return edp_edges.copy()
     return gpd.GeoDataFrame()
 
 
@@ -151,17 +130,18 @@ def mock_repository(sample_risk_zones, sample_ponds, sample_edp_edges):
     repo = Mock()
 
     def execute_query_side_effect(stmt, as_gdf=False):
-        layer_type = _extract_layer_type(stmt.whereclause)
-        return _gdf_for_layer_type(
-            layer_type, sample_risk_zones, sample_ponds, sample_edp_edges
-        )
+        # GCN ponds are fetched via execute_query with GcnPonds model
+        froms = stmt.froms if hasattr(stmt, "froms") else []
+        for f in froms:
+            if hasattr(f, "name") and f.name == "gcn_ponds":
+                return sample_ponds.copy()
+        return gpd.GeoDataFrame()
 
     def intersection_postgis_side_effect(
         input_gdf, overlay_table, overlay_filter, overlay_columns, json_extracts=None
     ):
-        layer_type = _extract_layer_type(overlay_filter)
-        return _gdf_for_layer_type(
-            layer_type, sample_risk_zones, sample_ponds, sample_edp_edges
+        return _gdf_for_table(
+            overlay_table, sample_risk_zones, sample_ponds, sample_edp_edges
         )
 
     repo.execute_query.side_effect = execute_query_side_effect
