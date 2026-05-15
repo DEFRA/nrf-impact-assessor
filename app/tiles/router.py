@@ -32,7 +32,7 @@ TILE_LAYERS: dict[str, SpatialLayerType] = {
     "subcatchments": SpatialLayerType.SUBCATCHMENTS,
 }
 
-# Layers served from nrf_reference.edp_boundary_layer (no layer_type discriminator)
+# Layers served from public.edp_boundary_layer (no layer_type discriminator)
 EDP_TILE_LAYERS: frozenset[str] = frozenset({"edp_boundaries"})
 
 _tile_config = TileServerConfig()
@@ -72,8 +72,8 @@ _TILE_SQL = text("""
             ) AS geom,
             sl.name,
             sl.attributes
-        FROM nrf_reference.spatial_layer sl
-        WHERE sl.layer_type = CAST(:layer_type_name AS nrf_reference.spatial_layer_type)
+        FROM public.spatial_layer sl
+        WHERE sl.layer_type = CAST(:layer_type_name AS public.spatial_layer_type)
           AND sl.version = :version
           AND ST_Intersects(
                 sl.geometry,
@@ -96,7 +96,7 @@ _EDP_TILE_SQL = text("""
             ) AS geom,
             edp.name,
             edp.attributes
-        FROM nrf_reference.edp_boundary_layer edp
+        FROM public.edp_boundary_layer edp
         WHERE edp.version = :version
           AND ST_Intersects(
                 edp.geometry,
@@ -145,8 +145,8 @@ def _resolve_layer_version(layer_type: SpatialLayerType) -> int:
     with repo.engine.connect() as conn:
         row = conn.execute(
             text(
-                "SELECT MAX(version) FROM nrf_reference.spatial_layer "
-                "WHERE layer_type = CAST(:layer_type_name AS nrf_reference.spatial_layer_type)"
+                "SELECT MAX(version) FROM public.spatial_layer "
+                "WHERE layer_type = CAST(:layer_type_name AS public.spatial_layer_type)"
             ),
             {"layer_type_name": layer_type.name},
         ).fetchone()
@@ -171,7 +171,7 @@ def _resolve_edp_version() -> int:
     repo = _get_repository()
     with repo.engine.connect() as conn:
         row = conn.execute(
-            text("SELECT MAX(version) FROM nrf_reference.edp_boundary_layer")
+            text("SELECT MAX(version) FROM public.edp_boundary_layer")
         ).fetchone()
 
     version = row[0] if row and row[0] is not None else 1

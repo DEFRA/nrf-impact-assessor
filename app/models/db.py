@@ -52,7 +52,7 @@ class CoefficientLayer(Base):
     """Dedicated model for coefficient polygons (5.4M records)."""
 
     __tablename__ = "coefficient_layer"
-    __table_args__ = {"schema": "nrf_reference"}
+    __table_args__ = {"schema": "public"}
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, index=True)
@@ -86,11 +86,11 @@ class SpatialLayer(SpatialLayerMixin, Base):
     __tablename__ = "spatial_layer"
     __table_args__ = (
         Index("ix_spatial_layer_type_version", "layer_type", "version"),
-        {"schema": "nrf_reference"},
+        {"schema": "public"},
     )
 
     layer_type: Mapped[SpatialLayerType] = mapped_column(
-        Enum(SpatialLayerType, name="spatial_layer_type", schema="nrf_reference"),
+        Enum(SpatialLayerType, name="spatial_layer_type", schema="public"),
         nullable=False,
         index=True,
     )
@@ -103,7 +103,7 @@ class EdpBoundaryLayer(SpatialLayerMixin, Base):
     """Dedicated model for EDP boundary polygons."""
 
     __tablename__ = "edp_boundary_layer"
-    __table_args__ = {"schema": "nrf_reference"}
+    __table_args__ = {"schema": "public"}
 
     def __repr__(self) -> str:
         return f"<EdpBoundaryLayer(id={self.id}, name={self.name})>"
@@ -115,7 +115,7 @@ class LookupTable(Base):
     __tablename__ = "lookup_table"
     __table_args__ = (
         UniqueConstraint("name", "version", name="uq_lookup_name_version"),
-        {"schema": "nrf_reference"},
+        {"schema": "public"},
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)

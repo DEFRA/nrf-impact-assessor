@@ -1,4 +1,4 @@
-.PHONY: help test test-integration test-regression update-regression-baseline check-migration-parity lint format build up down logs rebuild health monitoring-up monitoring-down monitoring-logs load-data load-data-sample load-data-layer load-data-lookup db-migrate db-rollback db-backup db-backup-schema db-backup-globals db-backup-tables db-restore db-restore-tables secrets-init _check-secrets sns-publish sqs-send sqs-peek sqs-depth sqs-purge
+.PHONY: help test test-integration test-regression update-regression-baseline check-migration-parity lint format build up down logs rebuild health monitoring-up monitoring-down monitoring-logs load-data load-data-sample load-data-layer load-data-lookup db-migrate db-rollback db-migrate-liquibase db-rollback-liquibase db-backup db-backup-schema db-backup-globals db-backup-tables db-restore db-restore-tables secrets-init _check-secrets sns-publish sqs-send sqs-peek sqs-depth sqs-purge
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -44,10 +44,10 @@ BACKUP_FILE  ?= $(BACKUP_DIR)/$(DB_NAME)_$(TS).sql.gz
 
 # Tables to include in per-table backup (schema-qualified)
 DB_TABLES = \
-	nrf_reference.spatial_layer \
-	nrf_reference.coefficient_layer \
-	nrf_reference.edp_boundary_layer \
-	nrf_reference.lookup_table
+	public.spatial_layer \
+	public.coefficient_layer \
+	public.edp_boundary_layer \
+	public.lookup_table
 
 db-backup: ## Full backup — schema, data, custom types and grants (.sql.gz)
 	@mkdir -p $(BACKUP_DIR)
@@ -68,12 +68,12 @@ db-backup-globals: ## Cluster-level roles and grants (.sql.gz via pg_dumpall)
 		| gzip > $(BACKUP_DIR)/$(DB_NAME)_globals_$(TS).sql.gz
 	@echo "Globals backup written to $(BACKUP_DIR)"
 
-db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table in nrf_reference
+db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table in public
 	@mkdir -p $(BACKUP_DIR)
-	@schema_out="$(BACKUP_DIR)/nrf_reference_schema_$(TS).sql.gz"; \
-	echo "  nrf_reference schema → $$schema_out"; \
+	@schema_out="$(BACKUP_DIR)/public_schema_$(TS).sql.gz"; \
+	echo "  public schema → $$schema_out"; \
 	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain \
-		--no-password --schema-only -n nrf_reference $(DB_NAME) | gzip > "$$schema_out"
+		--no-password --schema-only -n public $(DB_NAME) | gzip > "$$schema_out"
 	@for table in $(DB_TABLES); do \
 		name=$$(echo $$table | tr '.' '_'); \
 		out="$(BACKUP_DIR)/$${name}_$(TS).sql.gz"; \
@@ -91,9 +91,9 @@ db-restore: ## Restore from .sql.gz backup: make db-restore BACKUP_FILE=./backup
 
 db-restore-tables: ## Restore per-table backup: apply schema grants then table data from BACKUP_DIR
 	@test -n "$(BACKUP_DIR)" || (echo "ERROR: set BACKUP_DIR=<path>"; exit 1)
-	@schema_file=$$(ls -t $(BACKUP_DIR)/nrf_reference_schema_*.sql.gz 2>/dev/null | head -1); \
+	@schema_file=$$(ls -t $(BACKUP_DIR)/public_schema_*.sql.gz 2>/dev/null | head -1); \
 	if [ -z "$$schema_file" ]; then \
-		echo "ERROR: no nrf_reference_schema_*.sql.gz found in $(BACKUP_DIR)"; exit 1; \
+		echo "ERROR: no public_schema_*.sql.gz found in $(BACKUP_DIR)"; exit 1; \
 	fi; \
 	echo "Restoring schema grants from $$schema_file"; \
 	zcat "$$schema_file" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME)
@@ -116,6 +116,17 @@ db-migrate: ## Apply all pending Alembic migrations
 
 db-rollback: ## Rollback the last Alembic migration
 	$(DB_MIGRATE_ENV) uv run alembic downgrade -1
+
+db-migrate-liquibase: ## Apply Liquibase changesets against local postgres (requires compose postgres running)
+	docker compose run --rm liquibase
+
+db-rollback-liquibase: ## Rollback last Liquibase changeset against local postgres
+	docker compose run --rm liquibase \
+		--url=jdbc:postgresql://postgres:5432/nrf_impact \
+		--username=postgres \
+		--changelog-file=changelog/db.changelog.xml \
+		--defaultSchemaName=public \
+		rollbackCount 1
 
 # ---------------------------------------------------------------------------
 # Data loading

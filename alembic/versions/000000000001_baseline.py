@@ -28,7 +28,6 @@ NOW = sa.text("now()")
 
 
 def upgrade() -> None:
-    op.execute("CREATE SCHEMA IF NOT EXISTS nrf_reference")
     op.execute("CREATE EXTENSION IF NOT EXISTS postgis")
 
     sa.Enum(
@@ -40,7 +39,7 @@ def upgrade() -> None:
         "GCN_PONDS",
         "EDP_EDGES",
         name="spatial_layer_type",
-        schema="nrf_reference",
+        schema="public",
     ).create(op.get_bind())
 
     op.create_table(
@@ -71,38 +70,38 @@ def upgrade() -> None:
             "created_at", sa.DateTime(timezone=True), server_default=NOW, nullable=False
         ),
         sa.PrimaryKeyConstraint("id"),
-        schema="nrf_reference",
+        schema="public",
     )
     op.create_index(
         "ix_nrf_reference_coefficient_layer_crome_id",
         "coefficient_layer",
         ["crome_id"],
-        schema="nrf_reference",
+        schema="public",
     )
     op.create_index(
         "ix_nrf_reference_coefficient_layer_nn_catchment",
         "coefficient_layer",
         ["nn_catchment"],
-        schema="nrf_reference",
+        schema="public",
     )
     op.create_index(
         "ix_nrf_reference_coefficient_layer_subcatchment",
         "coefficient_layer",
         ["subcatchment"],
-        schema="nrf_reference",
+        schema="public",
     )
     op.create_index(
         "ix_nrf_reference_coefficient_layer_version",
         "coefficient_layer",
         ["version"],
-        schema="nrf_reference",
+        schema="public",
     )
     # Full GiST index created automatically by GeoAlchemy2 (spatial_index=True default)
     # Partial GiST covering only version 1 — add an equivalent when loading a new version
     op.execute(
         sa.text(
             "CREATE INDEX ix_nrf_reference_coefficient_layer_geom_v1 "
-            "ON nrf_reference.coefficient_layer USING GIST (geometry) WHERE version = 1"
+            "ON public.coefficient_layer USING GIST (geometry) WHERE version = 1"
         )
     )
 
@@ -121,19 +120,19 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("name", "version", name="uq_lookup_name_version"),
-        schema="nrf_reference",
+        schema="public",
     )
     op.create_index(
         "ix_nrf_reference_lookup_table_name",
         "lookup_table",
         ["name"],
-        schema="nrf_reference",
+        schema="public",
     )
     op.create_index(
         "ix_nrf_reference_lookup_table_version",
         "lookup_table",
         ["version"],
-        schema="nrf_reference",
+        schema="public",
     )
 
     op.create_table(
@@ -150,7 +149,7 @@ def upgrade() -> None:
                 "GCN_PONDS",
                 "EDP_EDGES",
                 name="spatial_layer_type",
-                schema="nrf_reference",
+                schema="public",
                 create_type=False,
             ),
             nullable=False,
@@ -173,32 +172,32 @@ def upgrade() -> None:
             "created_at", sa.DateTime(timezone=True), server_default=NOW, nullable=False
         ),
         sa.PrimaryKeyConstraint("id"),
-        schema="nrf_reference",
+        schema="public",
     )
     op.create_index(
         "ix_nrf_reference_spatial_layer_layer_type",
         "spatial_layer",
         ["layer_type"],
-        schema="nrf_reference",
+        schema="public",
     )
     op.create_index(
         "ix_nrf_reference_spatial_layer_name",
         "spatial_layer",
         ["name"],
-        schema="nrf_reference",
+        schema="public",
     )
     op.create_index(
         "ix_nrf_reference_spatial_layer_version",
         "spatial_layer",
         ["version"],
-        schema="nrf_reference",
+        schema="public",
     )
     # Full GiST index created automatically by GeoAlchemy2 (spatial_index=True default)
     op.create_index(
         "ix_spatial_layer_type_version",
         "spatial_layer",
         ["layer_type", "version"],
-        schema="nrf_reference",
+        schema="public",
     )
 
     op.create_table(
@@ -220,27 +219,31 @@ def upgrade() -> None:
             "created_at", sa.DateTime(timezone=True), server_default=NOW, nullable=False
         ),
         sa.PrimaryKeyConstraint("id"),
-        schema="nrf_reference",
+        schema="public",
     )
     op.create_index(
         "ix_nrf_reference_edp_boundary_layer_name",
         "edp_boundary_layer",
         ["name"],
-        schema="nrf_reference",
+        schema="public",
     )
     op.create_index(
         "ix_nrf_reference_edp_boundary_layer_version",
         "edp_boundary_layer",
         ["version"],
-        schema="nrf_reference",
+        schema="public",
     )
     op.execute(
         sa.text(
             "CREATE INDEX ix_nrf_reference_edp_boundary_layer_geometry "
-            "ON nrf_reference.edp_boundary_layer USING GIST (geometry)"
+            "ON public.edp_boundary_layer USING GIST (geometry)"
         )
     )
 
 
 def downgrade() -> None:
-    op.execute("DROP SCHEMA IF EXISTS nrf_reference CASCADE")
+    op.execute("DROP TABLE IF EXISTS public.coefficient_layer CASCADE")
+    op.execute("DROP TABLE IF EXISTS public.spatial_layer CASCADE")
+    op.execute("DROP TABLE IF EXISTS public.lookup_table CASCADE")
+    op.execute("DROP TABLE IF EXISTS public.edp_boundary_layer CASCADE")
+    op.execute("DROP TYPE IF EXISTS public.spatial_layer_type CASCADE")

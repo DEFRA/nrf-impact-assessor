@@ -64,9 +64,7 @@ def _load_wwtw_lookup(repository: Repository) -> pd.DataFrame:
 
     with repository.session() as session:
         row = session.execute(
-            text(
-                "SELECT MAX(version) FROM nrf_reference.lookup_table WHERE name = :name"
-            ),
+            text("SELECT MAX(version) FROM public.lookup_table WHERE name = :name"),
             {"name": name},
         ).fetchone()
     version = row[0] if row and row[0] is not None else 1

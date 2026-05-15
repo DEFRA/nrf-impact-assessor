@@ -169,7 +169,7 @@ class NutrientAssessment:
             rows = session.execute(
                 text(
                     "SELECT layer_type::text, MAX(version) "
-                    "FROM nrf_reference.spatial_layer GROUP BY layer_type"
+                    "FROM public.spatial_layer GROUP BY layer_type"
                 )
             ).fetchall()
             for layer_type_name, version in rows:
@@ -178,7 +178,7 @@ class NutrientAssessment:
 
             # Coefficient layer version
             row = session.execute(
-                text("SELECT MAX(version) FROM nrf_reference.coefficient_layer")
+                text("SELECT MAX(version) FROM public.coefficient_layer")
             ).fetchone()
             v = row[0] if row and row[0] is not None else 1
             self._version_cache["coefficient"] = v
@@ -193,10 +193,7 @@ class NutrientAssessment:
         # Resolve the latest version first (uses the batched version cache)
         with self.repository.session() as session:
             row = session.execute(
-                text(
-                    "SELECT MAX(version) FROM nrf_reference.lookup_table "
-                    "WHERE name = :name"
-                ),
+                text("SELECT MAX(version) FROM public.lookup_table WHERE name = :name"),
                 {"name": name},
             ).fetchone()
         version = row[0] if row and row[0] is not None else 1

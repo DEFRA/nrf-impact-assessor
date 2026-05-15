@@ -309,7 +309,7 @@ class SpatialDataLoader:
         gdf.to_postgis(
             name=table_name,
             con=self.repository.engine,
-            schema="nrf_reference",
+            schema="public",
             if_exists="append",
             index=False,
             chunksize=chunksize,
@@ -407,7 +407,7 @@ class SpatialDataLoader:
         gdf.to_postgis(
             name="coefficient_layer",
             con=engine,
-            schema="nrf_reference",
+            schema="public",
             if_exists="append",
             index=False,
             chunksize=10000,

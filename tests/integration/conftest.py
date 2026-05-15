@@ -113,9 +113,9 @@ def repository(test_engine: Engine) -> Repository:
     # Truncate all tables before each test
     with test_engine.connect() as conn:
         conn.execution_options(isolation_level="AUTOCOMMIT")
-        conn.execute(text("TRUNCATE nrf_reference.coefficient_layer CASCADE"))
-        conn.execute(text("TRUNCATE nrf_reference.spatial_layer CASCADE"))
-        conn.execute(text("TRUNCATE nrf_reference.lookup_table CASCADE"))
+        conn.execute(text("TRUNCATE public.coefficient_layer CASCADE"))
+        conn.execute(text("TRUNCATE public.spatial_layer CASCADE"))
+        conn.execute(text("TRUNCATE public.lookup_table CASCADE"))
 
     return Repository(test_engine)
 
@@ -215,7 +215,7 @@ def sample_coefficient_data(repository: Repository) -> gpd.GeoDataFrame:
     gdf.to_postgis(
         name="coefficient_layer",
         con=repository.engine,
-        schema="nrf_reference",
+        schema="public",
         if_exists="append",
         index=False,
     )
@@ -272,7 +272,7 @@ def sample_spatial_data(repository: Repository) -> gpd.GeoDataFrame:
     gdf.to_postgis(
         name="spatial_layer",
         con=repository.engine,
-        schema="nrf_reference",
+        schema="public",
         if_exists="append",
         index=False,
     )
@@ -386,7 +386,7 @@ def sample_gcn_risk_zones(repository: Repository) -> gpd.GeoDataFrame:
     gdf.to_postgis(
         name="spatial_layer",
         con=repository.engine,
-        schema="nrf_reference",
+        schema="public",
         if_exists="append",
         index=False,
         dtype={"attributes": JSONB},
@@ -441,7 +441,7 @@ def sample_gcn_ponds(repository: Repository) -> gpd.GeoDataFrame:
     gdf.to_postgis(
         name="spatial_layer",
         con=repository.engine,
-        schema="nrf_reference",
+        schema="public",
         if_exists="append",
         index=False,
         dtype={"attributes": JSONB},
@@ -476,7 +476,7 @@ def sample_edp_edges(repository: Repository) -> gpd.GeoDataFrame:
     gdf.to_postgis(
         name="spatial_layer",
         con=repository.engine,
-        schema="nrf_reference",
+        schema="public",
         if_exists="append",
         index=False,
         dtype={"attributes": JSONB},
