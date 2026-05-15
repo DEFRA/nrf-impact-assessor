@@ -21,7 +21,7 @@ dependencies = [
     "psycopg2-binary>=2.9.12",
     "pydantic-settings==2.14.1",
     "pymongo[aws,encryption,snappy,zstd]==4.17.0",
-    "python-multipart>=0.0.26",
+    "python-multipart>=0.0.28",
     "sqlalchemy>=2.0.44",
     "typer>=0.25.1",
     "uvicorn==0.46.0",
