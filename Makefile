@@ -1,4 +1,4 @@
-.PHONY: help test test-integration test-regression update-regression-baseline lint format build up down logs rebuild health monitoring-up monitoring-down monitoring-logs load-data load-data-sample load-data-layer load-data-lookup db-migrate db-rollback db-backup db-backup-schema db-backup-globals db-backup-tables db-restore db-restore-tables secrets-init _check-secrets sns-publish sqs-send sqs-peek sqs-depth sqs-purge
+.PHONY: help test test-integration test-regression update-regression-baseline check-migration-parity lint format build up down logs rebuild health monitoring-up monitoring-down monitoring-logs load-data load-data-sample load-data-layer load-data-lookup db-migrate db-rollback db-backup db-backup-schema db-backup-globals db-backup-tables db-restore db-restore-tables secrets-init _check-secrets sns-publish sqs-send sqs-peek sqs-depth sqs-purge
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -21,6 +21,9 @@ test-regression: ## Run regression tests against production DB on port 5434
 
 update-regression-baseline: ## Regenerate nutrient regression baselines from PostGIS (run then commit the CSVs)
 	$(REGRESSION_ENV) PYTHONPATH=. uv run python scripts/update_regression_baselines.py
+
+check-migration-parity: ## Check every Alembic migration has a matching Liquibase changeset
+	python scripts/check_migration_parity.py
 
 lint: ## Run linter
 	uv run ruff check .

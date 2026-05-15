@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- Alembic revision: 000000000001 -->
+
+    <changeSet id="00-baseline" author="nrf">
+
+        <sql>CREATE SCHEMA IF NOT EXISTS nrf_reference</sql>
+        <sql>CREATE EXTENSION IF NOT EXISTS postgis</sql>
+
+        <sql>
+            CREATE TYPE nrf_reference.spatial_layer_type AS ENUM (
+                'WWTW_CATCHMENTS',
+                'LPA_BOUNDARIES',
+                'NN_CATCHMENTS',
+                'SUBCATCHMENTS',
+                'GCN_RISK_ZONES',
+                'GCN_PONDS',
+                'EDP_EDGES'
+            )
+        </sql>
+
+        <createTable tableName="coefficient_layer" schemaName="nrf_reference">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="geometry" type="geometry(MULTIPOLYGON,27700)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="crome_id" type="varchar"/>
+            <column name="land_use_cat" type="varchar"/>
+            <column name="nn_catchment" type="varchar"/>
+            <column name="subcatchment" type="varchar"/>
+            <column name="lu_curr_n_coeff" type="float8"/>
+            <column name="lu_curr_p_coeff" type="float8"/>
+            <column name="n_resi_coeff" type="float8"/>
+            <column name="p_resi_coeff" type="float8"/>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex indexName="ix_nrf_reference_coefficient_layer_crome_id"
+                     tableName="coefficient_layer" schemaName="nrf_reference">
+            <column name="crome_id"/>
+        </createIndex>
+        <createIndex indexName="ix_nrf_reference_coefficient_layer_nn_catchment"
+                     tableName="coefficient_layer" schemaName="nrf_reference">
+            <column name="nn_catchment"/>
+        </createIndex>
+        <createIndex indexName="ix_nrf_reference_coefficient_layer_subcatchment"
+                     tableName="coefficient_layer" schemaName="nrf_reference">
+            <column name="subcatchment"/>
+        </createIndex>
+        <createIndex indexName="ix_nrf_reference_coefficient_layer_version"
+                     tableName="coefficient_layer" schemaName="nrf_reference">
+            <column name="version"/>
+        </createIndex>
+        <sql>
+            CREATE INDEX idx_coefficient_layer_geometry
+            ON nrf_reference.coefficient_layer USING GIST (geometry)
+        </sql>
+        <sql>
+            CREATE INDEX ix_nrf_reference_coefficient_layer_geom_v1
+            ON nrf_reference.coefficient_layer USING GIST (geometry)
+            WHERE version = 1
+        </sql>
+
+        <createTable tableName="lookup_table" schemaName="nrf_reference">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="name" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="data" type="jsonb">
+                <constraints nullable="false"/>
+            </column>
+            <column name="schema" type="jsonb"/>
+            <column name="description" type="varchar"/>
+            <column name="source" type="varchar"/>
+            <column name="license" type="varchar"/>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="lookup_table" schemaName="nrf_reference"
+                             columnNames="name, version"
+                             constraintName="uq_lookup_name_version"/>
+        <createIndex indexName="ix_nrf_reference_lookup_table_name"
+                     tableName="lookup_table" schemaName="nrf_reference">
+            <column name="name"/>
+        </createIndex>
+        <createIndex indexName="ix_nrf_reference_lookup_table_version"
+                     tableName="lookup_table" schemaName="nrf_reference">
+            <column name="version"/>
+        </createIndex>
+
+        <createTable tableName="spatial_layer" schemaName="nrf_reference">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="layer_type" type="nrf_reference.spatial_layer_type">
+                <constraints nullable="false"/>
+            </column>
+            <column name="version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="geometry" type="geometry(GEOMETRY,27700)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="name" type="varchar"/>
+            <column name="attributes" type="jsonb"/>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex indexName="ix_nrf_reference_spatial_layer_layer_type"
+                     tableName="spatial_layer" schemaName="nrf_reference">
+            <column name="layer_type"/>
+        </createIndex>
+        <createIndex indexName="ix_nrf_reference_spatial_layer_name"
+                     tableName="spatial_layer" schemaName="nrf_reference">
+            <column name="name"/>
+        </createIndex>
+        <createIndex indexName="ix_nrf_reference_spatial_layer_version"
+                     tableName="spatial_layer" schemaName="nrf_reference">
+            <column name="version"/>
+        </createIndex>
+        <sql>
+            CREATE INDEX idx_spatial_layer_geometry
+            ON nrf_reference.spatial_layer USING GIST (geometry)
+        </sql>
+        <createIndex indexName="ix_spatial_layer_type_version"
+                     tableName="spatial_layer" schemaName="nrf_reference">
+            <column name="layer_type"/>
+            <column name="version"/>
+        </createIndex>
+
+        <createTable tableName="edp_boundary_layer" schemaName="nrf_reference">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="geometry" type="geometry(GEOMETRY,27700)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="name" type="varchar"/>
+            <column name="attributes" type="jsonb"/>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex indexName="ix_nrf_reference_edp_boundary_layer_name"
+                     tableName="edp_boundary_layer" schemaName="nrf_reference">
+            <column name="name"/>
+        </createIndex>
+        <createIndex indexName="ix_nrf_reference_edp_boundary_layer_version"
+                     tableName="edp_boundary_layer" schemaName="nrf_reference">
+            <column name="version"/>
+        </createIndex>
+        <sql>
+            CREATE INDEX ix_nrf_reference_edp_boundary_layer_geometry
+            ON nrf_reference.edp_boundary_layer USING GIST (geometry)
+        </sql>
+
+        <rollback>
+            <sql>DROP SCHEMA IF EXISTS nrf_reference CASCADE</sql>
+        </rollback>
+
+    </changeSet>
+
+</databaseChangeLog>
