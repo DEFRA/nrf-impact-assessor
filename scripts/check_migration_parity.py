@@ -15,11 +15,11 @@ VERSIONS_DIR = Path("alembic/versions")
 CHANGELOG_DIR = Path("changelog/changesets")
 
 _REVISION_RE = re.compile(
-    r'^revision\s*(?::\s*\S+)?\s*=\s*["\']([a-f0-9]+)["\']',
+    r'^revision[^=\n]*=\s*["\']([a-f0-9]+)["\']',
     re.MULTILINE,
 )
 _DOWN_REVISION_RE = re.compile(
-    r'^down_revision\s*(?::[^=]+)?\s*=\s*(?:["\']([a-f0-9]+)["\']|None)',
+    r'^down_revision[^=\n]*=\s*(?:["\']([a-f0-9]+)["\']|None)',
     re.MULTILINE,
 )
 _LIQUIBASE_REF_RE = re.compile(r"<!--\s*Alembic revision:\s*([a-f0-9]+)\s*-->")

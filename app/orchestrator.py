@@ -228,7 +228,7 @@ class JobOrchestrator:
                 f"Sent assessment results to nrf-backend for quote {job.reference} "
                 f"({len(edps)} EDP(s): {edp_names})"
             )
-        except Exception as e:
-            logger.error(
-                f"Failed to send results to nrf-backend for quote {job.reference}: {e}"
+        except Exception:
+            logger.exception(
+                f"Failed to send results to nrf-backend for quote {job.reference}"
             )
