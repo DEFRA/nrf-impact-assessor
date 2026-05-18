@@ -25,3 +25,10 @@ repos:
         pass_filenames: false
         always_run: true
         types: [python]
+
+      - id: migration-parity
+        name: migration-parity
+        entry: python scripts/check_migration_parity.py
+        language: system
+        pass_filenames: false
+        files: '^(alembic/versions/|changelog/changesets/)'

@@ -5,6 +5,8 @@
     xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
 
+    <!-- Alembic revision: 000000000002 -->
+
     <!-- Nutrient mitigation layers -->
 
     <changeSet id="01-wwtw-catchments" author="nrf">
