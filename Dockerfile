@@ -15,11 +15,9 @@ ENV UV_PYTHON_DOWNLOADS=0
 
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN python -m pip install --upgrade --force-reinstall pip
-
-RUN addgroup --gid 1000 nonroot \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install --upgrade --force-reinstall pip \
+    && addgroup --gid 1000 nonroot \
     && adduser nonroot \
         --uid 1000 \
         --gid 1000 \
