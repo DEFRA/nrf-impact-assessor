@@ -29,8 +29,6 @@ RUN addgroup --gid 1000 nonroot \
 FROM base AS development
 
 ENV PYTHONDONTWRITEBYTECODE=1
-# NOSONAR: scoped to the `development` build stage; the `production` stage below overrides PYTHON_ENV=production
-ENV PYTHON_ENV=development
 ENV LOG_CONFIG="logging-dev.json"
 
 RUN python -m pip install uv debugpy
@@ -59,7 +57,6 @@ CMD ["-m", "app.consumer"]
 
 FROM base AS production
 
-ENV PYTHON_ENV=production
 ENV LOG_CONFIG="logging.json"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
