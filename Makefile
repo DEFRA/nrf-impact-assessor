@@ -47,7 +47,14 @@ DB_TABLES = \
 	public.spatial_layer \
 	public.coefficient_layer \
 	public.edp_boundary_layer \
-	public.lookup_table
+	public.lookup_table \
+	public.wwtw_catchments \
+	public.lpa_boundaries \
+	public.nn_catchments \
+	public.subcatchments \
+	public.gcn_risk_zones \
+	public.gcn_ponds \
+	public.edp_edges
 
 db-backup: ## Full backup — schema, data, custom types and grants (.sql.gz)
 	@mkdir -p $(BACKUP_DIR)
