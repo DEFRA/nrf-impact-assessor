@@ -1,37 +1,12 @@
-ARG BASE_VERSION=3.14.3-slim-trixie
-ARG PYTHON_VERSION=3.14.3
+ARG PARENT_VERSION=2.2.1-python3.14.3
 ARG PORT=8085
 ARG PORT_DEBUG=8086
 
-FROM python:${BASE_VERSION} AS base
+FROM defradigital/python-development:${PARENT_VERSION} AS development
 
-ARG PYTHON_VERSION
-
-ENV PATH="/home/nonroot/.venv/bin:/home/nonroot/.local/bin:${PATH}"
-ENV PYTHONUNBUFFERED=1
-ENV UV_PYTHON=${PYTHON_VERSION}
-ENV UV_MANAGED_PYTHON=0
-ENV UV_PYTHON_DOWNLOADS=0
-
-RUN apt-get update && apt-get upgrade -y --no-install-recommends \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && python -m pip install --upgrade --force-reinstall pip \
-    && addgroup --gid 1000 nonroot \
-    && adduser nonroot \
-        --uid 1000 \
-        --gid 1000 \
-        --home /home/nonroot \
-        --shell /bin/bash
-
-FROM base AS development
-
-ENV PYTHONDONTWRITEBYTECODE=1
+ENV PATH="/home/nonroot/.venv/bin:${PATH}"
 ENV LOG_CONFIG="logging-dev.json"
 
-RUN python -m pip install uv debugpy
-
-USER nonroot
 WORKDIR /home/nonroot
 
 COPY --chown=nonroot:nonroot pyproject.toml .
@@ -50,21 +25,23 @@ ARG PORT_DEBUG=8086
 ENV PORT=${PORT}
 EXPOSE ${PORT} ${PORT_DEBUG}
 
-ENTRYPOINT ["python"]
-CMD ["-m", "app.consumer"]
+CMD [ "-m", "app.consumer" ]
 
-FROM base AS production
+FROM defradigital/python:${PARENT_VERSION} AS production
 
+ENV PATH="/home/nonroot/.venv/bin:${PATH}"
 ENV LOG_CONFIG="logging.json"
+
+USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gdal-bin \
-    htop \
     libgdal36 \
     && rm -rf /var/lib/apt/lists/*
 
 USER nonroot
+
 WORKDIR /home/nonroot
 
 COPY --from=development /home/nonroot/pyproject.toml .
@@ -76,12 +53,11 @@ COPY --from=development --chmod=444 /home/nonroot/.git-has[h] ./
 COPY logging.json .
 
 RUN --mount=type=cache,target=/home/nonroot/.cache/uv,uid=1000,gid=1000 \
-    --mount=from=development,source=/usr/local/bin/uv,target=/usr/local/bin/uv \
+    --mount=from=development,source=/home/nonroot/.local/bin/uv,target=/home/nonroot/.local/bin/uv \
     uv sync --locked --compile-bytecode --link-mode=copy --no-dev
 
 ARG PORT
 ENV PORT=${PORT}
 EXPOSE ${PORT}
 
-ENTRYPOINT ["python"]
-CMD ["-m", "app.consumer"]
+CMD [ "-m", "app.consumer" ]
