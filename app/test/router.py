@@ -36,7 +36,18 @@ from app.assess._geometry import inject_job_fields
 from app.clients.backend_client import BackendClient
 from app.clients.payload_mapper import build_quote_patch_payload
 from app.config import AWSConfig, BackendConfig, DatabaseSettings
-from app.models.db import CoefficientLayer, EdpBoundaryLayer, LookupTable, SpatialLayer
+from app.models.db import (
+    CoefficientLayer,
+    EdpBoundaryLayer,
+    EdpEdges,
+    GcnPonds,
+    GcnRiskZones,
+    LookupTable,
+    LpaBoundaries,
+    NnCatchments,
+    Subcatchments,
+    WwtwCatchments,
+)
 from app.models.domain import (
     CatchmentImpact,
     Development,
@@ -46,7 +57,7 @@ from app.models.domain import (
     SpatialAssignment,
     WastewaterImpact,
 )
-from app.models.enums import AssessmentType, SpatialLayerType
+from app.models.enums import AssessmentType
 from app.models.job import BoundaryGeojson, ImpactAssessmentJob
 from app.repositories.engine import create_db_engine
 from app.repositories.repository import Repository
@@ -211,36 +222,16 @@ def check_db() -> DbCheckResponse:
         (CoefficientLayer, "coefficient_layer"),
         (EdpBoundaryLayer, "edp_boundary_layer"),
         (LookupTable, "lookup_table"),
+        (WwtwCatchments, "wwtw_catchments"),
+        (LpaBoundaries, "lpa_boundaries"),
+        (NnCatchments, "nn_catchments"),
+        (Subcatchments, "subcatchments"),
+        (GcnRiskZones, "gcn_risk_zones"),
+        (GcnPonds, "gcn_ponds"),
+        (EdpEdges, "edp_edges"),
     ]:
         n, status, err = _count(model)
         tables.append(DbTableStatus(table=label, row_count=n, status=status, error=err))
-
-    # 3. spatial_layer broken down by layer_type
-    try:
-        with repository.session() as session:
-            rows = session.execute(
-                select(SpatialLayer.layer_type, func.count().label("n")).group_by(
-                    SpatialLayer.layer_type
-                )
-            ).all()
-
-        loaded_types = {row.layer_type: row.n for row in rows}
-        for layer_type in SpatialLayerType:
-            n = loaded_types.get(layer_type, 0)
-            status = "ok" if n > 0 else "empty"
-            tables.append(
-                DbTableStatus(
-                    table=f"spatial_layer/{layer_type.value}",
-                    row_count=n,
-                    status=status,
-                )
-            )
-    except Exception as e:
-        tables.append(
-            DbTableStatus(
-                table="spatial_layer", row_count=None, status="error", error=str(e)
-            )
-        )
 
     return DbCheckResponse(db_connected=db_connected, tables=tables)
 

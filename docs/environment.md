@@ -10,7 +10,6 @@ This document describes all environment variables used by the application and it
 
 | Variable | Default | Description |
 |---|---|---|
-| `PYTHON_ENV` | `None` | Runtime environment name. Set to `development` by the `defradigital/python-development` base image. **Do not** use this to control uvicorn reload — Docker Compose `develop.watch` handles hot-reload externally. |
 | `HOST` | `127.0.0.1` | Address the server binds to |
 | `PORT` | `8085` | Port the server listens on |
 | `LOG_CONFIG` | `None` | Path to the JSON logging config file |
@@ -125,6 +124,6 @@ The environment variables below are set directly in `compose.monitoring.yml` and
 
 ### Uvicorn reload disabled in Docker
 
-The `defradigital/python-development` base image sets `PYTHON_ENV=development`. Previously, the app used this to enable uvicorn's built-in `reload=True` file watcher, which continuously polls the filesystem and causes ~30% idle CPU usage inside the container.
+Previously the app used `PYTHON_ENV=development` (set by the old `defradigital/python-development` base image) to enable uvicorn's built-in `reload=True` file watcher, which continuously polls the filesystem and causes ~30% idle CPU usage inside the container.
 
 This has been removed. Hot-reload is instead handled by Docker Compose's `develop.watch` feature (configured in `compose.yml`), which syncs file changes from the host into the container without the polling overhead. Press `w` after `docker compose --profile service up` to enable watch mode.

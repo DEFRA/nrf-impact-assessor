@@ -10,7 +10,6 @@ from shapely.geometry import MultiPolygon, Polygon
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-from app.models.enums import SpatialLayerType
 from app.repositories.repository import Repository
 
 CRS_BNG = "EPSG:27700"
@@ -113,9 +112,15 @@ def repository(test_engine: Engine) -> Repository:
     # Truncate all tables before each test
     with test_engine.connect() as conn:
         conn.execution_options(isolation_level="AUTOCOMMIT")
-        conn.execute(text("TRUNCATE nrf_reference.coefficient_layer CASCADE"))
-        conn.execute(text("TRUNCATE nrf_reference.spatial_layer CASCADE"))
-        conn.execute(text("TRUNCATE nrf_reference.lookup_table CASCADE"))
+        conn.execute(text("TRUNCATE public.coefficient_layer CASCADE"))
+        conn.execute(text("TRUNCATE public.nn_catchments CASCADE"))
+        conn.execute(text("TRUNCATE public.wwtw_catchments CASCADE"))
+        conn.execute(text("TRUNCATE public.lpa_boundaries CASCADE"))
+        conn.execute(text("TRUNCATE public.subcatchments CASCADE"))
+        conn.execute(text("TRUNCATE public.gcn_risk_zones CASCADE"))
+        conn.execute(text("TRUNCATE public.gcn_ponds CASCADE"))
+        conn.execute(text("TRUNCATE public.edp_edges CASCADE"))
+        conn.execute(text("TRUNCATE public.lookup_table CASCADE"))
 
     return Repository(test_engine)
 
@@ -215,7 +220,7 @@ def sample_coefficient_data(repository: Repository) -> gpd.GeoDataFrame:
     gdf.to_postgis(
         name="coefficient_layer",
         con=repository.engine,
-        schema="nrf_reference",
+        schema="public",
         if_exists="append",
         index=False,
     )
@@ -225,17 +230,10 @@ def sample_coefficient_data(repository: Repository) -> gpd.GeoDataFrame:
 
 @pytest.fixture
 def sample_spatial_data(repository: Repository) -> gpd.GeoDataFrame:
-    """Load minimal spatial layer test data.
-
-    Creates 2 sample spatial features (catchment boundaries) for testing
-    layer type filtering and spatial queries.
-    """
-    # Create 2 sample catchment boundaries
+    """Load minimal NN catchment test data into the dedicated nn_catchments table."""
     features = [
-        # Feature 1: Solent NN catchment
         {
             "id": uuid4(),
-            "layer_type": SpatialLayerType.NN_CATCHMENTS.name,  # Use uppercase name
             "version": 1,
             "geometry": Polygon(
                 [
@@ -248,10 +246,8 @@ def sample_spatial_data(repository: Repository) -> gpd.GeoDataFrame:
             ),
             "name": "Solent",
         },
-        # Feature 2: Avon NN catchment
         {
             "id": uuid4(),
-            "layer_type": SpatialLayerType.NN_CATCHMENTS.name,  # Use uppercase name
             "version": 1,
             "geometry": Polygon(
                 [
@@ -268,11 +264,10 @@ def sample_spatial_data(repository: Repository) -> gpd.GeoDataFrame:
 
     gdf = gpd.GeoDataFrame(features, crs=CRS_BNG)
 
-    # Load into database using to_postgis
     gdf.to_postgis(
-        name="spatial_layer",
+        name="nn_catchments",
         con=repository.engine,
-        schema="nrf_reference",
+        schema="public",
         if_exists="append",
         index=False,
     )
@@ -326,10 +321,8 @@ def sample_gcn_risk_zones(repository: Repository) -> gpd.GeoDataFrame:
     from sqlalchemy.dialects.postgresql import JSONB
 
     risk_zones = [
-        # Red zone (high risk)
         {
             "id": uuid4(),
-            "layer_type": SpatialLayerType.GCN_RISK_ZONES.name,
             "version": 1,
             "geometry": Polygon(
                 [
@@ -342,10 +335,8 @@ def sample_gcn_risk_zones(repository: Repository) -> gpd.GeoDataFrame:
             ),
             "attributes": {"RZ": "Red"},
         },
-        # Amber zone (medium risk)
         {
             "id": uuid4(),
-            "layer_type": SpatialLayerType.GCN_RISK_ZONES.name,
             "version": 1,
             "geometry": Polygon(
                 [
@@ -358,10 +349,8 @@ def sample_gcn_risk_zones(repository: Repository) -> gpd.GeoDataFrame:
             ),
             "attributes": {"RZ": "Amber"},
         },
-        # Green zone (low risk)
         {
             "id": uuid4(),
-            "layer_type": SpatialLayerType.GCN_RISK_ZONES.name,
             "version": 1,
             "geometry": Polygon(
                 [
@@ -378,15 +367,14 @@ def sample_gcn_risk_zones(repository: Repository) -> gpd.GeoDataFrame:
 
     gdf = gpd.GeoDataFrame(risk_zones, crs=CRS_BNG)
 
-    # Convert attributes dict to JSON string for JSONB column
     import json
 
     gdf["attributes"] = gdf["attributes"].apply(json.dumps)
 
     gdf.to_postgis(
-        name="spatial_layer",
+        name="gcn_risk_zones",
         con=repository.engine,
-        schema="nrf_reference",
+        schema="public",
         if_exists="append",
         index=False,
         dtype={"attributes": JSONB},
@@ -405,26 +393,20 @@ def sample_gcn_ponds(repository: Repository) -> gpd.GeoDataFrame:
     from sqlalchemy.dialects.postgresql import JSONB
 
     ponds = [
-        # Pond 1 in Red zone
         {
             "id": uuid4(),
-            "layer_type": SpatialLayerType.GCN_PONDS.name,
             "version": 1,
             "geometry": Point(450200, 100200),
             "attributes": {"pond_id": "POND_001"},
         },
-        # Pond 2 in Amber zone
         {
             "id": uuid4(),
-            "layer_type": SpatialLayerType.GCN_PONDS.name,
             "version": 1,
             "geometry": Point(450700, 100200),
             "attributes": {"pond_id": "POND_002"},
         },
-        # Pond 3 in Green zone
         {
             "id": uuid4(),
-            "layer_type": SpatialLayerType.GCN_PONDS.name,
             "version": 1,
             "geometry": Point(450500, 100700),
             "attributes": {"pond_id": "POND_003"},
@@ -433,15 +415,14 @@ def sample_gcn_ponds(repository: Repository) -> gpd.GeoDataFrame:
 
     gdf = gpd.GeoDataFrame(ponds, crs=CRS_BNG)
 
-    # Convert attributes dict to JSON string for JSONB column
     import json
 
     gdf["attributes"] = gdf["attributes"].apply(json.dumps)
 
     gdf.to_postgis(
-        name="spatial_layer",
+        name="gcn_ponds",
         con=repository.engine,
-        schema="nrf_reference",
+        schema="public",
         if_exists="append",
         index=False,
         dtype={"attributes": JSONB},
@@ -459,7 +440,6 @@ def sample_edp_edges(repository: Repository) -> gpd.GeoDataFrame:
     edges = [
         {
             "id": uuid4(),
-            "layer_type": SpatialLayerType.EDP_EDGES.name,
             "version": 1,
             "geometry": LineString([(450000, 100500), (451000, 100500)]),
             "attributes": {},
@@ -468,15 +448,14 @@ def sample_edp_edges(repository: Repository) -> gpd.GeoDataFrame:
 
     gdf = gpd.GeoDataFrame(edges, crs=CRS_BNG)
 
-    # Convert attributes dict to JSON string for JSONB column
     import json
 
     gdf["attributes"] = gdf["attributes"].apply(json.dumps)
 
     gdf.to_postgis(
-        name="spatial_layer",
+        name="edp_edges",
         con=repository.engine,
-        schema="nrf_reference",
+        schema="public",
         if_exists="append",
         index=False,
         dtype={"attributes": JSONB},

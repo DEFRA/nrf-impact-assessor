@@ -52,6 +52,18 @@ services:
     networks:
       - cdp-tenant
 
+  liquibase:
+    image: liquibase/liquibase:4.27-alpine
+    networks:
+      - cdp-tenant
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./changelog:/liquibase/changelog
+    command: --url=jdbc:postgresql://postgres:5432/nrf_impact --username=postgres --changelog-file=changelog/db.changelog.xml --defaultSchemaName=public update
+
+
   service:
     build:
       context: .
@@ -122,5 +134,4 @@ volumes:
 
 networks:
   cdp-tenant:
-    external: true
     driver: bridge

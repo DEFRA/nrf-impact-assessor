@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- Alembic revision: 000000000002 -->
+
+    <!-- Nutrient mitigation layers -->
+
+    <changeSet id="01-wwtw-catchments" author="nrf">
+        <createTable tableName="wwtw_catchments" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="geometry" type="geometry(GEOMETRY,27700)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="name" type="varchar"/>
+            <column name="attributes" type="jsonb"/>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex indexName="ix_public_wwtw_catchments_version"
+                     tableName="wwtw_catchments" schemaName="public">
+            <column name="version"/>
+        </createIndex>
+        <createIndex indexName="ix_public_wwtw_catchments_name"
+                     tableName="wwtw_catchments" schemaName="public">
+            <column name="name"/>
+        </createIndex>
+        <sql>
+            CREATE INDEX ix_public_wwtw_catchments_geometry
+            ON public.wwtw_catchments USING GIST (geometry)
+        </sql>
+        <rollback>
+            <dropTable tableName="wwtw_catchments" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="01-lpa-boundaries" author="nrf">
+        <createTable tableName="lpa_boundaries" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="geometry" type="geometry(GEOMETRY,27700)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="name" type="varchar"/>
+            <column name="attributes" type="jsonb"/>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex indexName="ix_public_lpa_boundaries_version"
+                     tableName="lpa_boundaries" schemaName="public">
+            <column name="version"/>
+        </createIndex>
+        <createIndex indexName="ix_public_lpa_boundaries_name"
+                     tableName="lpa_boundaries" schemaName="public">
+            <column name="name"/>
+        </createIndex>
+        <sql>
+            CREATE INDEX ix_public_lpa_boundaries_geometry
+            ON public.lpa_boundaries USING GIST (geometry)
+        </sql>
+        <rollback>
+            <dropTable tableName="lpa_boundaries" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="01-nn-catchments" author="nrf">
+        <createTable tableName="nn_catchments" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="geometry" type="geometry(GEOMETRY,27700)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="name" type="varchar"/>
+            <column name="attributes" type="jsonb"/>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex indexName="ix_public_nn_catchments_version"
+                     tableName="nn_catchments" schemaName="public">
+            <column name="version"/>
+        </createIndex>
+        <createIndex indexName="ix_public_nn_catchments_name"
+                     tableName="nn_catchments" schemaName="public">
+            <column name="name"/>
+        </createIndex>
+        <sql>
+            CREATE INDEX ix_public_nn_catchments_geometry
+            ON public.nn_catchments USING GIST (geometry)
+        </sql>
+        <rollback>
+            <dropTable tableName="nn_catchments" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="01-subcatchments" author="nrf">
+        <createTable tableName="subcatchments" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="geometry" type="geometry(GEOMETRY,27700)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="name" type="varchar"/>
+            <column name="attributes" type="jsonb"/>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex indexName="ix_public_subcatchments_version"
+                     tableName="subcatchments" schemaName="public">
+            <column name="version"/>
+        </createIndex>
+        <createIndex indexName="ix_public_subcatchments_name"
+                     tableName="subcatchments" schemaName="public">
+            <column name="name"/>
+        </createIndex>
+        <sql>
+            CREATE INDEX ix_public_subcatchments_geometry
+            ON public.subcatchments USING GIST (geometry)
+        </sql>
+        <rollback>
+            <dropTable tableName="subcatchments" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+    <!-- GCN assessment layers -->
+
+    <changeSet id="01-gcn-risk-zones" author="nrf">
+        <createTable tableName="gcn_risk_zones" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="geometry" type="geometry(GEOMETRY,27700)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="name" type="varchar"/>
+            <column name="attributes" type="jsonb"/>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex indexName="ix_public_gcn_risk_zones_version"
+                     tableName="gcn_risk_zones" schemaName="public">
+            <column name="version"/>
+        </createIndex>
+        <createIndex indexName="ix_public_gcn_risk_zones_name"
+                     tableName="gcn_risk_zones" schemaName="public">
+            <column name="name"/>
+        </createIndex>
+        <sql>
+            CREATE INDEX ix_public_gcn_risk_zones_geometry
+            ON public.gcn_risk_zones USING GIST (geometry)
+        </sql>
+        <rollback>
+            <dropTable tableName="gcn_risk_zones" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="01-gcn-ponds" author="nrf">
+        <createTable tableName="gcn_ponds" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="geometry" type="geometry(GEOMETRY,27700)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="name" type="varchar"/>
+            <column name="attributes" type="jsonb"/>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex indexName="ix_public_gcn_ponds_version"
+                     tableName="gcn_ponds" schemaName="public">
+            <column name="version"/>
+        </createIndex>
+        <createIndex indexName="ix_public_gcn_ponds_name"
+                     tableName="gcn_ponds" schemaName="public">
+            <column name="name"/>
+        </createIndex>
+        <sql>
+            CREATE INDEX ix_public_gcn_ponds_geometry
+            ON public.gcn_ponds USING GIST (geometry)
+        </sql>
+        <rollback>
+            <dropTable tableName="gcn_ponds" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="01-edp-edges" author="nrf">
+        <createTable tableName="edp_edges" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="geometry" type="geometry(GEOMETRY,27700)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="name" type="varchar"/>
+            <column name="attributes" type="jsonb"/>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex indexName="ix_public_edp_edges_version"
+                     tableName="edp_edges" schemaName="public">
+            <column name="version"/>
+        </createIndex>
+        <createIndex indexName="ix_public_edp_edges_name"
+                     tableName="edp_edges" schemaName="public">
+            <column name="name"/>
+        </createIndex>
+        <sql>
+            CREATE INDEX ix_public_edp_edges_geometry
+            ON public.edp_edges USING GIST (geometry)
+        </sql>
+        <rollback>
+            <dropTable tableName="edp_edges" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

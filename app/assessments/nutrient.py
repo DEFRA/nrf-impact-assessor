@@ -22,8 +22,13 @@ from app.calculators import (
 )
 from app.config import CONSTANTS, AssessmentConfig, DebugConfig, RequiredColumns
 from app.debug import save_debug_gdf
-from app.models.db import LookupTable, SpatialLayer
-from app.models.enums import SpatialLayerType
+from app.models.db import (
+    LookupTable,
+    LpaBoundaries,
+    NnCatchments,
+    Subcatchments,
+    WwtwCatchments,
+)
 from app.repositories.repository import Repository
 
 logger = logging.getLogger(__name__)
@@ -165,23 +170,20 @@ class NutrientAssessment:
             return  # already populated for this instance
 
         with self.repository.session() as session:
-            # All spatial layer versions in one shot
-            rows = session.execute(
-                text(
-                    "SELECT layer_type::text, MAX(version) "
-                    "FROM nrf_reference.spatial_layer GROUP BY layer_type"
-                )
-            ).fetchall()
-            for layer_type_name, version in rows:
-                v = version if version is not None else 1
-                self._version_cache[f"spatial_{layer_type_name}"] = v
+            for model in (WwtwCatchments, LpaBoundaries, NnCatchments, Subcatchments):
+                row = session.execute(
+                    text(
+                        f"SELECT MAX(version) FROM public.{model.__tablename__}"  # noqa: S608
+                    )
+                ).fetchone()
+                v = row[0] if row and row[0] is not None else 1
+                self._version_cache[model.__tablename__] = v
 
-            # Coefficient layer version
             row = session.execute(
-                text("SELECT MAX(version) FROM nrf_reference.coefficient_layer")
+                text("SELECT MAX(version) FROM public.coefficient_layer")
             ).fetchone()
             v = row[0] if row and row[0] is not None else 1
-            self._version_cache["coefficient"] = v
+            self._version_cache["coefficient_layer"] = v
 
     def _load_lookup(self, name: str) -> pd.DataFrame:
         """Return lookup table data as a DataFrame, using the process-level cache.
@@ -193,10 +195,7 @@ class NutrientAssessment:
         # Resolve the latest version first (uses the batched version cache)
         with self.repository.session() as session:
             row = session.execute(
-                text(
-                    "SELECT MAX(version) FROM nrf_reference.lookup_table "
-                    "WHERE name = :name"
-                ),
+                text("SELECT MAX(version) FROM public.lookup_table WHERE name = :name"),
                 {"name": name},
             ).fetchone()
         version = row[0] if row and row[0] is not None else 1
@@ -219,15 +218,15 @@ class NutrientAssessment:
 
         return df
 
-    def _resolve_latest_version(self, layer_type: SpatialLayerType) -> int:
-        """Return the latest version for a spatial layer type (batch-fetched)."""
+    def _resolve_latest_version(self, model: type) -> int:
+        """Return the latest version for a spatial layer table (batch-fetched)."""
         self._resolve_versions()
-        return self._version_cache.get(f"spatial_{layer_type.name}", 1)
+        return self._version_cache.get(model.__tablename__, 1)
 
     def _resolve_latest_coeff_version(self) -> int:
         """Return the latest coefficient layer version (batch-fetched)."""
         self._resolve_versions()
-        return self._version_cache.get("coefficient", 1)
+        return self._version_cache.get("coefficient_layer", 1)
 
     def _assign_spatial_features(self, rlb_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """Assign spatial features via batched majority overlap."""
@@ -235,41 +234,32 @@ class NutrientAssessment:
 
         t0 = time.perf_counter()
 
-        wwtw_ver = self._resolve_latest_version(SpatialLayerType.WWTW_CATCHMENTS)
-        lpa_ver = self._resolve_latest_version(SpatialLayerType.LPA_BOUNDARIES)
-        sub_ver = self._resolve_latest_version(SpatialLayerType.SUBCATCHMENTS)
+        wwtw_ver = self._resolve_latest_version(WwtwCatchments)
+        lpa_ver = self._resolve_latest_version(LpaBoundaries)
+        sub_ver = self._resolve_latest_version(Subcatchments)
 
         batch_results = self.repository.batch_majority_overlap_postgis(
             input_gdf=rlb_gdf,
             input_id_col="rlb_id",
             assignments=[
                 {
-                    "overlay_table": SpatialLayer,
-                    "overlay_filter": (
-                        (SpatialLayer.layer_type == SpatialLayerType.WWTW_CATCHMENTS)
-                        & (SpatialLayer.version == wwtw_ver)
-                    ),
-                    "overlay_attr_col": SpatialLayer.attributes["WwTw_ID"].astext,
+                    "overlay_table": WwtwCatchments,
+                    "overlay_filter": WwtwCatchments.version == wwtw_ver,
+                    "overlay_attr_col": WwtwCatchments.attributes["WwTw_ID"].astext,
                     "output_field": "majority_wwtw_id",
                     "default_value": self.config.fallback_wwtw_id,
                 },
                 {
-                    "overlay_table": SpatialLayer,
-                    "overlay_filter": (
-                        (SpatialLayer.layer_type == SpatialLayerType.LPA_BOUNDARIES)
-                        & (SpatialLayer.version == lpa_ver)
-                    ),
-                    "overlay_attr_col": SpatialLayer.attributes["NAME"].astext,
+                    "overlay_table": LpaBoundaries,
+                    "overlay_filter": LpaBoundaries.version == lpa_ver,
+                    "overlay_attr_col": LpaBoundaries.attributes["NAME"].astext,
                     "output_field": "majority_name",
                     "default_value": "UNKNOWN",
                 },
                 {
-                    "overlay_table": SpatialLayer,
-                    "overlay_filter": (
-                        (SpatialLayer.layer_type == SpatialLayerType.SUBCATCHMENTS)
-                        & (SpatialLayer.version == sub_ver)
-                    ),
-                    "overlay_attr_col": SpatialLayer.attributes["OPCAT_NAME"].astext,
+                    "overlay_table": Subcatchments,
+                    "overlay_filter": Subcatchments.version == sub_ver,
+                    "overlay_attr_col": Subcatchments.attributes["OPCAT_NAME"].astext,
                     "output_field": "majority_opcat_name",
                     "default_value": None,
                 },
@@ -322,7 +312,7 @@ class NutrientAssessment:
         """Calculate land use change nutrient impacts."""
         logger.info("Calculating land use impacts")
 
-        nn_version = self._resolve_latest_version(SpatialLayerType.NN_CATCHMENTS)
+        nn_version = self._resolve_latest_version(NnCatchments)
         coeff_version = self._resolve_latest_coeff_version()
 
         land_use_intersections = self.repository.land_use_intersection_postgis(

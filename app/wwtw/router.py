@@ -24,8 +24,7 @@ from shapely.geometry import shape
 from sqlalchemy import select, text
 
 from app.config import DatabaseSettings
-from app.models.db import LookupTable, SpatialLayer
-from app.models.enums import SpatialLayerType
+from app.models.db import LookupTable, WwtwCatchments
 from app.repositories.engine import create_db_engine
 from app.repositories.repository import Repository
 
@@ -64,9 +63,7 @@ def _load_wwtw_lookup(repository: Repository) -> pd.DataFrame:
 
     with repository.session() as session:
         row = session.execute(
-            text(
-                "SELECT MAX(version) FROM nrf_reference.lookup_table WHERE name = :name"
-            ),
+            text("SELECT MAX(version) FROM public.lookup_table WHERE name = :name"),
             {"name": name},
         ).fetchone()
     version = row[0] if row and row[0] is not None else 1
@@ -164,12 +161,11 @@ def _find_nearby_wwtws(
 
     stmt = (
         select(
-            SpatialLayer.attributes["WwTw_ID"].astext.label("wwtw_id"),
-            ST_Distance(SpatialLayer.geometry, rlb_centroid).label("distance_m"),
+            WwtwCatchments.attributes["WwTw_ID"].astext.label("wwtw_id"),
+            ST_Distance(WwtwCatchments.geometry, rlb_centroid).label("distance_m"),
         )
         .where(
-            SpatialLayer.layer_type == SpatialLayerType.WWTW_CATCHMENTS,
-            ST_DWithin(SpatialLayer.geometry, rlb_centroid, max_distance_m),
+            ST_DWithin(WwtwCatchments.geometry, rlb_centroid, max_distance_m),
         )
         .order_by("distance_m")
     )

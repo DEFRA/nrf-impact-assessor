@@ -19,6 +19,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      - name: Check Alembic / Liquibase migration parity
+        run: python scripts/check_migration_parity.py
+
       - name: Test code and Create Test Coverage Reports
         uses: actions/setup-python@v6
         with:

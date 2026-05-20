@@ -8,7 +8,7 @@ import pytest
 from shapely.geometry import Polygon
 
 from app.assessments.nutrient import NutrientAssessment
-from app.models.enums import SpatialLayerType
+from app.models.db import LpaBoundaries, Subcatchments, WwtwCatchments
 
 
 @pytest.fixture
@@ -219,39 +219,9 @@ _LU_COLUMNS = [
     "area_in_nn_catchment_ha",
 ]
 
-_GDF_LAYER_TYPES = [
-    SpatialLayerType.WWTW_CATCHMENTS,
-    SpatialLayerType.LPA_BOUNDARIES,
-    SpatialLayerType.SUBCATCHMENTS,
-    SpatialLayerType.NN_CATCHMENTS,
-]
 
-_MAJORITY_LAYER_ATTR = {
-    SpatialLayerType.WWTW_CATCHMENTS: "WwTw_ID",
-    SpatialLayerType.LPA_BOUNDARIES: "NAME",
-    SpatialLayerType.SUBCATCHMENTS: "OPCAT_NAME",
-}
-
-
-def _layer_type_from_params(compiled_params) -> SpatialLayerType | None:
-    for pv in compiled_params.values():
-        if isinstance(pv, SpatialLayerType):
-            return pv
-    return None
-
-
-def _gdf_execute_query(
-    compiled_params, wwtw, lpa, subcatchments, nn
-) -> gpd.GeoDataFrame:
-    layer = _layer_type_from_params(compiled_params)
-    mapping = {
-        SpatialLayerType.WWTW_CATCHMENTS: wwtw,
-        SpatialLayerType.LPA_BOUNDARIES: lpa,
-        SpatialLayerType.SUBCATCHMENTS: subcatchments,
-        SpatialLayerType.NN_CATCHMENTS: nn,
-    }
-    sample = mapping.get(layer)
-    return sample.copy() if sample is not None else gpd.GeoDataFrame()
+def _gdf_execute_query(wwtw, lpa, subcatchments, nn) -> gpd.GeoDataFrame:
+    return nn.copy()
 
 
 def _scalar_execute_query(stmt, rates_lookup, wwtw_lookup):
@@ -266,18 +236,18 @@ def _scalar_execute_query(stmt, rates_lookup, wwtw_lookup):
     return []
 
 
-def _resolve_majority_layer(overlay_filter, wwtw, lpa, subcatchments):
+def _resolve_majority_layer(overlay_table, wwtw, lpa, subcatchments):
     """Return (layer_data_copy, attr_key) or (None, None) if unrecognised."""
-    samples = {
-        SpatialLayerType.WWTW_CATCHMENTS: (wwtw, "WwTw_ID"),
-        SpatialLayerType.LPA_BOUNDARIES: (lpa, "NAME"),
-        SpatialLayerType.SUBCATCHMENTS: (subcatchments, "OPCAT_NAME"),
+    mapping = {
+        WwtwCatchments: (wwtw, "WwTw_ID"),
+        LpaBoundaries: (lpa, "NAME"),
+        Subcatchments: (subcatchments, "OPCAT_NAME"),
     }
-    for pv in overlay_filter.compile().params.values():
-        if pv in samples:
-            gdf, attr_key = samples[pv]
-            return gdf.copy(), attr_key
-    return None, None
+    entry = mapping.get(overlay_table)
+    if entry is None:
+        return None, None
+    gdf, attr_key = entry
+    return gdf.copy(), attr_key
 
 
 def _compute_majority_overlap(
@@ -344,10 +314,8 @@ def mock_repository(
     repo.session.return_value.__enter__.return_value = mock_session
 
     def execute_query_side_effect(stmt, as_gdf=False):
-        compiled_params = stmt.compile().params
         if as_gdf:
             return _gdf_execute_query(
-                compiled_params,
                 sample_wwtw_catchments,
                 sample_lpa_boundaries,
                 sample_subcatchments,
@@ -365,7 +333,7 @@ def mock_repository(
         default_value=None,
     ):
         layer_data, attr_key = _resolve_majority_layer(
-            overlay_filter,
+            overlay_table,
             sample_wwtw_catchments,
             sample_lpa_boundaries,
             sample_subcatchments,

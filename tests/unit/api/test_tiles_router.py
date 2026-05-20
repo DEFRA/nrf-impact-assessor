@@ -183,9 +183,7 @@ class TestTilesRouterVersionResolution:
             response = client.get("/tiles/nn_catchments/10/507/338.mvt")
 
         assert response.status_code == 200
-        cached = tiles_router_module._version_cache.get(
-            tiles_router_module.TILE_LAYERS["nn_catchments"]
-        )
+        cached = tiles_router_module._version_cache.get("nn_catchments")
         assert cached is not None
         resolved_version, _expiry = cached
         assert resolved_version == 1

@@ -43,8 +43,18 @@ from settings import ScriptSettings
 from sqlalchemy import delete, func, select
 
 from app.config import DatabaseSettings
-from app.models.db import CoefficientLayer, EdpBoundaryLayer, LookupTable, SpatialLayer
-from app.models.enums import SpatialLayerType
+from app.models.db import (
+    CoefficientLayer,
+    EdpBoundaryLayer,
+    EdpEdges,
+    GcnPonds,
+    GcnRiskZones,
+    LookupTable,
+    LpaBoundaries,
+    NnCatchments,
+    Subcatchments,
+    WwtwCatchments,
+)
 from app.repositories.engine import create_db_engine
 from app.repositories.repository import Repository
 
@@ -183,56 +193,43 @@ class SpatialDataLoader:
             layer_types: Optional list of layer type names to load.
                         If None, loads all layers. Does NOT include 'coefficients'.
         """
-        # Define layer configurations for SpatialLayer table
-        # Nutrient mitigation layers (shapefiles)
-        # GCN layers (GeoDatabase files)
-        # Coefficient layer loaded separately
         layers_config = {
-            # Nutrient mitigation layers
-            "wwtw_catchments": {
-                "type": SpatialLayerType.WWTW_CATCHMENTS,
-                "path": self.wwtw_shapefile,
-            },
-            "lpa_boundaries": {
-                "type": SpatialLayerType.LPA_BOUNDARIES,
-                "path": self.lpa_shapefile,
-            },
+            "wwtw_catchments": {"model": WwtwCatchments, "path": self.wwtw_shapefile},
+            "lpa_boundaries": {"model": LpaBoundaries, "path": self.lpa_shapefile},
             "nn_catchments": {
-                "type": SpatialLayerType.NN_CATCHMENTS,
+                "model": NnCatchments,
                 "path": self.nn_catchment_shapefile,
             },
             "subcatchments": {
-                "type": SpatialLayerType.SUBCATCHMENTS,
+                "model": Subcatchments,
                 "path": self.subcatchment_shapefile,
             },
-            # GCN assessment layers
             "gcn_risk_zones": {
-                "type": SpatialLayerType.GCN_RISK_ZONES,
+                "model": GcnRiskZones,
                 "path": self.gcn_risk_zones_gdb,
                 "layer": self.gcn_risk_zones_layer,
             },
             "gcn_ponds": {
-                "type": SpatialLayerType.GCN_PONDS,
+                "model": GcnPonds,
                 "path": self.gcn_ponds_gdb,
                 "layer": self.gcn_ponds_layer,
             },
             "edp_edges": {
-                "type": SpatialLayerType.EDP_EDGES,
+                "model": EdpEdges,
                 "path": self.edp_edges_gdb,
                 "layer": self.edp_edges_layer,
             },
         }
 
-        # Filter by requested layer types
         if layer_types:
             layers_config = {k: v for k, v in layers_config.items() if k in layer_types}
 
         for layer_name, config in layers_config.items():
             self._load_spatial_layer(
                 layer_name=layer_name,
-                layer_type=config["type"],
+                model=config["model"],
                 file_path=config["path"],
-                layer=config.get("layer"),  # Optional layer name for GeoDatabase files
+                layer=config.get("layer"),
             )
 
     @staticmethod
@@ -309,7 +306,7 @@ class SpatialDataLoader:
         gdf.to_postgis(
             name=table_name,
             con=self.repository.engine,
-            schema="nrf_reference",
+            schema="public",
             if_exists="append",
             index=False,
             chunksize=chunksize,
@@ -407,7 +404,7 @@ class SpatialDataLoader:
         gdf.to_postgis(
             name="coefficient_layer",
             con=engine,
-            schema="nrf_reference",
+            schema="public",
             if_exists="append",
             index=False,
             chunksize=10000,
@@ -423,15 +420,15 @@ class SpatialDataLoader:
     def _load_spatial_layer(
         self,
         layer_name: str,
-        layer_type: SpatialLayerType,
+        model: type,
         file_path: Path,
         layer: str | None = None,
     ) -> None:
-        """Load a single spatial layer into PostGIS using fast to_postgis() method.
+        """Load a single spatial layer into its dedicated PostGIS table.
 
         Args:
             layer_name: Human-readable layer name for logging
-            layer_type: SpatialLayerType enum value
+            model: SQLAlchemy model class for the target table
             file_path: Path to shapefile or geopackage
             layer: Layer name for geopackage (None for shapefile)
         """
@@ -448,16 +445,13 @@ class SpatialDataLoader:
         gdf, total_features = self._apply_sample_mode(gdf)
 
         clean_gdf = self._build_base_clean_gdf(gdf)
-        clean_gdf["layer_type"] = layer_type.name
 
         self._clear_load_verify(
             clean_gdf,
-            "spatial_layer",
+            model.__tablename__,
             total_features,
-            delete(SpatialLayer).where(SpatialLayer.layer_type == layer_type),
-            select(func.count())
-            .select_from(SpatialLayer)
-            .where(SpatialLayer.layer_type == layer_type),
+            delete(model),
+            select(func.count()).select_from(model),
         )
 
     def load_edp_boundaries(self) -> None:
