@@ -31,4 +31,4 @@ repos:
         entry: python scripts/check_migration_parity.py
         language: system
         pass_filenames: false
-        files: '^(alembic/versions/|changelog/changesets/)'
+        files: '^(alembic/versions/|changelog/db\.changelog-)'
