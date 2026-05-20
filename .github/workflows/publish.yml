@@ -32,7 +32,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish Database Schema
-        uses: DEFRA/cdp-build-action/publish-db-migrations@main
+        uses: DEFRA/cdp-build-action/publish-db-migrations@550c4792fac07cfd59eaea469bc0a17ce202cced # main
         with:
           path: ./changelog
           github-token: ${{ secrets.GITHUB_TOKEN }}
