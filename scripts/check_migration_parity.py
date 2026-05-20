@@ -12,7 +12,8 @@ import sys
 from pathlib import Path
 
 VERSIONS_DIR = Path("alembic/versions")
-CHANGELOG_DIR = Path("changelog/changesets")
+CHANGELOG_DIR = Path("changelog")
+CHANGELOG_GLOB = "db.changelog-*.xml"
 
 _REVISION_RE = re.compile(
     r'^revision[^=\n]*=\s*["\']([a-f0-9]+)["\']',
@@ -57,7 +58,7 @@ def _walk_chain(revisions: dict[str, str | None]) -> list[str]:
 
 def _load_covered_revisions(changelog_dir: Path) -> dict[str, Path]:
     covered: dict[str, Path] = {}
-    for path in sorted(changelog_dir.glob("*.xml")):
+    for path in sorted(changelog_dir.glob(CHANGELOG_GLOB)):
         for match in _LIQUIBASE_REF_RE.finditer(path.read_text()):
             covered[match.group(1)] = path
     return covered
@@ -88,7 +89,7 @@ def main() -> int:
         for rev in missing:
             print(f"  {rev}")
         print()
-        print("Add a changeset to changelog/changesets/ containing:")
+        print("Add a changeset to changelog/db.changelog-<version>.xml containing:")
         for rev in missing:
             print(f"  <!-- Alembic revision: {rev} -->")
         return 1
