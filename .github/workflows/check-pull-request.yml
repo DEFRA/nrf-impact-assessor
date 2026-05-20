@@ -44,10 +44,3 @@ jobs:
 
       - name: Verify git hash in Docker image
         run: docker run --rm --entrypoint cat nrf-impact-assessor .git-hash
-
-      - name: SonarCloud Scan
-        if: github.actor != 'dependabot[bot]'
-        uses: SonarSource/sonarqube-scan-action@v8 #  (or check latest version on https://github.com/marketplace/actions/official-sonarqube-scan)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
