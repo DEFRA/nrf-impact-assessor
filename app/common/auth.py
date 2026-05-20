@@ -13,7 +13,7 @@ API_KEY_HEADER = "x-api-key"
 _api_key_header = APIKeyHeader(name=API_KEY_HEADER, auto_error=False)
 
 
-async def require_api_key(provided: str | None = Security(_api_key_header)) -> None:
+def require_api_key(provided: str | None = Security(_api_key_header)) -> None:
     """FastAPI dependency that enforces a valid x-api-key header.
 
     Fails closed: if no key is configured on the server, every request is rejected
