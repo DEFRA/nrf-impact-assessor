@@ -31,19 +31,19 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Publish Database Schema
+        uses: DEFRA/cdp-build-action/publish-db-migrations@550c4792fac07cfd59eaea469bc0a17ce202cced # main
+        with:
+          path: ./changelog
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Test code and Create Test Coverage Reports
         uses: actions/setup-python@v6
         with:
-          python-version: 3.13
+          python-version: 3.14
           cache: 'pip'
       - run: |
           pipx install uv
           uv sync --frozen
           uv run ruff check
           uv run pytest
-
-#      - name: SonarCloud Scan
-#        uses: SonarSource/sonarcloud-github-action@master
-#        env:
-#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-#          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

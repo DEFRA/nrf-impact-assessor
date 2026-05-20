@@ -45,6 +45,6 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Run tests
-        uses: ./run-impact-tests
+        uses: ./.github/actions/run-impact-tests
         with:
           test_type: ${{ inputs.test_type }}
