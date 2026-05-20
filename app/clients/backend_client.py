@@ -13,10 +13,17 @@ logger = logging.getLogger(__name__)
 class BackendClient:
     """Sends assessment results back to nrf-backend via PATCH /quotes/{reference}."""
 
-    def __init__(self, base_url: str, timeout: int = 30, max_retries: int = 3):
+    def __init__(
+        self,
+        base_url: str,
+        timeout: int = 30,
+        max_retries: int = 3,
+        api_key: str = "",
+    ):
         self.base_url = base_url.rstrip("/")
         self.max_retries = max_retries
         self._client = create_client(request_timeout=timeout)
+        self._headers = {"x-api-key": api_key} if api_key else {}
 
     def patch_quote(self, reference: str, payload: dict) -> None:
         """PATCH /quotes/{reference} with assessment results.
@@ -40,7 +47,7 @@ class BackendClient:
 
         for attempt in range(self.max_retries + 1):
             try:
-                response = self._client.patch(url, json=payload)
+                response = self._client.patch(url, json=payload, headers=self._headers)
                 response.raise_for_status()
                 elapsed = time.monotonic() - start
                 logger.info(

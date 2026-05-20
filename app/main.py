@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from logging import getLogger
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exception_handlers import (
     http_exception_handler as default_http_exception_handler,
 )
@@ -10,6 +10,7 @@ from fastapi.responses import Response
 
 from app.assess.router import router as assess_router
 from app.boundary.router import router as boundary_router
+from app.common.auth import require_api_key
 from app.common.mongo import get_mongo_client
 from app.common.tls import cleanup_cert_files, init_custom_certificates
 from app.common.tracing import TraceIdMiddleware
@@ -49,18 +50,27 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> Respon
 app.add_middleware(TraceIdMiddleware)
 
 # Setup Routes
+# Public (unauthenticated) routers — health and version are used by ELB / k8s probes.
 app.include_router(health_router)
 app.include_router(version_router)
-app.include_router(assess_router)
-app.include_router(boundary_router)
-app.include_router(tiles_router)
-app.include_router(wwtw_router)
+
+# All other routers require a valid x-api-key header (service-to-service auth).
+protected_dependencies = [Depends(require_api_key)]
+app.include_router(assess_router, dependencies=protected_dependencies)
+app.include_router(boundary_router, dependencies=protected_dependencies)
+app.include_router(tiles_router, dependencies=protected_dependencies)
+app.include_router(wwtw_router, dependencies=protected_dependencies)
 
 if ApiServerConfig().testing_enabled:
     from app.test.router import router as test_router
 
     logger.info("API_TESTING_ENABLED=true: mounting /test/* endpoints")
-    app.include_router(test_router, prefix="/test", tags=["test"])
+    app.include_router(
+        test_router,
+        prefix="/test",
+        tags=["test"],
+        dependencies=protected_dependencies,
+    )
 
 
 def main() -> None:  # pragma: no cover

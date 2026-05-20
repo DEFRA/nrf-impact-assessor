@@ -21,6 +21,13 @@ class AppConfig(BaseSettings):
     enable_metrics: bool = False
     tracing_header: str = "x-cdp-request-id"
     workers: int = 1
+    impact_assessor_api_key: str = Field(
+        default="",
+        description=(
+            "Required value of the x-api-key header on incoming requests to "
+            "non-public endpoints (reads IMPACT_ASSESSOR_API_KEY)"
+        ),
+    )
 
 
 config = AppConfig()
@@ -320,6 +327,13 @@ class BackendConfig(BaseSettings):
     )
 
     base_url: str = Field(default="", description="Base URL for nrf-backend API")
+    api_key: str = Field(
+        default="",
+        description=(
+            "Value of the x-api-key header sent on outbound calls to nrf-backend "
+            "(reads BACKEND_API_KEY)"
+        ),
+    )
     callback_timeout: int = Field(
         default=30, ge=1, description="HTTP timeout in seconds for callbacks"
     )

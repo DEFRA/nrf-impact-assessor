@@ -529,6 +529,7 @@ def patch_backend(request: PatchBackendRequest) -> PatchBackendResponse:
         base_url=backend_config.base_url,
         timeout=backend_config.callback_timeout,
         max_retries=backend_config.callback_max_retries,
+        api_key=backend_config.api_key,
     )
     url = f"{client.base_url}/quotes/{request.reference}"
     logger.info("Test PATCH payload → %s payload=%s", url, payload)
