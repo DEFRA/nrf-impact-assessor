@@ -17,7 +17,6 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.db import Base
-from app.models.enums import SpatialLayerType
 
 logger = logging.getLogger(__name__)
 
@@ -405,12 +404,11 @@ class Repository:
                             ST_Intersection(ST_Intersection(r.geom, c.geometry), nn.geometry)
                         ) / 10000.0 AS area_in_nn_catchment_ha
                     FROM _tmp_rlb r
-                    JOIN nrf_reference.coefficient_layer c
+                    JOIN public.coefficient_layer c
                         ON c.version = :coeff_version
                         AND ST_Intersects(r.geom, c.geometry)
-                    JOIN nrf_reference.spatial_layer nn
-                        ON nn.layer_type = CAST(:nn_layer_type AS nrf_reference.spatial_layer_type)
-                        AND nn.version = :nn_version
+                    JOIN public.nn_catchments nn
+                        ON nn.version = :nn_version
                         AND ST_Intersects(r.geom, nn.geometry)
                         AND ST_Intersects(c.geometry, nn.geometry)
                 ) sub
@@ -422,7 +420,6 @@ class Repository:
                 {
                     "coeff_version": coeff_version,
                     "nn_version": nn_version,
-                    "nn_layer_type": SpatialLayerType.NN_CATCHMENTS.name,
                 },
             ).fetchall()
 

@@ -9,6 +9,7 @@ from shapely.geometry import shape
 from app.assessments.adapters import nutrient_adapter
 from app.clients.backend_client import BackendClient
 from app.clients.payload_mapper import build_quote_patch_payload
+from app.common.tracing import ctx_trace_id
 from app.config import AWSConfig
 from app.models.enums import AssessmentType
 from app.models.job import ImpactAssessmentJob
@@ -46,6 +47,8 @@ class JobOrchestrator:
         """
         start_time = time.time()
         job_id = job.reference or "unknown"
+        if job.trace_id:
+            ctx_trace_id.set(job.trace_id)
         logger.info(
             f"Processing job {job_id} for assessment type: {assessment_type.value}"
         )
@@ -225,7 +228,7 @@ class JobOrchestrator:
                 f"Sent assessment results to nrf-backend for quote {job.reference} "
                 f"({len(edps)} EDP(s): {edp_names})"
             )
-        except Exception as e:
-            logger.error(
-                f"Failed to send results to nrf-backend for quote {job.reference}: {e}"
+        except Exception:
+            logger.exception(
+                f"Failed to send results to nrf-backend for quote {job.reference}"
             )

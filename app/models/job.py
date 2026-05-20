@@ -39,6 +39,7 @@ class ImpactAssessmentJob(BaseModel):
     waste_water_treatment_works_id: str | None = Field(
         default=None, alias="wasteWaterTreatmentWorksId"
     )
+    trace_id: str | None = Field(default=None, alias="traceId")
 
     model_config = {
         "populate_by_name": True,
