@@ -15,6 +15,7 @@ from app.common.tls import cleanup_cert_files, init_custom_certificates
 from app.common.tracing import TraceIdMiddleware
 from app.config import ApiServerConfig, config
 from app.health.router import router as health_router
+from app.repositories.engine import warm_shared_engine
 from app.tiles.router import router as tiles_router
 from app.version.router import router as version_router
 from app.wwtw.router import router as wwtw_router
@@ -28,6 +29,10 @@ async def lifespan(_: FastAPI):
     init_custom_certificates()
     client = await get_mongo_client()
     logger.info("MongoDB client connected")
+    try:
+        warm_shared_engine()
+    except Exception:
+        logger.exception("Shared DB engine warmup failed; continuing startup")
     yield
     # Shutdown
     if client:

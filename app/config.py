@@ -400,8 +400,6 @@ class TileServerConfig(BaseSettings):
     version_ttl_seconds: int = Field(default=300)
     min_zoom: int = Field(default=0)
     max_zoom: int = Field(default=22)
-    db_pool_size: int = Field(default=5)
-    db_max_overflow: int = Field(default=5)
 
 
 class DebugConfig:

@@ -6,9 +6,11 @@ Supports both local development (static password) and CDP cloud deployment
 
 import logging
 import os
+import threading
+import time
 
 import boto3
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import NullPool, QueuePool
 
@@ -20,6 +22,35 @@ logger = logging.getLogger(__name__)
 # Token lifetime is 15 minutes; recycle connections at 10 minutes
 # to ensure fresh tokens before expiry
 IAM_TOKEN_POOL_RECYCLE_SECONDS = 600
+
+# Cache IAM tokens with a safety margin below the 15-minute RDS expiry,
+# so new pool connections reuse a token instead of paying ~250 ms each.
+IAM_TOKEN_CACHE_TTL_SECONDS = 13 * 60
+
+_TOKEN_CACHE_LOCK = threading.Lock()
+_TOKEN_CACHE: dict = {"token": None, "expires": 0.0}
+
+_SHARED_LOCK = threading.Lock()
+_SHARED_ENGINE: Engine | None = None
+_SHARED_REPOSITORY = None  # type: ignore[var-annotated]
+
+DEFAULT_SHARED_POOL_SIZE = 10
+DEFAULT_SHARED_MAX_OVERFLOW = 10
+
+
+def _get_iam_auth_token_cached(settings: DatabaseSettings, region: str) -> str:
+    now = time.time()
+    cached = _TOKEN_CACHE["token"]
+    if cached and now < _TOKEN_CACHE["expires"]:
+        return cached
+    with _TOKEN_CACHE_LOCK:
+        cached = _TOKEN_CACHE["token"]
+        if cached and time.time() < _TOKEN_CACHE["expires"]:
+            return cached
+        token = _get_iam_auth_token(settings, region)
+        _TOKEN_CACHE["token"] = token
+        _TOKEN_CACHE["expires"] = time.time() + IAM_TOKEN_CACHE_TTL_SECONDS
+        return token
 
 
 def _get_iam_auth_token(settings: DatabaseSettings, region: str) -> str:
@@ -71,7 +102,7 @@ def _get_iam_auth_token(settings: DatabaseSettings, region: str) -> str:
 def _get_password(settings: DatabaseSettings, region: str) -> str:
     """Get the appropriate password based on authentication mode."""
     if settings.iam_authentication:
-        return _get_iam_auth_token(settings, region)
+        return _get_iam_auth_token_cached(settings, region)
     return settings.local_password
 
 
@@ -126,10 +157,8 @@ def _create_pooled_engine(
 
         @event.listens_for(engine, "do_connect")
         def provide_token(_dialect, _conn_rec, _cargs, cparams):
-            """Inject fresh IAM token before each connection."""
-            logger.debug("do_connect event: requesting fresh IAM token")
-            cparams["password"] = _get_iam_auth_token(settings, region)
-            logger.debug("do_connect event: IAM token injected into connection params")
+            """Inject a (possibly cached) IAM token before each connection."""
+            cparams["password"] = _get_iam_auth_token_cached(settings, region)
 
         logger.info(
             "Created engine with IAM authentication: pool_size=%d, max_overflow=%d, pool_recycle=%ds",
@@ -218,3 +247,45 @@ def create_db_engine(
         )
 
     return engine
+
+
+def get_shared_engine(
+    pool_size: int = DEFAULT_SHARED_POOL_SIZE,
+    max_overflow: int = DEFAULT_SHARED_MAX_OVERFLOW,
+) -> Engine:
+    """Return the process-wide shared SQLAlchemy engine, creating it on first call."""
+    global _SHARED_ENGINE
+    if _SHARED_ENGINE is not None:
+        return _SHARED_ENGINE
+    with _SHARED_LOCK:
+        if _SHARED_ENGINE is None:
+            _SHARED_ENGINE = create_db_engine(
+                DatabaseSettings(),
+                pool_size=pool_size,
+                max_overflow=max_overflow,
+            )
+        return _SHARED_ENGINE
+
+
+def get_shared_repository():
+    """Return the process-wide shared Repository, creating it on first call."""
+    global _SHARED_REPOSITORY
+    if _SHARED_REPOSITORY is not None:
+        return _SHARED_REPOSITORY
+    # Resolve the engine before acquiring _SHARED_LOCK — get_shared_engine
+    # also takes _SHARED_LOCK and threading.Lock is non-reentrant.
+    engine = get_shared_engine()
+    with _SHARED_LOCK:
+        if _SHARED_REPOSITORY is None:
+            from app.repositories.repository import Repository
+
+            _SHARED_REPOSITORY = Repository(engine)
+        return _SHARED_REPOSITORY
+
+
+def warm_shared_engine() -> None:
+    """Open one connection on the shared engine to prime the IAM token cache and verify connectivity."""
+    engine = get_shared_engine()
+    with engine.connect() as conn:
+        conn.execute(text("SELECT 1"))
+    logger.info("Shared DB engine warmed (IAM token cached, connectivity verified)")

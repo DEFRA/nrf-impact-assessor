@@ -44,7 +44,6 @@ BACKUP_FILE  ?= $(BACKUP_DIR)/$(DB_NAME)_$(TS).sql.gz
 
 # Tables to include in per-table backup (schema-qualified)
 DB_TABLES = \
-	public.spatial_layer \
 	public.coefficient_layer \
 	public.edp_boundary_layer \
 	public.lookup_table \
@@ -58,13 +57,13 @@ DB_TABLES = \
 
 db-backup: ## Full backup — schema, data, custom types and grants (.sql.gz)
 	@mkdir -p $(BACKUP_DIR)
-	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain \
+	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
 		--no-password $(DB_NAME) | gzip > $(BACKUP_FILE)
 	@echo "Backup written to $(BACKUP_FILE)"
 
 db-backup-schema: ## Schema-only backup — tables, enums, indexes, grants (.sql.gz, no data)
 	@mkdir -p $(BACKUP_DIR)
-	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain \
+	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
 		--schema-only --no-password $(DB_NAME) \
 		| gzip > $(BACKUP_DIR)/$(DB_NAME)_schema_$(TS).sql.gz
 	@echo "Schema backup written to $(BACKUP_DIR)"
@@ -79,14 +78,15 @@ db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table 
 	@mkdir -p $(BACKUP_DIR)
 	@schema_out="$(BACKUP_DIR)/public_schema_$(TS).sql.gz"; \
 	echo "  public schema → $$schema_out"; \
-	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain \
+	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
 		--no-password --schema-only -n public $(DB_NAME) | gzip > "$$schema_out"
 	@for table in $(DB_TABLES); do \
 		name=$$(echo $$table | tr '.' '_'); \
 		out="$(BACKUP_DIR)/$${name}_$(TS).sql.gz"; \
 		echo "  $$table → $$out"; \
-		docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain \
-			--no-password --data-only -t $$table $(DB_NAME) | gzip > "$$out"; \
+		{ echo "TRUNCATE TABLE $$table;"; \
+		  docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
+			--no-password --data-only -t $$table $(DB_NAME); } | gzip > "$$out"; \
 	done
 	@echo "Per-table backups written to $(BACKUP_DIR)"
 
