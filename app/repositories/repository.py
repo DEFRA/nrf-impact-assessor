@@ -4,6 +4,7 @@ This module provides a unified interface for querying spatial layers and lookup
 tables stored in PostGIS using SQLAlchemy 2.x query builder patterns.
 """
 
+import hashlib
 import logging
 import re
 import time
@@ -12,11 +13,21 @@ from typing import Any
 
 import geopandas as gpd
 import pandas as pd
+from cachetools import TTLCache
 from sqlalchemy import Select, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.config import SpatialCacheConfig
 from app.models.db import Base
+
+_cache_cfg = SpatialCacheConfig()
+_land_use_cache: TTLCache = TTLCache(
+    maxsize=_cache_cfg.max_size, ttl=_cache_cfg.ttl_seconds
+)
+_intersection_cache: TTLCache = TTLCache(
+    maxsize=_cache_cfg.max_size, ttl=_cache_cfg.ttl_seconds
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +79,15 @@ def _sa_params(compiled_sql: str, params: dict, prefix: str = "") -> tuple[str, 
         return f":{new_name}"
 
     return re.sub(r"%\((\w+)\)s", repl, compiled_sql), renamed
+
+
+def _gdf_key(gdf: gpd.GeoDataFrame, cols: list[str]) -> str:
+    """Stable hash of selected GeoDataFrame columns + geometry WKT."""
+    rows = tuple(
+        tuple(str(row[c]) for c in cols) + (wkt,)
+        for row, wkt in zip(gdf.to_dict("records"), gdf.geometry.to_wkt(), strict=False)
+    )
+    return hashlib.sha256(str(rows).encode()).hexdigest()
 
 
 class Repository:
@@ -325,6 +345,18 @@ class Repository:
         nn_version: int,
     ) -> pd.DataFrame:
         """Perform 3-way spatial intersection (RLB x coefficient x NN catchment) in PostGIS."""
+        cache_key = (
+            _gdf_key(
+                input_gdf,
+                ["rlb_id", "dwellings", "name", "dwelling_category", "source"],
+            ),
+            coeff_version,
+            nn_version,
+        )
+        if cache_key in _land_use_cache:
+            logger.debug("land_use_intersection_postgis cache hit")
+            return _land_use_cache[cache_key].copy()
+
         if len(input_gdf) == 0:
             return pd.DataFrame(
                 columns=[
@@ -438,7 +470,9 @@ class Repository:
             "oid",
             "area_in_nn_catchment_ha",
         ]
-        return pd.DataFrame(rows, columns=columns)
+        result = pd.DataFrame(rows, columns=columns)
+        _land_use_cache[cache_key] = result
+        return result.copy()
 
     def intersection_postgis(
         self,
@@ -466,6 +500,22 @@ class Repository:
         input_union = input_gdf.union_all()
         input_wkt = input_union.wkt
 
+        filter_str = str(overlay_filter.compile(compile_kwargs={"literal_binds": True}))
+        cache_key = hashlib.sha256(
+            "|".join(
+                [
+                    input_wkt,
+                    overlay_table.__tablename__,
+                    filter_str,
+                    str(sorted(overlay_columns)),
+                    str(sorted(json_extracts.items()) if json_extracts else []),
+                ]
+            ).encode()
+        ).hexdigest()
+        if cache_key in _intersection_cache:
+            logger.debug("intersection_postgis cache hit")
+            return _intersection_cache[cache_key].copy()
+
         overlay_cols = [getattr(overlay_table, col) for col in overlay_columns]
 
         if json_extracts:
@@ -488,9 +538,11 @@ class Repository:
             ),
         )
 
-        return gpd.read_postgis(
+        result = gpd.read_postgis(
             stmt, self.engine, geom_col="geometry", crs="EPSG:27700"
         )
+        _intersection_cache[cache_key] = result
+        return result.copy()
 
     def close(self) -> None:
         """Close the repository and dispose of the engine."""

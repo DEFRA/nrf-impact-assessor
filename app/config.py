@@ -384,6 +384,21 @@ class ApiServerConfig(BaseSettings):
     )
 
 
+class SpatialCacheConfig(BaseSettings):
+    """Configuration for the in-memory spatial query cache."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="SPATIAL_CACHE_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    max_size: int = Field(default=256, description="Max number of cached query results")
+    ttl_seconds: int = Field(default=3600, description="Cache entry TTL in seconds")
+
+
 class TileServerConfig(BaseSettings):
     """Configuration for the XYZ vector tile endpoint."""
 
