@@ -49,6 +49,12 @@ class JobOrchestrator:
         job_id = job.reference or "unknown"
         if job.trace_id:
             ctx_trace_id.set(job.trace_id)
+            logger.info(f"Job {job_id} trace_id present, propagating to callbacks")
+        else:
+            logger.warning(
+                f"Job {job_id} has no trace_id; PATCH callback will omit the "
+                "tracing header (message body missing 'traceId')"
+            )
         logger.info(
             f"Processing job {job_id} for assessment type: {assessment_type.value}"
         )
