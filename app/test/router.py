@@ -35,6 +35,7 @@ from sqlalchemy import func, select, text
 from app.assess._geometry import inject_job_fields
 from app.clients.backend_client import BackendClient
 from app.clients.payload_mapper import build_quote_patch_payload
+from app.common.tracing import ctx_trace_id
 from app.config import AWSConfig, BackendConfig, DatabaseSettings
 from app.models.db import (
     CoefficientLayer,
@@ -170,6 +171,15 @@ class WktEnqueueRequest(BaseModel):
     dwelling_type: str = "house"
     dwellings: int = 1
     name: str = ""
+    trace_id: str | None = Field(
+        default=None,
+        description=(
+            "CDP trace id to embed in the queued message body as `traceId`. "
+            "When omitted, falls back to the inbound `x-cdp-request-id` header "
+            "(set by TraceIdMiddleware). The consumer propagates this onto the "
+            "outbound PATCH callback so the whole flow stays traced."
+        ),
+    )
 
 
 class WktEnqueueResponse(BaseModel):
@@ -335,6 +345,12 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
 
     sqs = boto3.client("sqs", **client_kwargs)
 
+    # Explicit body trace_id wins; otherwise inherit from inbound x-cdp-request-id
+    # (TraceIdMiddleware sets ctx_trace_id for the duration of this request).
+    # Trailing `or None` collapses empty strings to None so we never serialise
+    # `"traceId": ""` into the queued message.
+    trace_id = request.trace_id or ctx_trace_id.get(None) or None
+
     job = ImpactAssessmentJob(
         reference=reference,
         boundary_geojson=BoundaryGeojson(
@@ -343,6 +359,7 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
         ),
         development_types=[request.dwelling_type],
         residential_building_count=request.dwellings,
+        trace_id=trace_id,
     )
 
     try:
