@@ -98,6 +98,9 @@ services:
       DB_HOST: postgres
       DB_IAM_AUTHENTICATION: "false" # Disable IAM authentication for local development
       API_TESTING_ENABLED: "true"   # Enable API testing in development environment
+      # Service-to-service API keys (local dev only; real values come from CDP secrets)
+      IMPACT_ASSESSOR_API_KEY: ${IMPACT_ASSESSOR_API_KEY:-local-dev-impact-assessor-key}
+      BACKEND_API_KEY: ${BACKEND_API_KEY:-local-dev-backend-key}
     develop:
       watch:
         - action: sync+restart

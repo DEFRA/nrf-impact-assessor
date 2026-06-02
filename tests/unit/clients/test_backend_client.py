@@ -33,7 +33,7 @@ class TestPatchQuote:
         client.patch_quote("NRF-000001", {"edps": []})
 
         mock_http_client.patch.assert_called_once_with(
-            "https://test/quotes/NRF-000001", json={"edps": []}
+            "https://test/quotes/NRF-000001", json={"edps": []}, headers={}
         )
 
     def test_404_not_retried(self, mock_http_client):
@@ -100,5 +100,19 @@ class TestPatchQuote:
         client.patch_quote("NRF-000001", {"edps": []})
 
         mock_http_client.patch.assert_called_once_with(
-            "https://test/quotes/NRF-000001", json={"edps": []}
+            "https://test/quotes/NRF-000001", json={"edps": []}, headers={}
+        )
+
+    def test_api_key_sent_in_header(self, mock_http_client):
+        mock_http_client.patch.return_value = _make_response(200)
+        client = BackendClient(
+            base_url="https://test", max_retries=0, api_key="secret-key"
+        )
+
+        client.patch_quote("NRF-000001", {"edps": []})
+
+        mock_http_client.patch.assert_called_once_with(
+            "https://test/quotes/NRF-000001",
+            json={"edps": []},
+            headers={"x-api-key": "secret-key"},
         )

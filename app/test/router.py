@@ -352,7 +352,7 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
             MessageBody=job.model_dump_json(by_alias=True),
         )
     except ClientError as e:
-        logger.exception("SQS send failed")
+        logger.exception("SQS send failed: %s", e)
         raise HTTPException(
             status_code=502,
             detail=f"SQS send failed — is LocalStack running? ({e})",
@@ -520,6 +520,7 @@ def patch_backend(request: PatchBackendRequest) -> PatchBackendResponse:
         base_url=backend_config.base_url,
         timeout=backend_config.callback_timeout,
         max_retries=backend_config.callback_max_retries,
+        api_key=backend_config.api_key,
     )
     url = f"{client.base_url}/quotes/{request.reference}"
     logger.info("Test PATCH payload → %s payload=%s", url, payload)
@@ -533,7 +534,7 @@ def patch_backend(request: PatchBackendRequest) -> PatchBackendResponse:
             detail=f"Backend PATCH failed with HTTP {e.response.status_code}: {e.response.text}",
         ) from e
     except httpx.TransportError as e:
-        logger.exception(f"Test PATCH {url} failed: transport error")
+        logger.exception(f"Test PATCH {url} failed: transport error: {e}")
         raise HTTPException(
             status_code=502,
             detail=f"Backend PATCH failed with transport error: {e}",
