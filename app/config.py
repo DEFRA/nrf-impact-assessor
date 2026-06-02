@@ -3,7 +3,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import Field, HttpUrl
+from pydantic import Field, HttpUrl, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,6 +28,15 @@ class AppConfig(BaseSettings):
             "non-public endpoints (reads IMPACT_ASSESSOR_API_KEY)"
         ),
     )
+
+    @model_validator(mode="after")
+    def _require_api_key_in_production(self):
+        # Fail closed at startup if the api key is unset in production. Allows
+        # empty values in dev/test so local stacks without auth wired still boot.
+        if self.python_env == "production" and not self.impact_assessor_api_key:
+            msg = "IMPACT_ASSESSOR_API_KEY is required in production"
+            raise ValueError(msg)
+        return self
 
 
 config = AppConfig()
@@ -337,6 +346,16 @@ class BackendConfig(BaseSettings):
     callback_timeout: int = Field(
         default=30, ge=1, description="HTTP timeout in seconds for callbacks"
     )
+
+    @model_validator(mode="after")
+    def _require_api_key_in_production(self):
+        # Fail closed at startup if the api key is unset in production. Allows
+        # empty values in dev/test so local stacks without auth wired still boot.
+        if os.environ.get("PYTHON_ENV") == "production" and not self.api_key:
+            msg = "BACKEND_API_KEY is required in production"
+            raise ValueError(msg)
+        return self
+
     callback_max_retries: int = Field(
         default=3, ge=0, description="Max retry attempts for failed callbacks"
     )
