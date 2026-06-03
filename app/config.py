@@ -404,6 +404,48 @@ class TileServerConfig(BaseSettings):
     db_max_overflow: int = Field(default=5)
 
 
+class DataSyncConfig(BaseSettings):
+    """Configuration for S3-triggered reference-data reload."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="DATA_SYNC_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(
+        default=False, description="Mount the /admin/data-sync endpoint"
+    )
+    s3_bucket: str = Field(default="", description="Bucket holding dumps + manifest")
+    s3_prefix: str = Field(default="", description="Key prefix for dumps + manifest")
+    manifest_key: str = Field(
+        default="manifest.json", description="Manifest object key (relative to prefix)"
+    )
+    auth_token: str = Field(
+        default="", description="Shared token required to trigger a reload"
+    )
+    lock_key: int = Field(
+        default=728191, description="Postgres advisory lock key for reload runs"
+    )
+    tables: list[str] = Field(
+        default_factory=lambda: [
+            "coefficient_layer",
+            "edp_boundary_layer",
+            "edp_edges",
+            "gcn_ponds",
+            "gcn_risk_zones",
+            "lookup_table",
+            "lpa_boundaries",
+            "nn_catchments",
+            "subcatchments",
+            "wwtw_catchments",
+        ],
+        description="Fallback allow-list; manifest 'tables' map is authoritative",
+    )
+
+
 class DebugConfig:
     """Debug output configuration.
 
