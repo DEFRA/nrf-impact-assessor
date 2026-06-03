@@ -13,7 +13,7 @@ from app.boundary.router import router as boundary_router
 from app.common.mongo import get_mongo_client
 from app.common.tls import cleanup_cert_files, init_custom_certificates
 from app.common.tracing import TraceIdMiddleware
-from app.config import ApiServerConfig, config
+from app.config import ApiServerConfig, DataSyncConfig, config
 from app.health.router import router as health_router
 from app.tiles.router import router as tiles_router
 from app.version.router import router as version_router
@@ -61,6 +61,12 @@ if ApiServerConfig().testing_enabled:
 
     logger.info("API_TESTING_ENABLED=true: mounting /test/* endpoints")
     app.include_router(test_router, prefix="/test", tags=["test"])
+
+if DataSyncConfig().enabled:
+    from app.data_sync.router import router as data_sync_router
+
+    logger.info("DATA_SYNC_ENABLED=true: mounting /admin/data-sync endpoints")
+    app.include_router(data_sync_router, tags=["data-sync"])
 
 
 def main() -> None:  # pragma: no cover
