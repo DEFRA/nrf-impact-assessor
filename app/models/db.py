@@ -5,7 +5,16 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from geoalchemy2 import Geometry
-from sqlalchemy import DateTime, Float, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -180,3 +189,42 @@ class LookupTable(Base):
 
     def __repr__(self) -> str:
         return f"<LookupTable(id={self.id}, name={self.name}, rows={len(self.data)})>"
+
+
+class DataSyncRun(Base):
+    """Async reload job record. Status: 'running' | 'success' | 'failed'."""
+
+    __tablename__ = "data_sync_run"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    data_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    forced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class DataLoadHistory(Base):
+    """Per-table audit row for a reload run."""
+
+    __tablename__ = "data_load_history"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.data_sync_run.id"), nullable=False
+    )
+    table_name: Mapped[str] = mapped_column(String, nullable=False)
+    s3_key: Mapped[str] = mapped_column(String, nullable=False)
+    etag: Mapped[str] = mapped_column(String, nullable=False)
+    data_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    loaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
