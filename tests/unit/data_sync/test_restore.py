@@ -39,19 +39,23 @@ def test_wrap_sql_brackets_data_with_txn():
 
 
 def test_build_psql_env_local_password(monkeypatch):
+    from uuid import uuid4
+
     from app.config import DatabaseSettings
 
+    # Generated at runtime so there is no hard-coded credential literal.
+    secret = uuid4().hex
     settings = DatabaseSettings(
         host="localhost",
         port=5434,
         database="nrf_impact",
         user="postgres",
         iam_authentication=False,
-        local_password="pw",  # noqa: S106
+        local_password=secret,
     )
     env = build_psql_env(settings, region="eu-west-2")
     assert env["PGHOST"] == "localhost"
     assert env["PGPORT"] == "5434"
     assert env["PGDATABASE"] == "nrf_impact"
     assert env["PGUSER"] == "postgres"
-    assert env["PGPASSWORD"] == "pw"
+    assert env["PGPASSWORD"] == secret
