@@ -23,5 +23,15 @@ def test_parse_rejects_empty_tables():
 
 
 def test_parse_rejects_missing_version():
-    with pytest.raises(ValueError, match="data_version"):
+    with pytest.raises(ValueError, match="missing required key: data_version"):
         parse_manifest({"tables": {"nn_catchments": "x.sql.gz"}})
+
+
+def test_parse_rejects_missing_tables_key():
+    with pytest.raises(ValueError, match="missing required key: tables"):
+        parse_manifest({"data_version": "v1"})
+
+
+def test_parse_rejects_empty_data_version():
+    with pytest.raises(ValueError, match="data_version"):
+        parse_manifest({"data_version": "", "tables": {"nn_catchments": "x.sql.gz"}})
