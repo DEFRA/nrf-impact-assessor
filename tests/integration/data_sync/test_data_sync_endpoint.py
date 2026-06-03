@@ -10,6 +10,7 @@ import boto3
 import pytest
 from sqlalchemy import text
 
+from app.config import AWSConfig
 from app.data_sync.service import run_data_sync
 
 pytestmark = pytest.mark.integration
@@ -39,14 +40,15 @@ DUMP_SQL = (
 @pytest.fixture
 def s3_localstack(monkeypatch):
     endpoint = os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4568")
+    region = AWSConfig().region
     monkeypatch.setenv("DATA_SYNC_S3_BUCKET", BUCKET)
     monkeypatch.setenv("DATA_SYNC_S3_PREFIX", "dumps")
     monkeypatch.setenv("AWS_ENDPOINT_URL", endpoint)
-    client = boto3.client("s3", region_name="eu-west-2", endpoint_url=endpoint)
+    client = boto3.client("s3", region_name=region, endpoint_url=endpoint)
     with contextlib.suppress(client.exceptions.BucketAlreadyOwnedByYou):
         client.create_bucket(
             Bucket=BUCKET,
-            CreateBucketConfiguration={"LocationConstraint": "eu-west-2"},
+            CreateBucketConfiguration={"LocationConstraint": region},
         )
     return client
 
