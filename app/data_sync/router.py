@@ -45,7 +45,15 @@ def _create_run(*, forced: bool) -> UUID:
     return run_id
 
 
-@router.post("/admin/data-sync", status_code=202, dependencies=[Depends(require_token)])
+@router.post(
+    "/admin/data-sync",
+    status_code=202,
+    dependencies=[Depends(require_token)],
+    responses={
+        401: {"description": "Invalid or missing data-sync token"},
+        409: {"description": "A reload run is already in progress"},
+    },
+)
 def trigger_data_sync(background: BackgroundTasks, force: bool = False) -> dict:
     try:
         run_id = _create_run(forced=force)
@@ -57,7 +65,14 @@ def trigger_data_sync(background: BackgroundTasks, force: bool = False) -> dict:
     return {"run_id": str(run_id), "status": "running"}
 
 
-@router.get("/admin/data-sync/{run_id}", dependencies=[Depends(require_token)])
+@router.get(
+    "/admin/data-sync/{run_id}",
+    dependencies=[Depends(require_token)],
+    responses={
+        401: {"description": "Invalid or missing data-sync token"},
+        404: {"description": "Run not found"},
+    },
+)
 def get_data_sync(run_id: UUID) -> dict:
     db = DatabaseSettings()
     engine = create_db_engine(db, AWSConfig(), pool_size=1, max_overflow=0)
