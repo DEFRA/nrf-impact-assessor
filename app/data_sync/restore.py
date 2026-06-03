@@ -8,6 +8,7 @@ indexed table, and atomic so readers see old data until COMMIT.
 
 import gzip
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from app.config import DatabaseSettings
+from app.repositories.repository import _assert_safe_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +54,6 @@ def wrap_sql(
 
 def build_psql_env(settings: DatabaseSettings, region: str) -> dict[str, str]:
     """Build PG* environment for a psql subprocess from DatabaseSettings."""
-    import os
-
     env = dict(os.environ)
     env.update(
         PGHOST=settings.host,
@@ -79,6 +79,10 @@ def restore_table(
     dump_path: Path,
 ) -> None:
     """Restore one table from a gzipped data-only dump, transactionally."""
+    # The table name originates from an untrusted S3 manifest and is
+    # interpolated into raw SQL (TRUNCATE/DROP/CREATE INDEX); validate before
+    # it can reach any DB call or SQL string.
+    _assert_safe_identifier(table, "table")
     indexes = get_secondary_indexes(engine, table)
     drop_sql = [f"DROP INDEX IF EXISTS public.{name};" for name, _ in indexes]
     create_sql = [f"{ddl};" for _, ddl in indexes]

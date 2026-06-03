@@ -1,4 +1,20 @@
-from app.data_sync.restore import build_psql_env, wrap_sql
+import pytest
+
+from app.data_sync.restore import build_psql_env, restore_table, wrap_sql
+
+
+def test_restore_table_rejects_unsafe_table_name(tmp_path):
+    """A malicious/invalid table name must be rejected before any psql/SQL runs."""
+    dump = tmp_path / "x.sql.gz"
+    dump.write_bytes(b"")
+    with pytest.raises(ValueError, match="identifier"):
+        restore_table(
+            engine=None,
+            settings=None,
+            region="eu-west-2",
+            table="nn_catchments; DROP TABLE users; --",
+            dump_path=dump,
+        )
 
 
 def test_wrap_sql_brackets_data_with_txn():
