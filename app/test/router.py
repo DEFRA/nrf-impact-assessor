@@ -345,10 +345,8 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
 
     sqs = boto3.client("sqs", **client_kwargs)
 
-    # Explicit body trace_id wins; otherwise inherit from inbound x-cdp-request-id
-    # (TraceIdMiddleware sets ctx_trace_id for the duration of this request).
-    # Trailing `or None` collapses empty strings to None so we never serialise
-    # `"traceId": ""` into the queued message.
+    # Prefer the body trace_id, else the inbound x-cdp-request-id; `or None`
+    # keeps empty strings out of the queued message.
     trace_id = request.trace_id or ctx_trace_id.get(None) or None
 
     job = ImpactAssessmentJob(
