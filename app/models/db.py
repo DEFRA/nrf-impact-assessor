@@ -10,10 +10,12 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -195,7 +197,15 @@ class DataSyncRun(Base):
     """Async reload job record. Status: 'running' | 'success' | 'failed'."""
 
     __tablename__ = "data_sync_run"
-    __table_args__ = {"schema": "public"}
+    __table_args__ = (
+        Index(
+            "uq_data_sync_run_single_running",
+            "status",
+            unique=True,
+            postgresql_where=text("status = 'running'"),
+        ),
+        {"schema": "public"},
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     status: Mapped[str] = mapped_column(String, nullable=False)
