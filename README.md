@@ -248,6 +248,46 @@ make test      # or: uv run pytest tests/ app/ -v
 | `GET: /example/db`   | Database query example         |
 | `GET: /example/http` | HTTP client example            |
 
+## Reference data reload
+
+Reference/spatial tables can be reloaded from S3 `pg_dump` files at runtime,
+without a redeploy, via an authenticated background job.
+
+1. Publish the gzipped per-table dumps and a `manifest.json` to S3, bumping the
+   manifest's `data_version`. The manifest maps each table to its dump key:
+
+   ```json
+   {
+     "data_version": "20260603_120000",
+     "tables": {
+       "nn_catchments": "public_nn_catchments_20260603_120000.sql.gz"
+     }
+   }
+   ```
+
+2. Enable and configure the endpoint via env vars:
+   `DATA_SYNC_ENABLED=true`, `DATA_SYNC_S3_BUCKET`, `DATA_SYNC_S3_PREFIX`
+   (optional), and `DATA_SYNC_AUTH_TOKEN`.
+
+3. Trigger a reload and poll for status (auth via the `X-Data-Sync-Token`
+   header). A reload runs only when the manifest `data_version` differs from the
+   last success, or with `?force=true`:
+
+   ```bash
+   # Trigger (202 Accepted, returns a run_id)
+   curl -X POST "$BASE_URL/admin/data-sync?force=false" \
+     -H "X-Data-Sync-Token: $TOKEN"
+   # or: make data-sync-trigger TOKEN=$TOKEN [FORCE=true]
+
+   # Poll status
+   curl "$BASE_URL/admin/data-sync/<run_id>" -H "X-Data-Sync-Token: $TOKEN"
+   ```
+
+Each run replaces every listed table transactionally (drop indexes, truncate,
+`COPY`, recreate indexes) and is recorded in `data_sync_run` /
+`data_load_history`. A partial unique index allows only one run in flight at a
+time (a concurrent trigger returns `409`).
+
 ## Custom Cloudwatch Metrics
 
 Uses the [aws embedded metrics library](https://github.com/awslabs/aws-embedded-metrics-python). An example can be found in `metrics.py`

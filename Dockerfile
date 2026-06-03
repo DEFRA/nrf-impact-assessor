@@ -38,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gdal-bin \
     libgdal36 \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 USER nonroot

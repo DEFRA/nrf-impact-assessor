@@ -1,4 +1,4 @@
-.PHONY: help test test-integration test-regression update-regression-baseline check-migration-parity lint format build up down logs rebuild health monitoring-up monitoring-down monitoring-logs load-data load-data-sample load-data-layer load-data-lookup db-migrate db-rollback db-migrate-liquibase db-rollback-liquibase db-backup db-backup-schema db-backup-globals db-backup-tables db-restore db-restore-tables secrets-init _check-secrets sns-publish sqs-send sqs-peek sqs-depth sqs-purge
+.PHONY: help test test-integration test-regression update-regression-baseline check-migration-parity lint format build up down logs rebuild health monitoring-up monitoring-down monitoring-logs load-data load-data-sample load-data-layer load-data-lookup db-migrate db-rollback db-migrate-liquibase db-rollback-liquibase db-backup db-backup-schema db-backup-globals db-backup-tables db-restore db-restore-tables data-sync-trigger secrets-init _check-secrets sns-publish sqs-send sqs-peek sqs-depth sqs-purge
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -232,6 +232,10 @@ health: ## Check health endpoint
 
 db-check: ## Check database tables and row counts (requires API_TESTING_ENABLED=true)
 	curl -s $(BASE_URL)/test/db | python -m json.tool
+
+data-sync-trigger: ## Trigger a reference-data reload: make data-sync-trigger TOKEN=xxx [FORCE=true]
+	@curl -s -X POST "$(BASE_URL)/admin/data-sync?force=$(or $(FORCE),false)" \
+		-H "X-Data-Sync-Token: $(TOKEN)" | tee /dev/stderr
 
 # ---------------------------------------------------------------------------
 # LocalStack SNS / SQS (host gateway is remapped to 4568 in compose.yml)
