@@ -36,3 +36,21 @@ def test_download_object_writes_file(tmp_path):
     dest = tmp_path / "out.gz"
     s3.download_object("nn.sql.gz", dest)
     boto.download_file.assert_called_once_with("b", "p/nn.sql.gz", str(dest))
+
+
+def test_key_without_prefix_uses_bare_key():
+    boto = _mock_boto_with_manifest(
+        {"data_version": "v1", "tables": {"nn_catchments": "x.sql.gz"}}
+    )
+    s3 = S3Client(boto, bucket="b", prefix="")
+    s3.read_manifest("manifest.json")
+    boto.get_object.assert_called_once_with(Bucket="b", Key="manifest.json")
+
+
+def test_prefix_slashes_are_normalised():
+    boto = _mock_boto_with_manifest(
+        {"data_version": "v1", "tables": {"nn_catchments": "x.sql.gz"}}
+    )
+    s3 = S3Client(boto, bucket="b", prefix="/dumps/")
+    s3.read_manifest("manifest.json")
+    boto.get_object.assert_called_once_with(Bucket="b", Key="dumps/manifest.json")
