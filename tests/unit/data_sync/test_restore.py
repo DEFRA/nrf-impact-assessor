@@ -1,5 +1,7 @@
 import pytest
+from sqlalchemy import create_engine
 
+from app.config import DatabaseSettings
 from app.data_sync.restore import build_psql_env, restore_table, wrap_sql
 
 
@@ -7,10 +9,14 @@ def test_restore_table_rejects_unsafe_table_name(tmp_path):
     """A malicious/invalid table name must be rejected before any psql/SQL runs."""
     dump = tmp_path / "x.sql.gz"
     dump.write_bytes(b"")
+    # create_engine builds an Engine without connecting; the unsafe-name guard
+    # raises before the engine/settings are ever used.
+    settings = DatabaseSettings(iam_authentication=False)
+    engine = create_engine(settings.connection_url)
     with pytest.raises(ValueError, match="identifier"):
         restore_table(
-            engine=None,
-            settings=None,
+            engine=engine,
+            settings=settings,
             region="eu-west-2",
             table="nn_catchments; DROP TABLE users; --",
             dump_path=dump,
