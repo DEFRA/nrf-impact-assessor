@@ -1186,7 +1186,7 @@ requires-dist = [
     { name = "pymongo", extras = ["aws", "encryption", "snappy", "zstd"], specifier = "==4.17.0" },
     { name = "python-multipart", specifier = ">=0.0.30" },
     { name = "sqlalchemy", specifier = ">=2.0.50" },
-    { name = "typer", specifier = ">=0.26.5" },
+    { name = "typer", specifier = ">=0.26.7" },
     { name = "uvicorn", specifier = "==0.49.0" },
 ]
 
@@ -1656,7 +1656,7 @@ wheels = [
 
 [[package]]
 name = "pymongocrypt"
-version = "1.18.0"
+version = "1.18.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cffi" },
@@ -1664,12 +1664,12 @@ dependencies = [
     { name = "httpx" },
     { name = "packaging" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/76/0f/4944218568b8520a9932fbfe3a31cc5b31f528d86f060aaf64644c650deb/pymongocrypt-1.18.0.tar.gz", hash = "sha256:542bf5528fd827da200d37a067fc4643177e4493d2a796c6dee0df7e39587971", size = 68175, upload-time = "2026-05-20T18:44:35.23Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/55/c7/999a4f3f519553283f566d817465c9f80899db9914202481cc5fe54ac6d7/pymongocrypt-1.18.1.tar.gz", hash = "sha256:a3dee348afd7164e43beb3e98080e85551cbfdbb2ff1695fef913412360de6fb", size = 68179, upload-time = "2026-06-04T11:17:28.651Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/fc/54b95ecfcc9c37cae0b81a721446ec60941db77cddb2719cc629f0560bef/pymongocrypt-1.18.0-py3-none-macosx_11_0_universal2.whl", hash = "sha256:49c8e5cf367f3888f71f4effc9aebb6bdd272ddadee1d1eb628505f41d86da4d", size = 4741035, upload-time = "2026-05-20T18:44:26.777Z" },
-    { url = "https://files.pythonhosted.org/packages/e4/46/935e09a12842da4f8c1521a498ca65b6f023354b3c3f63382d0ae6e0c26c/pymongocrypt-1.18.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e5e4f5c996203564fd4c47b4cab9bfae89151408a238b7f5bb713563139705b2", size = 4108093, upload-time = "2026-05-20T18:44:29.541Z" },
-    { url = "https://files.pythonhosted.org/packages/ee/9d/8d3902c7392a6f5b77b8fdaf091730238a278a58944cac3dee44098c0879/pymongocrypt-1.18.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3a7a61c447cd1385b5e0fb888b1213a73dded3a11273a77381688d2895398acf", size = 3836395, upload-time = "2026-05-20T18:44:31.295Z" },
-    { url = "https://files.pythonhosted.org/packages/b4/ff/6ccce7433dd56a1561d2145bb316b3d9112b508a677cb0eb02d172595f40/pymongocrypt-1.18.0-py3-none-win_amd64.whl", hash = "sha256:24db98de1cf83a9221ca1045566e98cee850afd797a3dc6d090115a1cd3b973a", size = 1622227, upload-time = "2026-05-20T18:44:33.504Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/41/f86cf0a2a74dada885ab54b28733e016be3561d5fdfa77dd4cdbeb033399/pymongocrypt-1.18.1-py3-none-macosx_11_0_universal2.whl", hash = "sha256:cb42ee368726ab07eab80a24b693343e82b6d1ce308e0e7aa8beee05f199a8e6", size = 4741185, upload-time = "2026-06-04T11:17:21.11Z" },
+    { url = "https://files.pythonhosted.org/packages/96/9c/89df69236aa75c1ad1192d8241747856fd4f543abcf49ce6c515c9bbb9e1/pymongocrypt-1.18.1-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:4b54296d427978fe7e7629937e8ae0aa5a9c5458125059ae3ca704e1afb1b3aa", size = 4107590, upload-time = "2026-06-04T11:17:23.14Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/bd/34b74af025ff93e1c076328b9f9d4d15f4c60302e22057198324591db897/pymongocrypt-1.18.1-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e8c97e2fa3dc64a793ca4d5a8fe88a0ac9ebc6b15184bd65c41b0ff9fa7ce652", size = 3836303, upload-time = "2026-06-04T11:17:25.29Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/0c/08578f505b124a4f2058cbf7310a9bf6cac79e26ad5874be45078a00d6f0/pymongocrypt-1.18.1-py3-none-win_amd64.whl", hash = "sha256:575a24bebe9ea2295e8d6b235b66f273017df40ffeee5da987a92a7f382770df", size = 1622301, upload-time = "2026-06-04T11:17:27.056Z" },
 ]
 
 [[package]]
@@ -1846,11 +1846,11 @@ wheels = [
 
 [[package]]
 name = "python-multipart"
-version = "0.0.30"
+version = "0.0.31"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4b/82/c8cd43a6e0719bf5a3b034f6726dd701f75829c08944c83d4b95d02ed0e8/python_multipart-0.0.30.tar.gz", hash = "sha256:0edfe0475c1f46ddd3ff7785a626f6118af32bdcf359bb21260367313bb32118", size = 46316, upload-time = "2026-05-31T19:24:55.198Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/64/7e/9b35ad8f3d9ca680f7c87a88f19612fdd8da9796c4d3b46e560ac79dcc4a/python_multipart-0.0.31.tar.gz", hash = "sha256:fc631183bb13e56db3158a4909908dfb2e23565286744e798241e63750e5d680", size = 46689, upload-time = "2026-06-04T08:27:49.014Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1c/fd/0318007beb234790993d3ec5afd051d1dbceb733e81e3afe2b981ece3f37/python_multipart-0.0.30-py3-none-any.whl", hash = "sha256:830964def8c90607ac5daa00514e3987815865713ade8d20febc9177ac0c3c5b", size = 29730, upload-time = "2026-05-31T19:24:53.814Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/1e/7f7f299527a5a8ad90acd5f2f78dfa6c8495c6301a3205106ea68a84de96/python_multipart-0.0.31-py3-none-any.whl", hash = "sha256:8408153d68a9773291fc1da39a8b85a50044bddbabd2dd72e9229776b7b15e28", size = 29996, upload-time = "2026-06-04T08:27:47.804Z" },
 ]
 
 [[package]]
