@@ -1184,8 +1184,8 @@ requires-dist = [
     { name = "psycopg2-binary", specifier = ">=2.9.12" },
     { name = "pydantic-settings", specifier = "==2.14.1" },
     { name = "pymongo", extras = ["aws", "encryption", "snappy", "zstd"], specifier = "==4.17.0" },
-    { name = "python-multipart", specifier = ">=0.0.29" },
-    { name = "sqlalchemy", specifier = ">=2.0.49" },
+    { name = "python-multipart", specifier = ">=0.0.30" },
+    { name = "sqlalchemy", specifier = ">=2.0.50" },
     { name = "typer", specifier = ">=0.26.5" },
     { name = "uvicorn", specifier = "==0.49.0" },
 ]
