@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import AWSConfig, DatabaseSettings, DataSyncConfig
+from app.data_sync.manifest import Manifest
 from app.data_sync.service import run_data_sync
 from app.models.db import DataSyncRun
 from app.repositories.engine import create_db_engine
@@ -54,14 +55,16 @@ def _create_run(*, forced: bool) -> UUID:
         409: {"description": "A reload run is already in progress"},
     },
 )
-def trigger_data_sync(background: BackgroundTasks, force: bool = False) -> dict:
+def trigger_data_sync(
+    manifest: Manifest, background: BackgroundTasks, force: bool = False
+) -> dict:
     try:
         run_id = _create_run(forced=force)
     except RunInProgressError as exc:
         raise HTTPException(
             status_code=409, detail="a reload run is already in progress"
         ) from exc
-    background.add_task(run_data_sync, run_id, force=force)
+    background.add_task(run_data_sync, run_id, manifest, force=force)
     return {"run_id": str(run_id), "status": "running"}
 
 

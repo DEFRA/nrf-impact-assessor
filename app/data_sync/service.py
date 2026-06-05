@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.aws.s3 import S3Client
 from app.config import AWSConfig, DatabaseSettings, DataSyncConfig
 from app.data_sync.manifest import Manifest
-from app.data_sync.restore import restore_table
+from app.data_sync.restore import restore_all_atomic
 from app.models.db import DataLoadHistory, DataSyncRun
 from app.repositories.engine import create_db_engine
 
@@ -55,6 +55,8 @@ def _restore_all(  # noqa: PLR0913
 ) -> None:
     allowed = set(cfg.tables)
     with tempfile.TemporaryDirectory() as tmp:
+        items: list[tuple[str, Path]] = []
+        audit: list[tuple[str, str, str]] = []
         for table, key in manifest.tables.items():
             if table not in allowed:
                 msg = f"manifest table {table!r} is not in the data-sync allow-list"
@@ -62,7 +64,15 @@ def _restore_all(  # noqa: PLR0913
             dest = Path(tmp) / Path(key).name
             etag = s3.object_etag(key)
             s3.download_object(key, dest)
-            restore_table(engine, db, region, table, dest)
+            items.append((table, dest))
+            audit.append((table, key, etag))
+
+        # Single transaction across all tables: either every table is loaded or
+        # none is, so the reference data never exposes a mixed-version state.
+        restore_all_atomic(engine, db, region, items)
+
+        # Only reached once the restore transaction has committed.
+        for table, key, etag in audit:
             session.add(
                 DataLoadHistory(
                     id=uuid4(),
@@ -74,11 +84,15 @@ def _restore_all(  # noqa: PLR0913
                     status="success",
                 )
             )
-            session.commit()
+        session.commit()
 
 
-def run_data_sync(run_id: UUID, *, force: bool) -> None:
-    """Execute a reload run end-to-end. Always updates the run row's status."""
+def run_data_sync(run_id: UUID, manifest: Manifest, *, force: bool) -> None:
+    """Execute a reload run end-to-end. Always updates the run row's status.
+
+    The manifest (version + table->dump-key map) is supplied by the caller of
+    POST /admin/data-sync rather than read from S3.
+    """
     cfg = DataSyncConfig()
     aws = AWSConfig()
     db = DatabaseSettings()
@@ -89,7 +103,7 @@ def run_data_sync(run_id: UUID, *, force: bool) -> None:
             conn.execution_options(isolation_level="AUTOCOMMIT")
             conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": cfg.lock_key})
             try:
-                _do_run(engine, cfg, aws, db, region, run_id, force=force)
+                _do_run(engine, cfg, aws, db, region, run_id, manifest, force=force)
             finally:
                 conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": cfg.lock_key})
     finally:
@@ -103,6 +117,7 @@ def _do_run(  # noqa: PLR0913
     db: DatabaseSettings,
     region: str,
     run_id: UUID,
+    manifest: Manifest,
     *,
     force: bool,
 ) -> None:
@@ -110,7 +125,6 @@ def _do_run(  # noqa: PLR0913
     run = session.get(DataSyncRun, run_id)
     try:
         s3 = _build_s3_client(cfg, aws)
-        manifest = s3.read_manifest(cfg.manifest_key)
         run.data_version = manifest.data_version
         session.commit()
 
