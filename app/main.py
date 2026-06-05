@@ -72,10 +72,24 @@ if ApiServerConfig().testing_enabled:
         dependencies=protected_dependencies,
     )
 
-if DataSyncConfig().enabled:
+_data_sync_config = DataSyncConfig()
+if _data_sync_config.enabled:
     from app.data_sync.router import router as data_sync_router
 
-    logger.info("DATA_SYNC_ENABLED=true: mounting /admin/data-sync endpoints")
+    # Surface a misconfigured dump location at startup rather than only at
+    # reload time; the prefix may legitimately be empty (full bucket-root keys).
+    if not _data_sync_config.s3_bucket:
+        logger.warning(
+            "DATA_SYNC_ENABLED=true but DATA_SYNC_S3_BUCKET is not set; "
+            "reloads will fail until it is configured"
+        )
+
+    logger.info(
+        "DATA_SYNC_ENABLED=true: mounting /admin/data-sync endpoints "
+        "(DATA_SYNC_S3_BUCKET=%s, DATA_SYNC_S3_PREFIX=%r)",
+        _data_sync_config.s3_bucket,
+        _data_sync_config.s3_prefix,
+    )
     app.include_router(data_sync_router, tags=["data-sync"])
 
 
