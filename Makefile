@@ -233,9 +233,11 @@ health: ## Check health endpoint
 db-check: ## Check database tables and row counts (requires API_TESTING_ENABLED=true)
 	curl -s $(BASE_URL)/test/db | python -m json.tool
 
-data-sync-trigger: ## Trigger a reference-data reload: make data-sync-trigger TOKEN=xxx [FORCE=true]
+data-sync-trigger: ## Trigger a reference-data reload: make data-sync-trigger TOKEN=xxx MANIFEST=manifest.json [FORCE=true]
 	@curl -s -X POST "$(BASE_URL)/admin/data-sync?force=$(or $(FORCE),false)" \
-		-H "X-Data-Sync-Token: $(TOKEN)" | tee /dev/stderr
+		-H "X-Data-Sync-Token: $(TOKEN)" \
+		-H "Content-Type: application/json" \
+		--data @$(MANIFEST) | tee /dev/stderr
 
 # ---------------------------------------------------------------------------
 # LocalStack SNS / SQS (host gateway is remapped to 4568 in compose.yml)

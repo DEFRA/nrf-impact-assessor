@@ -451,11 +451,8 @@ class DataSyncConfig(BaseSettings):
     enabled: bool = Field(
         default=False, description="Mount the /admin/data-sync endpoint"
     )
-    s3_bucket: str = Field(default="", description="Bucket holding dumps + manifest")
-    s3_prefix: str = Field(default="", description="Key prefix for dumps + manifest")
-    manifest_key: str = Field(
-        default="manifest.json", description="Manifest object key (relative to prefix)"
-    )
+    s3_bucket: str = Field(default="", description="Bucket holding dump objects")
+    s3_prefix: str = Field(default="", description="Key prefix for dump objects")
     auth_token: str = Field(
         default="", description="Shared token required to trigger a reload"
     )

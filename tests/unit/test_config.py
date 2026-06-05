@@ -47,7 +47,6 @@ def test_data_sync_config_defaults(monkeypatch):
 
     cfg = DataSyncConfig()
     assert cfg.enabled is False
-    assert cfg.manifest_key == "manifest.json"
     assert cfg.lock_key == 728191
     assert "coefficient_layer" in cfg.tables
 
