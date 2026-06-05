@@ -11,7 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from app.aws.s3 import S3Client
+from app.aws.s3 import S3Client, S3ObjectError
 from app.config import AWSConfig, DatabaseSettings, DataSyncConfig
 from app.data_sync.manifest import Manifest
 from app.data_sync.restore import restore_all_atomic
@@ -62,8 +62,12 @@ def _restore_all(  # noqa: PLR0913
                 msg = f"manifest table {table!r} is not in the data-sync allow-list"
                 raise ValueError(msg)
             dest = Path(tmp) / Path(key).name
-            etag = s3.object_etag(key)
-            s3.download_object(key, dest)
+            try:
+                etag = s3.object_etag(key)
+                s3.download_object(key, dest)
+            except S3ObjectError as exc:
+                msg = f"{exc} (table {table!r})"
+                raise S3ObjectError(msg) from exc
             items.append((table, dest))
             audit.append((table, key, etag))
 
