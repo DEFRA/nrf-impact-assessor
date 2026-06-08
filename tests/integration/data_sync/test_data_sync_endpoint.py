@@ -209,3 +209,59 @@ def test_reload_rejects_non_gzip_dump(test_engine, s3_localstack, monkeypatch):
         conn.execute(text("DELETE FROM public.data_load_history"))
         conn.execute(text("DELETE FROM public.data_sync_run"))
         conn.execute(text("TRUNCATE public.nn_catchments"))
+
+
+def test_reload_bumps_version_and_removes_old(test_engine, s3_localstack, monkeypatch):
+    """A second reload lands as version+1 and cleanup keeps only the latest."""
+    monkeypatch.setenv("DB_IAM_AUTHENTICATION", "false")
+    monkeypatch.setenv("DB_DATABASE", "test_nrf_impact")
+
+    # Start from an empty table so the first load is version 1.
+    with test_engine.begin() as conn:
+        conn.execute(text("TRUNCATE public.nn_catchments"))
+
+    def _run(version: str) -> None:
+        manifest = _seed(s3_localstack, version)
+        run_id = uuid4()
+        with test_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.data_sync_run (id, status) "
+                    "VALUES (:id, 'running')"
+                ),
+                {"id": str(run_id)},
+            )
+        run_data_sync(run_id, manifest, force=False)
+
+    _run("20260603_120000")
+    with test_engine.connect() as conn:
+        first = conn.execute(
+            text("SELECT MAX(version), COUNT(*) FROM public.nn_catchments")
+        ).one()
+        first_ids = set(
+            conn.execute(text("SELECT id FROM public.nn_catchments")).scalars()
+        )
+    assert first[0] == 1
+    assert first[1] == 2
+
+    _run("20260604_120000")
+    with test_engine.connect() as conn:
+        second = conn.execute(
+            text("SELECT MAX(version), COUNT(*) FROM public.nn_catchments")
+        ).one()
+        old_rows = conn.execute(
+            text("SELECT COUNT(*) FROM public.nn_catchments WHERE version < 2")
+        ).scalar()
+        second_ids = set(
+            conn.execute(text("SELECT id FROM public.nn_catchments")).scalars()
+        )
+    assert second[0] == 2  # version bumped
+    assert second[1] == 2  # cleanup kept only the latest version
+    assert old_rows == 0  # version-1 rows removed
+    assert first_ids.isdisjoint(second_ids)  # ids regenerated on load
+
+    # cleanup
+    with test_engine.begin() as conn:
+        conn.execute(text("DELETE FROM public.data_load_history"))
+        conn.execute(text("DELETE FROM public.data_sync_run"))
+        conn.execute(text("TRUNCATE public.nn_catchments"))
