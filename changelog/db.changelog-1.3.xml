@@ -10,12 +10,16 @@
          owned by nrf_impact_assessor_ddl). Local/test runs Alembic as the
          postgres superuser, so these privileges are implicit there. -->
 
-    <!-- Data-sync reload privileges: the app user reloads reference data by
-         TRUNCATE + COPY (see app/data_sync/restore.py). As a non-owner it needs
-         INSERT (COPY ... FROM) and TRUNCATE on every table in the data-sync
-         allow-list (app/config.py DataSyncConfig.tables). SELECT (read access
-         for normal assessment queries) is granted separately and is not
-         (re)granted here, so GRANT and the rollback REVOKE stay symmetric.
+    <!-- Data-sync reload privileges: the app user reloads reference data with a
+         versioned staging load (see app/data_sync/restore.py): COPY into a TEMP
+         staging table, then INSERT the new version into the live table and
+         DELETE superseded versions. As a non-owner it needs INSERT and DELETE on
+         every table in the data-sync allow-list (app/config.py
+         DataSyncConfig.tables). SELECT (read access for normal assessment
+         queries) is granted separately and is not (re)granted here, so GRANT and
+         the rollback REVOKE stay symmetric. The staging step relies on the
+         database-default TEMPORARY privilege (verified present in CDP); if
+         revoked, CREATE TEMP TABLE will fail.
 
          The GRANT is wrapped in a DO block guarded on role existence: the
          nrf_impact_assessor role is provisioned by CDP/RDS infra and does NOT
@@ -27,7 +31,7 @@
             DO $$
             BEGIN
                 IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nrf_impact_assessor') THEN
-                    GRANT INSERT, TRUNCATE ON
+                    GRANT INSERT, DELETE ON
                         public.coefficient_layer,
                         public.edp_boundary_layer,
                         public.edp_edges,
@@ -47,7 +51,7 @@
                 DO $$
                 BEGIN
                     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nrf_impact_assessor') THEN
-                        REVOKE INSERT, TRUNCATE ON
+                        REVOKE INSERT, DELETE ON
                             public.coefficient_layer,
                             public.edp_boundary_layer,
                             public.edp_edges,
