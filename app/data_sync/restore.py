@@ -1,23 +1,19 @@
-"""Atomic, whole-manifest restore of gzipped pg_dumps via a single psql txn.
+"""Versioned, whole-manifest restore of gzipped data-only pg_dumps.
 
-Each dump is data-only (COPY ... FROM stdin). All tables in a run are streamed
-into one `psql --single-transaction` process: for each table we truncate, then
-replay the COPY data. Because the whole batch shares one transaction, readers
-see the old data for every table until the final COMMIT, and any error rolls
-back all tables (no mixed-version state to reconcile).
+Each dump is `COPY ... FROM stdin`. All tables in a run stream into one
+`psql --single-transaction` process. Per table we: create a TEMP staging table
+shaped like the live table, redirect the dump's COPY into that staging table,
+then stamp a fresh id + `version = MAX(version)+1` and `INSERT ... SELECT *`
+into the live table. Because the whole batch shares one transaction, readers
+keep seeing the prior version of every table until the final COMMIT, then flip
+to the new version together; any error rolls back all tables.
 
-Indexes are defined once by Liquibase migrations and persist permanently;
-Liquibase is not in the data-sync runtime path. Each COPY loads into the live,
-indexed tables, so index maintenance happens inline during the load.
-
-Perf note: an earlier version dropped each table's secondary indexes before
-COPY and recreated them afterwards (a faster bulk load into an unindexed table),
-but DROP/CREATE INDEX requires table ownership, which the data-sync role
-(nrf_impact_assessor) does not have. We deliberately accept inline index
-maintenance instead. This has not been benchmarked against the largest layers
-(e.g. subcatchments, nn_catchments); if load time becomes a problem, the
-permission-preserving fallback is a SECURITY DEFINER index-reset function owned
-by the DDL role, called by the app role (see NRF2-694 review).
+This avoids the ACCESS EXCLUSIVE lock of TRUNCATE and needs no table ownership
+(only INSERT, plus the database-default TEMPORARY privilege). Superseded
+versions are removed by a best-effort post-commit cleanup in the service layer
+(see app/data_sync/service.py). Indexes are defined once by Liquibase and
+persist; index maintenance happens inline on INSERT (see NRF2-694 review for the
+SECURITY DEFINER index-reset fallback if load time ever becomes a problem).
 """
 
 import gzip
@@ -34,16 +30,54 @@ from app.repositories.repository import _assert_safe_identifier
 logger = logging.getLogger(__name__)
 
 
-def plan_table(table: str) -> str:
-    """Validate `table` and return the SQL that precedes its COPY data.
+_STAGE_PREFIX = "_ds_stage_"
 
-    The table name originates from an untrusted S3 manifest and is interpolated
-    into raw SQL (TRUNCATE); validate before it can reach any DB call or SQL
-    string. No BEGIN/COMMIT: the outer transaction is supplied by
-    `psql --single-transaction`, which wraps the whole batch.
-    """
+
+def staging_name(table: str) -> str:
+    """Return the temp staging table name for `table` (validated)."""
     _assert_safe_identifier(table, "table")
-    return f"TRUNCATE public.{table};\n"
+    return f"{_STAGE_PREFIX}{table}"
+
+
+def pre_sql(table: str) -> str:
+    """SQL emitted before a table's COPY data: create the temp staging table.
+
+    Columns only (no indexes) for a fast staging load. CREATE TEMP always
+    targets pg_temp regardless of search_path. No BEGIN/COMMIT — the outer
+    transaction is supplied by `psql --single-transaction`.
+    """
+    stage = staging_name(table)
+    return f"CREATE TEMP TABLE {stage} (LIKE public.{table});\n"
+
+
+def post_sql(table: str) -> str:
+    """SQL emitted after a table's COPY data: stamp a fresh id + new version,
+    load the live table from staging, then drop staging.
+
+    `id` is regenerated (no FK references these ids) to avoid PK collisions with
+    the rows already present; `version` is MAX(version)+1 computed once against
+    the pre-insert snapshot. `LIKE` preserves column order, so `SELECT *` aligns.
+    """
+    stage = staging_name(table)
+    # noqa justified: identifiers validated by staging_name/_assert_safe_identifier
+    sql = (
+        f"UPDATE pg_temp.{stage} SET id = gen_random_uuid(), "  # noqa: S608
+        f"version = (SELECT COALESCE(MAX(version),0)+1 FROM public.{table});\n"
+        f"INSERT INTO public.{table} SELECT * FROM pg_temp.{stage};\n"
+        f"DROP TABLE pg_temp.{stage};\n"
+    )
+    return sql
+
+
+def old_version_cleanup_sql(table: str) -> str:
+    """SQL that deletes every superseded version, keeping only the latest."""
+    _assert_safe_identifier(table, "table")
+    # noqa justified: identifier validated by _assert_safe_identifier
+    sql = (
+        f"DELETE FROM public.{table} "  # noqa: S608
+        f"WHERE version < (SELECT MAX(version) FROM public.{table});"
+    )
+    return sql
 
 
 def build_psql_env(settings: DatabaseSettings, region: str) -> dict[str, str]:
@@ -86,8 +120,36 @@ def assert_gzip(table: str, dump_path: Path) -> None:
         raise ValueError(msg)
 
 
-def _stream_gzip(stdin: IO[bytes], dump_path: Path) -> None:
+def _rewrite_copy_line(line: bytes, table: str, stage: str) -> bytes:
+    """Redirect a dump's `COPY public.<table> ...` header to the temp staging
+    table. Lines that don't start with the exact header prefix are returned
+    unchanged, so data rows containing the table name are never touched.
+    """
+    prefix = f"COPY public.{table} ".encode()
+    if line.startswith(prefix):
+        return f"COPY pg_temp.{stage} ".encode() + line[len(prefix) :]
+    return line
+
+
+def _stream_dump_to_staging(
+    stdin: IO[bytes], dump_path: Path, table: str, stage: str
+) -> None:
+    """Stream a gzipped data-only dump into psql, redirecting its single COPY
+    header to `pg_temp.<stage>`. The (small) preamble is read line-by-line until
+    the header; the (large) data body is then streamed in 1 MiB chunks.
+    """
+    prefix = f"COPY public.{table} ".encode()
     with gzip.open(dump_path, "rb") as gz:
+        found = False
+        for line in gz:
+            if line.startswith(prefix):
+                stdin.write(_rewrite_copy_line(line, table, stage))
+                found = True
+                break
+            stdin.write(line)
+        if not found:
+            msg = f"no COPY header for table {table!r} found in dump {dump_path}"
+            raise ValueError(msg)
         for chunk in iter(lambda: gz.read(1024 * 1024), b""):
             stdin.write(chunk)
 
@@ -97,16 +159,20 @@ def restore_all_atomic(
     region: str,
     items: list[tuple[str, Path]],
 ) -> None:
-    """Restore every (table, dump) in a single psql transaction. All-or-nothing.
+    """Load every (table, dump) in a single psql transaction. All-or-nothing.
 
-    Validation for all tables happens up front, before psql is spawned, so an
-    unsafe name aborts the whole batch before any subprocess side effect.
-    `--single-transaction` + `ON_ERROR_STOP=1` make the batch atomic: the
-    first error rolls back every table.
+    Validation for all tables happens up front (via staging_name), before psql
+    is spawned, so an unsafe name aborts the whole batch before any subprocess
+    side effect. `--single-transaction` + `ON_ERROR_STOP=1` make the batch
+    atomic: the first error rolls back every table.
     """
     for table, dump in items:
         assert_gzip(table, dump)
-    plans = [(table, dump, plan_table(table)) for table, dump in items]
+    # staging_name validates each identifier before psql is spawned.
+    plans = [
+        (table, dump, staging_name(table), pre_sql(table), post_sql(table))
+        for table, dump in items
+    ]
 
     env = build_psql_env(settings, region)
     cmd = ["psql", "-v", "ON_ERROR_STOP=1", "--single-transaction", "--quiet"]
@@ -125,11 +191,12 @@ def restore_all_atomic(
     # communicate() below and logged separately. These numbers are the tripwire
     # for the index-maintenance trade-off documented in the module docstring.
     try:
-        for table, dump, pre in plans:
-            logger.info("Streaming table %s from %s", table, dump)
+        for table, dump, stage, pre, post in plans:
+            logger.info("Loading table %s from %s", table, dump)
             start = time.perf_counter()
             proc.stdin.write(pre.encode())
-            _stream_gzip(proc.stdin, dump)
+            _stream_dump_to_staging(proc.stdin, dump, table, stage)
+            proc.stdin.write(post.encode())
             logger.info(
                 "Streamed table %s in %.2fs", table, time.perf_counter() - start
             )
