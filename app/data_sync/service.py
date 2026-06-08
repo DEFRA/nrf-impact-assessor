@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.aws.s3 import S3Client, S3ObjectError
 from app.config import AWSConfig, DatabaseSettings, DataSyncConfig
 from app.data_sync.manifest import Manifest
-from app.data_sync.restore import restore_all_atomic
+from app.data_sync.restore import old_version_cleanup_sql, restore_all_atomic
 from app.models.db import DataLoadHistory, DataSyncRun
 from app.repositories.engine import create_db_engine
 
@@ -88,6 +88,27 @@ def _restore_all(
                 )
             )
         session.commit()
+
+        # Cutover has committed; remove superseded versions (best-effort).
+        _cleanup_old_versions(session, [table for table, _ in items])
+
+
+def _cleanup_old_versions(session: Session, tables: list[str]) -> None:
+    """Delete superseded versions per table (keep-latest). Best-effort: a
+    failure is logged and skipped, since stale rows are ignored by MAX(version)
+    and removed on the next reload. Cutover has already committed by this point.
+    """
+    for table in tables:
+        try:
+            session.execute(text(old_version_cleanup_sql(table)))
+            session.commit()
+        except Exception:  # noqa: BLE001
+            session.rollback()
+            logger.warning(
+                "old-version cleanup failed for table %s; will retry next reload",
+                table,
+                exc_info=True,
+            )
 
 
 def run_data_sync(run_id: UUID, manifest: Manifest, *, force: bool) -> None:
