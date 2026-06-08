@@ -44,7 +44,6 @@ def _build_s3_client(cfg: DataSyncConfig, aws: AWSConfig) -> S3Client:
 
 
 def _restore_all(  # noqa: PLR0913
-    engine: Engine,
     session: Session,
     s3: S3Client,
     cfg: DataSyncConfig,
@@ -137,7 +136,7 @@ def _do_run(  # noqa: PLR0913
             _finish(session, run, status="success")
             return
 
-        _restore_all(engine, session, s3, cfg, db, region, run_id, manifest)
+        _restore_all(session, s3, cfg, db, region, run_id, manifest)
         _finish(session, run, status="success")
     except Exception as exc:  # noqa: BLE001
         logger.exception("data sync run %s failed", run_id)
