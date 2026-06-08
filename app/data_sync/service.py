@@ -73,7 +73,7 @@ def _restore_all(  # noqa: PLR0913
 
         # Single transaction across all tables: either every table is loaded or
         # none is, so the reference data never exposes a mixed-version state.
-        restore_all_atomic(engine, db, region, items)
+        restore_all_atomic(db, region, items)
 
         # Only reached once the restore transaction has committed.
         for table, key, etag in audit:

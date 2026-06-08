@@ -1,11 +1,13 @@
 """Atomic, whole-manifest restore of gzipped pg_dumps via a single psql txn.
 
 Each dump is data-only (COPY ... FROM stdin). All tables in a run are streamed
-into one `psql --single-transaction` process: for each table we drop its
-secondary indexes, truncate, replay the COPY data, then recreate the indexes —
-faster than COPY into an indexed table. Because the whole batch shares one
-transaction, readers see the old data for every table until the final COMMIT,
-and any error rolls back all tables (no mixed-version state to reconcile).
+into one `psql --single-transaction` process: for each table we truncate, then
+replay the COPY data. Because the whole batch shares one transaction, readers
+see the old data for every table until the final COMMIT, and any error rolls
+back all tables (no mixed-version state to reconcile).
+
+Index management (create/drop) is handled by Liquibase and is not the
+responsibility of the restore process.
 """
 
 import gzip
@@ -15,62 +17,22 @@ import subprocess
 from pathlib import Path
 from typing import IO
 
-from sqlalchemy import text
-from sqlalchemy.engine import Engine
-
 from app.config import DatabaseSettings
 from app.repositories.repository import _assert_safe_identifier
 
 logger = logging.getLogger(__name__)
 
-# Secondary (non-constraint) indexes on the table — these are safe to DROP/CREATE.
-_INDEX_QUERY = text(
-    """
-    SELECT i.indexname, i.indexdef
-    FROM pg_indexes i
-    WHERE i.schemaname = 'public' AND i.tablename = :table
-      AND NOT EXISTS (
-        SELECT 1 FROM pg_constraint c
-        WHERE c.conindid = (
-            SELECT oid FROM pg_class WHERE relname = i.indexname
-        )
-      )
-    """
-)
 
-
-def get_secondary_indexes(engine: Engine, table: str) -> list[tuple[str, str]]:
-    """Return (indexname, indexdef) for non-constraint indexes on the table."""
-    with engine.connect() as conn:
-        rows = conn.execute(_INDEX_QUERY, {"table": table}).all()
-    return [(r[0], r[1]) for r in rows]
-
-
-def wrap_table(
-    table: str, drop_index_sql: list[str], create_index_sql: list[str]
-) -> tuple[str, str]:
-    """Return (pre, post) SQL fragments that bracket one table's COPY data.
-
-    No BEGIN/COMMIT: the outer transaction is supplied by
-    `psql --single-transaction`, which wraps the whole batch.
-    """
-    pre = "\n".join(drop_index_sql) + f"\nTRUNCATE public.{table};\n"
-    post = "\n" + "\n".join(create_index_sql) + "\n"
-    return pre, post
-
-
-def plan_table(engine: Engine, table: str) -> tuple[str, str]:
-    """Validate `table` and return its (pre, post) SQL fragments. No DB writes.
+def plan_table(table: str) -> str:
+    """Validate `table` and return the SQL that precedes its COPY data.
 
     The table name originates from an untrusted S3 manifest and is interpolated
-    into raw SQL (TRUNCATE/DROP/CREATE INDEX); validate before it can reach any
-    DB call or SQL string.
+    into raw SQL (TRUNCATE); validate before it can reach any DB call or SQL
+    string. No BEGIN/COMMIT: the outer transaction is supplied by
+    `psql --single-transaction`, which wraps the whole batch.
     """
     _assert_safe_identifier(table, "table")
-    indexes = get_secondary_indexes(engine, table)
-    drop_sql = [f"DROP INDEX IF EXISTS public.{name};" for name, _ in indexes]
-    create_sql = [f"{ddl};" for _, ddl in indexes]
-    return wrap_table(table, drop_sql, create_sql)
+    return f"TRUNCATE public.{table};\n"
 
 
 def build_psql_env(settings: DatabaseSettings, region: str) -> dict[str, str]:
@@ -120,23 +82,20 @@ def _stream_gzip(stdin: IO[bytes], dump_path: Path) -> None:
 
 
 def restore_all_atomic(
-    engine: Engine,
     settings: DatabaseSettings,
     region: str,
     items: list[tuple[str, Path]],
 ) -> None:
     """Restore every (table, dump) in a single psql transaction. All-or-nothing.
 
-    Validation and index introspection for all tables happen up front, before
-    psql is spawned, so an unsafe name aborts the whole batch before any DB or
-    subprocess side effect. `--single-transaction` + `ON_ERROR_STOP=1` make the
-    batch atomic: the first error rolls back every table.
+    Validation for all tables happens up front, before psql is spawned, so an
+    unsafe name aborts the whole batch before any subprocess side effect.
+    `--single-transaction` + `ON_ERROR_STOP=1` make the batch atomic: the
+    first error rolls back every table.
     """
-    # Validate everything for ALL tables before touching psql: gzip content
-    # first (cheap, no DB), then identifier + index introspection.
     for table, dump in items:
         assert_gzip(table, dump)
-    plans = [(table, dump, *plan_table(engine, table)) for table, dump in items]
+    plans = [(table, dump, plan_table(table)) for table, dump in items]
 
     env = build_psql_env(settings, region)
     cmd = ["psql", "-v", "ON_ERROR_STOP=1", "--single-transaction", "--quiet"]
@@ -150,11 +109,10 @@ def restore_all_atomic(
         msg = "failed to open psql stdin"
         raise RuntimeError(msg)
     try:
-        for table, dump, pre, post in plans:
+        for table, dump, pre in plans:
             logger.info("Streaming table %s from %s", table, dump)
             proc.stdin.write(pre.encode())
             _stream_gzip(proc.stdin, dump)
-            proc.stdin.write(post.encode())
         proc.stdin.close()
     except BrokenPipeError:  # psql already exited with an error
         pass

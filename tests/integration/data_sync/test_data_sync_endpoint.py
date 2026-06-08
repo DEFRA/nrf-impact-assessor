@@ -16,8 +16,9 @@ from app.data_sync.service import run_data_sync
 pytestmark = pytest.mark.integration
 
 BUCKET = "nrf-ref-data-test"
-# Minimal data-only dump: two rows into nn_catchments. The restore drops and
-# recreates whatever secondary indexes exist on the table during the load.
+# Minimal data-only dump: two rows into nn_catchments. The restore truncates
+# the table and replays this COPY data; indexes are left untouched (Liquibase
+# owns them).
 DUMP_SQL = (
     "COPY public.nn_catchments (id, version, geometry, name, attributes, created_at) "
     "FROM stdin;\n"
