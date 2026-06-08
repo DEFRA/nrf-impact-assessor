@@ -13,7 +13,9 @@
     <!-- Data-sync reload privileges: the app user reloads reference data by
          TRUNCATE + COPY (see app/data_sync/restore.py). As a non-owner it needs
          INSERT (COPY ... FROM) and TRUNCATE on every table in the data-sync
-         allow-list (app/config.py DataSyncConfig.tables).
+         allow-list (app/config.py DataSyncConfig.tables). SELECT (read access
+         for normal assessment queries) is granted separately and is not
+         (re)granted here, so GRANT and the rollback REVOKE stay symmetric.
 
          The GRANT is wrapped in a DO block guarded on role existence: the
          nrf_impact_assessor role is provisioned by CDP/RDS infra and does NOT
@@ -25,7 +27,7 @@
             DO $$
             BEGIN
                 IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nrf_impact_assessor') THEN
-                    GRANT SELECT, INSERT, TRUNCATE ON
+                    GRANT INSERT, TRUNCATE ON
                         public.coefficient_layer,
                         public.edp_boundary_layer,
                         public.edp_edges,

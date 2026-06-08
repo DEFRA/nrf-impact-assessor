@@ -6,14 +6,25 @@ replay the COPY data. Because the whole batch shares one transaction, readers
 see the old data for every table until the final COMMIT, and any error rolls
 back all tables (no mixed-version state to reconcile).
 
-Index management (create/drop) is handled by Liquibase and is not the
-responsibility of the restore process.
+Indexes are defined once by Liquibase migrations and persist permanently;
+Liquibase is not in the data-sync runtime path. Each COPY loads into the live,
+indexed tables, so index maintenance happens inline during the load.
+
+Perf note: an earlier version dropped each table's secondary indexes before
+COPY and recreated them afterwards (a faster bulk load into an unindexed table),
+but DROP/CREATE INDEX requires table ownership, which the data-sync role
+(nrf_impact_assessor) does not have. We deliberately accept inline index
+maintenance instead. This has not been benchmarked against the largest layers
+(e.g. subcatchments, nn_catchments); if load time becomes a problem, the
+permission-preserving fallback is a SECURITY DEFINER index-reset function owned
+by the DDL role, called by the app role (see NRF2-694 review).
 """
 
 import gzip
 import logging
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import IO
 
@@ -108,15 +119,30 @@ def restore_all_atomic(
     if proc.stdin is None:
         msg = "failed to open psql stdin"
         raise RuntimeError(msg)
+    # Per-table durations measure time to feed the dump into psql's stdin. Under
+    # --single-transaction the pipe back-pressures, so this reflects feed + apply
+    # (incl. inline index maintenance), but the final COMMIT cost is deferred to
+    # communicate() below and logged separately. These numbers are the tripwire
+    # for the index-maintenance trade-off documented in the module docstring.
     try:
         for table, dump, pre in plans:
             logger.info("Streaming table %s from %s", table, dump)
+            start = time.perf_counter()
             proc.stdin.write(pre.encode())
             _stream_gzip(proc.stdin, dump)
+            logger.info(
+                "Streamed table %s in %.2fs", table, time.perf_counter() - start
+            )
         proc.stdin.close()
     except BrokenPipeError:  # psql already exited with an error
         pass
+    commit_start = time.perf_counter()
     _, stderr = proc.communicate()
     if proc.returncode != 0:
         msg = f"psql atomic restore failed: {stderr.decode(errors='replace')}"
         raise RuntimeError(msg)
+    logger.info(
+        "Committed %d table(s) in %.2fs",
+        len(tables),
+        time.perf_counter() - commit_start,
+    )

@@ -43,7 +43,7 @@ def _build_s3_client(cfg: DataSyncConfig, aws: AWSConfig) -> S3Client:
     return S3Client(boto, bucket=cfg.s3_bucket, prefix=cfg.s3_prefix)
 
 
-def _restore_all(  # noqa: PLR0913
+def _restore_all(
     session: Session,
     s3: S3Client,
     cfg: DataSyncConfig,
@@ -113,7 +113,7 @@ def run_data_sync(run_id: UUID, manifest: Manifest, *, force: bool) -> None:
         engine.dispose()
 
 
-def _do_run(  # noqa: PLR0913
+def _do_run(
     engine: Engine,
     cfg: DataSyncConfig,
     aws: AWSConfig,
@@ -138,7 +138,7 @@ def _do_run(  # noqa: PLR0913
 
         _restore_all(session, s3, cfg, db, region, run_id, manifest)
         _finish(session, run, status="success")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("data sync run %s failed", run_id)
         _finish(session, run, status="failed", error=str(exc))
     finally:
