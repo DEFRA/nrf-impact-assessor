@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.aws.s3 import S3Client, S3ObjectError
 from app.config import AWSConfig, DatabaseSettings, DataSyncConfig
 from app.data_sync.manifest import Manifest
-from app.data_sync.restore import restore_all_atomic
+from app.data_sync.restore import old_version_cleanup_sql, restore_all_atomic
 from app.models.db import DataLoadHistory, DataSyncRun
 from app.repositories.engine import create_db_engine
 
@@ -43,8 +43,7 @@ def _build_s3_client(cfg: DataSyncConfig, aws: AWSConfig) -> S3Client:
     return S3Client(boto, bucket=cfg.s3_bucket, prefix=cfg.s3_prefix)
 
 
-def _restore_all(  # noqa: PLR0913
-    engine: Engine,
+def _restore_all(
     session: Session,
     s3: S3Client,
     cfg: DataSyncConfig,
@@ -73,7 +72,15 @@ def _restore_all(  # noqa: PLR0913
 
         # Single transaction across all tables: either every table is loaded or
         # none is, so the reference data never exposes a mixed-version state.
-        restore_all_atomic(engine, db, region, items)
+        #
+        # NOTE: the data load commits on the psql subprocess's own connection,
+        # then DataLoadHistory commits separately on this ORM session. The two
+        # commits are not atomic: a crash between them leaves the new version
+        # applied but unrecorded in DataLoadHistory. This is low severity — the
+        # version scheme self-heals (the next reload supersedes it) and readers
+        # always see MAX(version) — but DataLoadHistory may under-report what is
+        # actually loaded. Treat it as an audit log, not the source of truth.
+        restore_all_atomic(db, region, items)
 
         # Only reached once the restore transaction has committed.
         for table, key, etag in audit:
@@ -89,6 +96,27 @@ def _restore_all(  # noqa: PLR0913
                 )
             )
         session.commit()
+
+        # Cutover has committed; remove superseded versions (best-effort).
+        _cleanup_old_versions(session, [table for table, _ in items])
+
+
+def _cleanup_old_versions(session: Session, tables: list[str]) -> None:
+    """Delete superseded versions per table (keep-latest). Best-effort: a
+    failure is logged and skipped, since stale rows are ignored by MAX(version)
+    and removed on the next reload. Cutover has already committed by this point.
+    """
+    for table in tables:
+        try:
+            session.execute(text(old_version_cleanup_sql(table)))
+            session.commit()
+        except Exception:  # noqa: BLE001
+            session.rollback()
+            logger.warning(
+                "old-version cleanup failed for table %s; will retry next reload",
+                table,
+                exc_info=True,
+            )
 
 
 def run_data_sync(run_id: UUID, manifest: Manifest, *, force: bool) -> None:
@@ -114,7 +142,7 @@ def run_data_sync(run_id: UUID, manifest: Manifest, *, force: bool) -> None:
         engine.dispose()
 
 
-def _do_run(  # noqa: PLR0913
+def _do_run(
     engine: Engine,
     cfg: DataSyncConfig,
     aws: AWSConfig,
@@ -127,6 +155,13 @@ def _do_run(  # noqa: PLR0913
 ) -> None:
     session = Session(bind=engine)
     run = session.get(DataSyncRun, run_id)
+    if run is None:
+        # _create_run inserts the run row before this task is dispatched, so a
+        # missing row is unexpected; guard so the except/_finish path below never
+        # dereferences None (there is nothing to mark failed if it doesn't exist).
+        session.close()
+        msg = f"data sync run {run_id} not found"
+        raise RuntimeError(msg)
     try:
         s3 = _build_s3_client(cfg, aws)
         run.data_version = manifest.data_version
@@ -137,9 +172,9 @@ def _do_run(  # noqa: PLR0913
             _finish(session, run, status="success")
             return
 
-        _restore_all(engine, session, s3, cfg, db, region, run_id, manifest)
+        _restore_all(session, s3, cfg, db, region, run_id, manifest)
         _finish(session, run, status="success")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("data sync run %s failed", run_id)
         _finish(session, run, status="failed", error=str(exc))
     finally:
