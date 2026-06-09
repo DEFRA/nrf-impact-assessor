@@ -72,6 +72,14 @@ def _restore_all(
 
         # Single transaction across all tables: either every table is loaded or
         # none is, so the reference data never exposes a mixed-version state.
+        #
+        # NOTE: the data load commits on the psql subprocess's own connection,
+        # then DataLoadHistory commits separately on this ORM session. The two
+        # commits are not atomic: a crash between them leaves the new version
+        # applied but unrecorded in DataLoadHistory. This is low severity — the
+        # version scheme self-heals (the next reload supersedes it) and readers
+        # always see MAX(version) — but DataLoadHistory may under-report what is
+        # actually loaded. Treat it as an audit log, not the source of truth.
         restore_all_atomic(db, region, items)
 
         # Only reached once the restore transaction has committed.
@@ -147,6 +155,13 @@ def _do_run(
 ) -> None:
     session = Session(bind=engine)
     run = session.get(DataSyncRun, run_id)
+    if run is None:
+        # _create_run inserts the run row before this task is dispatched, so a
+        # missing row is unexpected; guard so the except/_finish path below never
+        # dereferences None (there is nothing to mark failed if it doesn't exist).
+        session.close()
+        msg = f"data sync run {run_id} not found"
+        raise RuntimeError(msg)
     try:
         s3 = _build_s3_client(cfg, aws)
         run.data_version = manifest.data_version

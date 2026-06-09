@@ -1,6 +1,31 @@
 from unittest.mock import MagicMock
+from uuid import uuid4
 
+import pytest
+
+from app.data_sync import service
 from app.data_sync.service import _cleanup_old_versions
+
+
+def test_do_run_raises_clearly_when_run_row_missing(monkeypatch):
+    """A missing run row must raise a clear error, not an AttributeError from
+    _finish(None) in the except path."""
+    fake_session = MagicMock()
+    fake_session.get.return_value = None
+    monkeypatch.setattr(service, "Session", lambda bind: fake_session)  # noqa: ARG005
+
+    with pytest.raises(RuntimeError, match="not found"):
+        service._do_run(
+            MagicMock(),  # engine
+            MagicMock(),  # cfg
+            MagicMock(),  # aws
+            MagicMock(),  # db
+            "eu-west-2",
+            uuid4(),
+            MagicMock(),  # manifest
+            force=False,
+        )
+    fake_session.close.assert_called_once()
 
 
 def test_cleanup_runs_delete_per_table_and_commits():
