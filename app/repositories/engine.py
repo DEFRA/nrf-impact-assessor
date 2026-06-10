@@ -6,6 +6,8 @@ Supports both local development (static password) and CDP cloud deployment
 
 import logging
 import os
+import threading
+import time
 
 import boto3
 from sqlalchemy import create_engine, event
@@ -21,8 +23,35 @@ logger = logging.getLogger(__name__)
 # to ensure fresh tokens before expiry
 IAM_TOKEN_POOL_RECYCLE_SECONDS = 600
 
+# Reuse one token across connections for 9 minutes: a token cached for up to
+# 9 minutes still has 6 minutes of validity left when a connection uses it.
+IAM_TOKEN_CACHE_SECONDS = 540
+
+_token_cache: dict[tuple[str, int, str, str], tuple[float, str]] = {}
+_token_cache_lock = threading.Lock()
+
 
 def _get_iam_auth_token(settings: DatabaseSettings, region: str) -> str:
+    """Return a cached IAM auth token, generating a fresh one when stale.
+
+    Every new pooled connection asks for a token; without a cache, a burst of
+    connections (pool fill, recycle expiry) generates one token each.
+    Generation happens under the lock so a concurrent burst produces a single
+    token rather than one per connection.
+    """
+    key = (settings.host, settings.port, settings.user, region)
+    now = time.monotonic()
+    with _token_cache_lock:
+        entry = _token_cache.get(key)
+        if entry is not None and now - entry[0] < IAM_TOKEN_CACHE_SECONDS:
+            logger.debug("Reusing cached IAM auth token (age=%.0fs)", now - entry[0])
+            return entry[1]
+        token = _generate_iam_auth_token(settings, region)
+        _token_cache[key] = (now, token)
+        return token
+
+
+def _generate_iam_auth_token(settings: DatabaseSettings, region: str) -> str:
     """Generate a short-lived IAM authentication token for RDS."""
     logger.info(
         "Requesting IAM auth token: host=%s, port=%d, user=%s, region=%s",

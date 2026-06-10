@@ -179,8 +179,15 @@ def restore_all_atomic(
     tables = [table for table, _ in items]
     logger.info("Restoring %d table(s) atomically: %s", len(tables), ", ".join(tables))
 
+    # stdout is discarded: the dump preamble's `SELECT pg_catalog.set_config(...)`
+    # prints a result table that the CDP log shipper would otherwise index as
+    # unparseable stdout with log.level=error. Errors arrive on stderr only.
     proc = subprocess.Popen(  # noqa: S603
-        cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE, env=env
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        env=env,
     )
     if proc.stdin is None:
         msg = "failed to open psql stdin"
@@ -209,7 +216,8 @@ def restore_all_atomic(
         msg = f"psql atomic restore failed: {stderr.decode(errors='replace')}"
         raise RuntimeError(msg)
     logger.info(
-        "Committed %d table(s) in %.2fs",
+        "Committed %d table(s) in %.2fs: %s",
         len(tables),
         time.perf_counter() - commit_start,
+        ", ".join(tables),
     )
