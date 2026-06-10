@@ -56,11 +56,11 @@ DB_TABLES = \
 	public.gcn_ponds \
 	public.edp_edges
 
-db-backup: ## Full backup — schema, data, custom types and grants (.sql.gz)
+db-backup: ## Full backup — schema, data, custom types and grants, split into <90MB parts (.sql.gz.part-*)
 	@mkdir -p $(BACKUP_DIR)
 	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain \
-		--no-password $(DB_NAME) | gzip > $(BACKUP_FILE)
-	@echo "Backup written to $(BACKUP_FILE)"
+		--no-password $(DB_NAME) | gzip | split -b 85m - $(BACKUP_FILE).part-
+	@echo "Backup written to $(BACKUP_FILE).part-*"
 
 db-backup-schema: ## Schema-only backup — tables, enums, indexes, grants (.sql.gz, no data)
 	@mkdir -p $(BACKUP_DIR)
@@ -90,10 +90,15 @@ db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table 
 	done
 	@echo "Per-table backups written to $(BACKUP_DIR)"
 
-db-restore: ## Restore from .sql.gz backup: make db-restore BACKUP_FILE=./backups/foo.sql.gz
+db-restore: ## Restore from backup: make db-restore BACKUP_FILE=./backups/foo.sql.gz (whole file or .part-* splits)
 	@test -n "$(BACKUP_FILE)" || (echo "ERROR: set BACKUP_FILE=<path>"; exit 1)
-	@test -f "$(BACKUP_FILE)" || (echo "ERROR: file not found: $(BACKUP_FILE)"; exit 1)
-	zcat $(BACKUP_FILE) | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME)
+	@if [ -f "$(BACKUP_FILE)" ]; then \
+		zcat "$(BACKUP_FILE)" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME); \
+	elif ls $(BACKUP_FILE).part-* >/dev/null 2>&1; then \
+		cat $(BACKUP_FILE).part-* | zcat | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME); \
+	else \
+		echo "ERROR: no backup found at $(BACKUP_FILE) or $(BACKUP_FILE).part-*"; exit 1; \
+	fi
 	@echo "Restore complete from $(BACKUP_FILE)"
 
 db-restore-tables: ## Restore per-table backup: apply schema grants then table data from BACKUP_DIR
