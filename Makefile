@@ -41,6 +41,8 @@ DB_USER       = postgres
 BACKUP_DIR   ?= ./backups
 TS             = $(shell date +%Y%m%d_%H%M%S)
 BACKUP_FILE  ?= $(BACKUP_DIR)/$(DB_NAME)_$(TS).sql.gz
+# Part size for split backups (GitHub rejects files over 100MB)
+BACKUP_PART_SIZE ?= 100m
 
 # Tables to include in per-table backup (schema-qualified)
 DB_TABLES = \
@@ -56,10 +58,10 @@ DB_TABLES = \
 	public.gcn_ponds \
 	public.edp_edges
 
-db-backup: ## Full backup — schema, data, custom types and grants, split into <90MB parts (.sql.gz.part-*)
+db-backup: ## Full backup — schema, data, custom types and grants, split into <100MB parts (.sql.gz.part-*)
 	@mkdir -p $(BACKUP_DIR)
 	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain \
-		--no-password $(DB_NAME) | gzip | split -b 85m - $(BACKUP_FILE).part-
+		--no-password $(DB_NAME) | gzip | split -b $(BACKUP_PART_SIZE) - $(BACKUP_FILE).part-
 	@echo "Backup written to $(BACKUP_FILE).part-*"
 
 db-backup-schema: ## Schema-only backup — tables, enums, indexes, grants (.sql.gz, no data)
@@ -75,7 +77,7 @@ db-backup-globals: ## Cluster-level roles and grants (.sql.gz via pg_dumpall)
 		| gzip > $(BACKUP_DIR)/$(DB_NAME)_globals_$(TS).sql.gz
 	@echo "Globals backup written to $(BACKUP_DIR)"
 
-db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table in public
+db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table in public (large tables split into .part-*)
 	@mkdir -p $(BACKUP_DIR)
 	@schema_out="$(BACKUP_DIR)/public_schema_$(TS).sql.gz"; \
 	echo "  public schema → $$schema_out"; \
@@ -86,7 +88,13 @@ db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table 
 		out="$(BACKUP_DIR)/$${name}_$(TS).sql.gz"; \
 		echo "  $$table → $$out"; \
 		docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain \
-			--no-password --data-only -t $$table $(DB_NAME) | gzip > "$$out"; \
+			--no-password --data-only -t $$table $(DB_NAME) | gzip \
+			| split -b $(BACKUP_PART_SIZE) - "$$out.part-"; \
+		if [ ! -e "$$out.part-ab" ]; then \
+			mv "$$out.part-aa" "$$out"; \
+		else \
+			echo "    split into $$(ls "$$out".part-* | wc -l | tr -d ' ') parts"; \
+		fi; \
 	done
 	@echo "Per-table backups written to $(BACKUP_DIR)"
 
@@ -111,10 +119,15 @@ db-restore-tables: ## Restore per-table backup: apply schema grants then table d
 	zcat "$$schema_file" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME)
 	@for table in $(DB_TABLES); do \
 		name=$$(echo $$table | tr '.' '_'); \
-		f=$$(ls -t $(BACKUP_DIR)/$${name}_*.sql.gz 2>/dev/null | head -1); \
+		f=$$(ls -t $(BACKUP_DIR)/$${name}_*.sql.gz $(BACKUP_DIR)/$${name}_*.sql.gz.part-aa 2>/dev/null | head -1); \
 		if [ -z "$$f" ]; then echo "  WARNING: no backup found for $$table — skipping"; continue; fi; \
-		echo "  $$table ← $$f"; \
-		zcat "$$f" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME); \
+		case "$$f" in \
+		*.part-aa) base=$${f%.part-aa}; \
+			echo "  $$table ← $$base.part-*"; \
+			cat "$$base".part-* | zcat | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME);; \
+		*) echo "  $$table ← $$f"; \
+			zcat "$$f" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME);; \
+		esac; \
 	done
 	@echo "Per-table restore complete from $(BACKUP_DIR)"
 
