@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- Alembic revision: 000000000003 -->
+
+    <!-- Data-sync tracking tables -->
+
+    <changeSet id="02-data-sync-run" author="nrf">
+        <createTable tableName="data_sync_run" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="status" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="data_version" type="varchar"/>
+            <column name="forced" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="started_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="finished_at" type="timestamptz"/>
+            <column name="error" type="varchar"/>
+        </createTable>
+        <sql>
+            CREATE UNIQUE INDEX uq_data_sync_run_single_running
+            ON public.data_sync_run (status) WHERE status = 'running'
+        </sql>
+        <rollback>
+            <sql>DROP INDEX IF EXISTS public.uq_data_sync_run_single_running</sql>
+            <dropTable tableName="data_sync_run" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="02-data-load-history" author="nrf">
+        <createTable tableName="data_load_history" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="run_id" type="uuid">
+                <constraints nullable="false"
+                             foreignKeyName="fk_data_load_history_run"
+                             references="public.data_sync_run(id)"/>
+            </column>
+            <column name="table_name" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="s3_key" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="etag" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="data_version" type="varchar"/>
+            <column name="status" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="loaded_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex indexName="ix_data_load_history_table_loaded_at"
+                     tableName="data_load_history" schemaName="public">
+            <column name="table_name"/>
+            <column name="loaded_at"/>
+        </createIndex>
+        <rollback>
+            <dropTable tableName="data_load_history" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

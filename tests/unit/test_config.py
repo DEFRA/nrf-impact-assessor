@@ -38,3 +38,28 @@ def test_precautionary_buffer_calculation():
 
     # 20% = 0.20 factor
     assert config.precautionary_buffer_factor == pytest.approx(0.20)
+
+
+def test_data_sync_config_defaults(monkeypatch):
+    for var in ("DATA_SYNC_ENABLED", "DATA_SYNC_S3_BUCKET", "DATA_SYNC_AUTH_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    from app.config import DataSyncConfig
+
+    cfg = DataSyncConfig()
+    assert cfg.enabled is False
+    assert cfg.lock_key == 728191
+    assert "coefficient_layer" in cfg.tables
+
+
+def test_data_sync_config_from_env(monkeypatch):
+    monkeypatch.setenv("DATA_SYNC_ENABLED", "true")
+    monkeypatch.setenv("DATA_SYNC_S3_BUCKET", "ref-data")
+    monkeypatch.setenv("DATA_SYNC_S3_PREFIX", "dumps")
+    monkeypatch.setenv("DATA_SYNC_AUTH_TOKEN", "secret")
+    from app.config import DataSyncConfig
+
+    cfg = DataSyncConfig()
+    assert cfg.enabled is True
+    assert cfg.s3_bucket == "ref-data"
+    assert cfg.s3_prefix == "dumps"
+    assert cfg.auth_token == "secret"  # noqa: S105

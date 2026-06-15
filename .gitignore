@@ -205,3 +205,4 @@ scripts/.env.local
 
 iat_input
 /backups/
+.DS_Store

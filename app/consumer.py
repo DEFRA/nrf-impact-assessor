@@ -280,6 +280,7 @@ def main():
                 base_url=backend_config.base_url,
                 timeout=backend_config.callback_timeout,
                 max_retries=backend_config.callback_max_retries,
+                api_key=backend_config.api_key,
             )
             logger.info(f"Backend callback enabled: {backend_config.base_url}")
 

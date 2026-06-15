@@ -35,7 +35,8 @@ from sqlalchemy import func, select, text
 from app.assess._geometry import inject_job_fields
 from app.clients.backend_client import BackendClient
 from app.clients.payload_mapper import build_quote_patch_payload
-from app.config import AWSConfig, BackendConfig
+from app.common.tracing import ctx_trace_id
+from app.config import AWSConfig, BackendConfig, DatabaseSettings
 from app.models.db import (
     CoefficientLayer,
     EdpBoundaryLayer,
@@ -158,6 +159,15 @@ class WktEnqueueRequest(BaseModel):
     dwelling_type: str = "house"
     dwellings: int = 1
     name: str = ""
+    trace_id: str | None = Field(
+        default=None,
+        description=(
+            "CDP trace id to embed in the queued message body as `traceId`. "
+            "When omitted, falls back to the inbound `x-cdp-request-id` header "
+            "(set by TraceIdMiddleware). The consumer propagates this onto the "
+            "outbound PATCH callback so the whole flow stays traced."
+        ),
+    )
 
 
 class WktEnqueueResponse(BaseModel):
@@ -323,6 +333,10 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
 
     sqs = boto3.client("sqs", **client_kwargs)
 
+    # Prefer the body trace_id, else the inbound x-cdp-request-id; `or None`
+    # keeps empty strings out of the queued message.
+    trace_id = request.trace_id or ctx_trace_id.get(None) or None
+
     job = ImpactAssessmentJob(
         reference=reference,
         boundary_geojson=BoundaryGeojson(
@@ -331,6 +345,7 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
         ),
         development_types=[request.dwelling_type],
         residential_building_count=request.dwellings,
+        trace_id=trace_id,
     )
 
     try:
@@ -340,7 +355,7 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
             MessageBody=job.model_dump_json(by_alias=True),
         )
     except ClientError as e:
-        logger.exception("SQS send failed")
+        logger.exception("SQS send failed: %s", e)
         raise HTTPException(
             status_code=502,
             detail=f"SQS send failed — is LocalStack running? ({e})",
@@ -508,6 +523,7 @@ def patch_backend(request: PatchBackendRequest) -> PatchBackendResponse:
         base_url=backend_config.base_url,
         timeout=backend_config.callback_timeout,
         max_retries=backend_config.callback_max_retries,
+        api_key=backend_config.api_key,
     )
     url = f"{client.base_url}/quotes/{request.reference}"
     logger.info("Test PATCH payload → %s payload=%s", url, payload)
@@ -521,7 +537,7 @@ def patch_backend(request: PatchBackendRequest) -> PatchBackendResponse:
             detail=f"Backend PATCH failed with HTTP {e.response.status_code}: {e.response.text}",
         ) from e
     except httpx.TransportError as e:
-        logger.exception(f"Test PATCH {url} failed: transport error")
+        logger.exception(f"Test PATCH {url} failed: transport error: {e}")
         raise HTTPException(
             status_code=502,
             detail=f"Backend PATCH failed with transport error: {e}",

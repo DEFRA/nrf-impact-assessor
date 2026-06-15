@@ -7,9 +7,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.common.tracing import TraceIdMiddleware, ctx_trace_id
 from app.test.router import router
 
 _app = FastAPI()
+# Mount the same tracing middleware the production app uses, so the
+# `x-cdp-request-id` header drives ctx_trace_id during the request and the
+# /test/enqueue handler can inherit it.
+_app.add_middleware(TraceIdMiddleware)
 _app.include_router(router, prefix="/test")
 client = TestClient(_app)
 
@@ -30,6 +35,19 @@ def _make_aws_config(queue="http://localhost:4566/000000000000/nrf-queue"):
     mock.region = "eu-west-2"
     mock.endpoint_url = "http://localhost:4566"
     return mock
+
+
+@pytest.fixture(autouse=True)
+def isolate_ctx_trace_id():
+    """Reset ctx_trace_id around each test.
+
+    Other modules (e.g. tests/common/test_http_client.py) set ctx_trace_id
+    without resetting, which would otherwise leak into the "neither supplied"
+    case here and make it look like a header was sent.
+    """
+    token = ctx_trace_id.set("")
+    yield
+    ctx_trace_id.reset(token)
 
 
 @pytest.fixture(autouse=True)
@@ -152,3 +170,41 @@ class TestWktEnqueueEndpoint:
         calls = mock_boto3["client"].call_args_list
         for call in calls:
             assert call.kwargs.get("endpoint_url") == "http://localhost:4566"
+
+    def test_trace_id_in_body_lands_in_queued_message(self, mock_boto3):
+        client.post(
+            "/test/enqueue", json={**_VALID_BODY, "trace_id": "trace-from-body"}
+        )
+        message = json.loads(
+            mock_boto3["sqs"].send_message.call_args.kwargs["MessageBody"]
+        )
+        assert message["traceId"] == "trace-from-body"
+
+    def test_trace_id_inherited_from_request_header(self, mock_boto3):
+        client.post(
+            "/test/enqueue",
+            json=_VALID_BODY,
+            headers={"x-cdp-request-id": "trace-from-header"},
+        )
+        message = json.loads(
+            mock_boto3["sqs"].send_message.call_args.kwargs["MessageBody"]
+        )
+        assert message["traceId"] == "trace-from-header"
+
+    def test_body_trace_id_overrides_request_header(self, mock_boto3):
+        client.post(
+            "/test/enqueue",
+            json={**_VALID_BODY, "trace_id": "wins"},
+            headers={"x-cdp-request-id": "loses"},
+        )
+        message = json.loads(
+            mock_boto3["sqs"].send_message.call_args.kwargs["MessageBody"]
+        )
+        assert message["traceId"] == "wins"
+
+    def test_no_trace_id_when_neither_supplied(self, mock_boto3):
+        client.post("/test/enqueue", json=_VALID_BODY)
+        message = json.loads(
+            mock_boto3["sqs"].send_message.call_args.kwargs["MessageBody"]
+        )
+        assert message.get("traceId") is None

@@ -1,4 +1,4 @@
-.PHONY: help test test-integration test-regression update-regression-baseline check-migration-parity lint format build up down logs rebuild health monitoring-up monitoring-down monitoring-logs load-data load-data-sample load-data-layer load-data-lookup db-migrate db-rollback db-migrate-liquibase db-rollback-liquibase db-backup db-backup-schema db-backup-globals db-backup-tables db-restore db-restore-tables secrets-init _check-secrets sns-publish sqs-send sqs-peek sqs-depth sqs-purge
+.PHONY: help test test-integration test-regression update-regression-baseline check-migration-parity lint format build up down logs rebuild health monitoring-up monitoring-down monitoring-logs load-data load-data-sample load-data-layer load-data-lookup db-migrate db-rollback db-migrate-liquibase db-rollback-liquibase db-backup db-backup-schema db-backup-globals db-backup-tables db-restore db-restore-tables data-sync-trigger secrets-init _check-secrets sns-publish sqs-send sqs-peek sqs-depth sqs-purge
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -41,6 +41,8 @@ DB_USER       = postgres
 BACKUP_DIR   ?= ./backups
 TS             = $(shell date +%Y%m%d_%H%M%S)
 BACKUP_FILE  ?= $(BACKUP_DIR)/$(DB_NAME)_$(TS).sql.gz
+# Part size for split backups (GitHub rejects files over 100MB)
+BACKUP_PART_SIZE ?= 100m
 
 # Tables to include in per-table backup (schema-qualified)
 DB_TABLES = \
@@ -55,11 +57,11 @@ DB_TABLES = \
 	public.gcn_ponds \
 	public.edp_edges
 
-db-backup: ## Full backup — schema, data, custom types and grants (.sql.gz)
+db-backup: ## Full backup — schema, data, custom types and grants, split into <100MB parts (.sql.gz.part-*)
 	@mkdir -p $(BACKUP_DIR)
 	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
-		--no-password $(DB_NAME) | gzip > $(BACKUP_FILE)
-	@echo "Backup written to $(BACKUP_FILE)"
+		--no-password $(DB_NAME) | gzip | split -b $(BACKUP_PART_SIZE) - $(BACKUP_FILE).part-
+	@echo "Backup written to $(BACKUP_FILE).part-*"
 
 db-backup-schema: ## Schema-only backup — tables, enums, indexes, grants (.sql.gz, no data)
 	@mkdir -p $(BACKUP_DIR)
@@ -74,7 +76,7 @@ db-backup-globals: ## Cluster-level roles and grants (.sql.gz via pg_dumpall)
 		| gzip > $(BACKUP_DIR)/$(DB_NAME)_globals_$(TS).sql.gz
 	@echo "Globals backup written to $(BACKUP_DIR)"
 
-db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table in public
+db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table in public (large tables split into .part-*)
 	@mkdir -p $(BACKUP_DIR)
 	@schema_out="$(BACKUP_DIR)/public_schema_$(TS).sql.gz"; \
 	echo "  public schema → $$schema_out"; \
@@ -84,16 +86,26 @@ db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table 
 		name=$$(echo $$table | tr '.' '_'); \
 		out="$(BACKUP_DIR)/$${name}_$(TS).sql.gz"; \
 		echo "  $$table → $$out"; \
-		{ echo "TRUNCATE TABLE $$table;"; \
-		  docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
-			--no-password --data-only -t $$table $(DB_NAME); } | gzip > "$$out"; \
+		docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
+			--no-password --data-only -t $$table $(DB_NAME) | gzip \
+			| split -b $(BACKUP_PART_SIZE) - "$$out.part-"; \
+		if [ ! -e "$$out.part-ab" ]; then \
+			mv "$$out.part-aa" "$$out"; \
+		else \
+			echo "    split into $$(ls "$$out".part-* | wc -l | tr -d ' ') parts"; \
+		fi; \
 	done
 	@echo "Per-table backups written to $(BACKUP_DIR)"
 
-db-restore: ## Restore from .sql.gz backup: make db-restore BACKUP_FILE=./backups/foo.sql.gz
+db-restore: ## Restore from backup: make db-restore BACKUP_FILE=./backups/foo.sql.gz (whole file or .part-* splits)
 	@test -n "$(BACKUP_FILE)" || (echo "ERROR: set BACKUP_FILE=<path>"; exit 1)
-	@test -f "$(BACKUP_FILE)" || (echo "ERROR: file not found: $(BACKUP_FILE)"; exit 1)
-	zcat $(BACKUP_FILE) | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME)
+	@if [ -f "$(BACKUP_FILE)" ]; then \
+		zcat "$(BACKUP_FILE)" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME); \
+	elif ls $(BACKUP_FILE).part-* >/dev/null 2>&1; then \
+		cat $(BACKUP_FILE).part-* | zcat | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME); \
+	else \
+		echo "ERROR: no backup found at $(BACKUP_FILE) or $(BACKUP_FILE).part-*"; exit 1; \
+	fi
 	@echo "Restore complete from $(BACKUP_FILE)"
 
 db-restore-tables: ## Restore per-table backup: apply schema grants then table data from BACKUP_DIR
@@ -106,10 +118,15 @@ db-restore-tables: ## Restore per-table backup: apply schema grants then table d
 	zcat "$$schema_file" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME)
 	@for table in $(DB_TABLES); do \
 		name=$$(echo $$table | tr '.' '_'); \
-		f=$$(ls -t $(BACKUP_DIR)/$${name}_*.sql.gz 2>/dev/null | head -1); \
+		f=$$(ls -t $(BACKUP_DIR)/$${name}_*.sql.gz $(BACKUP_DIR)/$${name}_*.sql.gz.part-aa 2>/dev/null | head -1); \
 		if [ -z "$$f" ]; then echo "  WARNING: no backup found for $$table — skipping"; continue; fi; \
-		echo "  $$table ← $$f"; \
-		zcat "$$f" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME); \
+		case "$$f" in \
+		*.part-aa) base=$${f%.part-aa}; \
+			echo "  $$table ← $$base.part-*"; \
+			cat "$$base".part-* | zcat | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME);; \
+		*) echo "  $$table ← $$f"; \
+			zcat "$$f" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME);; \
+		esac; \
 	done
 	@echo "Per-table restore complete from $(BACKUP_DIR)"
 
@@ -232,6 +249,12 @@ health: ## Check health endpoint
 
 db-check: ## Check database tables and row counts (requires API_TESTING_ENABLED=true)
 	curl -s $(BASE_URL)/test/db | python -m json.tool
+
+data-sync-trigger: ## Trigger a reference-data reload: make data-sync-trigger TOKEN=xxx MANIFEST=manifest.json [FORCE=true]
+	@curl -s -X POST "$(BASE_URL)/admin/data-sync?force=$(or $(FORCE),false)" \
+		-H "X-Data-Sync-Token: $(TOKEN)" \
+		-H "Content-Type: application/json" \
+		--data @$(MANIFEST) | tee /dev/stderr
 
 # ---------------------------------------------------------------------------
 # LocalStack SNS / SQS (host gateway is remapped to 4568 in compose.yml)

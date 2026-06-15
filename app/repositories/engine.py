@@ -23,12 +23,12 @@ logger = logging.getLogger(__name__)
 # to ensure fresh tokens before expiry
 IAM_TOKEN_POOL_RECYCLE_SECONDS = 600
 
-# Cache IAM tokens with a safety margin below the 15-minute RDS expiry,
-# so new pool connections reuse a token instead of paying ~250 ms each.
-IAM_TOKEN_CACHE_TTL_SECONDS = 13 * 60
+# Reuse one token across connections for 9 minutes: a token cached for up to
+# 9 minutes still has 6 minutes of validity left when a connection uses it.
+IAM_TOKEN_CACHE_SECONDS = 540
 
-_TOKEN_CACHE_LOCK = threading.Lock()
-_TOKEN_CACHE: dict = {"token": None, "expires": 0.0}
+_token_cache: dict[tuple[str, int, str, str], tuple[float, str]] = {}
+_token_cache_lock = threading.Lock()
 
 _SHARED_LOCK = threading.Lock()
 _SHARED_ENGINE: Engine | None = None
@@ -38,22 +38,27 @@ DEFAULT_SHARED_POOL_SIZE = 10
 DEFAULT_SHARED_MAX_OVERFLOW = 10
 
 
-def _get_iam_auth_token_cached(settings: DatabaseSettings, region: str) -> str:
-    now = time.time()
-    cached = _TOKEN_CACHE["token"]
-    if cached and now < _TOKEN_CACHE["expires"]:
-        return cached
-    with _TOKEN_CACHE_LOCK:
-        cached = _TOKEN_CACHE["token"]
-        if cached and time.time() < _TOKEN_CACHE["expires"]:
-            return cached
-        token = _get_iam_auth_token(settings, region)
-        _TOKEN_CACHE["token"] = token
-        _TOKEN_CACHE["expires"] = time.time() + IAM_TOKEN_CACHE_TTL_SECONDS
+def _get_iam_auth_token(settings: DatabaseSettings, region: str) -> str:
+    """Return a cached IAM auth token, generating a fresh one when stale.
+
+    Every new pooled connection asks for a token; without a cache, a burst of
+    connections (pool fill, recycle expiry) generates one token each.
+    Generation happens under the lock so a concurrent burst produces a single
+    token rather than one per connection.
+    """
+    key = (settings.host, settings.port, settings.user, region)
+    now = time.monotonic()
+    with _token_cache_lock:
+        entry = _token_cache.get(key)
+        if entry is not None and now - entry[0] < IAM_TOKEN_CACHE_SECONDS:
+            logger.debug("Reusing cached IAM auth token (age=%.0fs)", now - entry[0])
+            return entry[1]
+        token = _generate_iam_auth_token(settings, region)
+        _token_cache[key] = (now, token)
         return token
 
 
-def _get_iam_auth_token(settings: DatabaseSettings, region: str) -> str:
+def _generate_iam_auth_token(settings: DatabaseSettings, region: str) -> str:
     """Generate a short-lived IAM authentication token for RDS."""
     logger.info(
         "Requesting IAM auth token: host=%s, port=%d, user=%s, region=%s",
@@ -102,7 +107,7 @@ def _get_iam_auth_token(settings: DatabaseSettings, region: str) -> str:
 def _get_password(settings: DatabaseSettings, region: str) -> str:
     """Get the appropriate password based on authentication mode."""
     if settings.iam_authentication:
-        return _get_iam_auth_token_cached(settings, region)
+        return _get_iam_auth_token(settings, region)
     return settings.local_password
 
 
@@ -158,7 +163,7 @@ def _create_pooled_engine(
         @event.listens_for(engine, "do_connect")
         def provide_token(_dialect, _conn_rec, _cargs, cparams):
             """Inject a (possibly cached) IAM token before each connection."""
-            cparams["password"] = _get_iam_auth_token_cached(settings, region)
+            cparams["password"] = _get_iam_auth_token(settings, region)
 
         logger.info(
             "Created engine with IAM authentication: pool_size=%d, max_overflow=%d, pool_recycle=%ds",

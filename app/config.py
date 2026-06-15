@@ -3,7 +3,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import Field, HttpUrl
+from pydantic import Field, HttpUrl, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +21,22 @@ class AppConfig(BaseSettings):
     enable_metrics: bool = False
     tracing_header: str = "x-cdp-request-id"
     workers: int = 1
+    impact_assessor_api_key: str = Field(
+        default="",
+        description=(
+            "Required value of the x-api-key header on incoming requests to "
+            "non-public endpoints (reads IMPACT_ASSESSOR_API_KEY)"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _require_api_key_in_production(self) -> "AppConfig":
+        # Fail closed at startup if the api key is unset in production. Allows
+        # empty values in dev/test so local stacks without auth wired still boot.
+        if self.python_env == "production" and not self.impact_assessor_api_key:
+            msg = "IMPACT_ASSESSOR_API_KEY is required in production"
+            raise ValueError(msg)
+        return self
 
 
 config = AppConfig()
@@ -320,9 +336,26 @@ class BackendConfig(BaseSettings):
     )
 
     base_url: str = Field(default="", description="Base URL for nrf-backend API")
+    api_key: str = Field(
+        default="",
+        description=(
+            "Value of the x-api-key header sent on outbound calls to nrf-backend "
+            "(reads BACKEND_API_KEY)"
+        ),
+    )
     callback_timeout: int = Field(
         default=30, ge=1, description="HTTP timeout in seconds for callbacks"
     )
+
+    @model_validator(mode="after")
+    def _require_api_key_in_production(self) -> "BackendConfig":
+        # Fail closed at startup if the api key is unset in production. Allows
+        # empty values in dev/test so local stacks without auth wired still boot.
+        if os.environ.get("PYTHON_ENV") == "production" and not self.api_key:
+            msg = "BACKEND_API_KEY is required in production"
+            raise ValueError(msg)
+        return self
+
     callback_max_retries: int = Field(
         default=3, ge=0, description="Max retry attempts for failed callbacks"
     )
@@ -415,6 +448,45 @@ class TileServerConfig(BaseSettings):
     version_ttl_seconds: int = Field(default=300)
     min_zoom: int = Field(default=0)
     max_zoom: int = Field(default=22)
+
+
+class DataSyncConfig(BaseSettings):
+    """Configuration for S3-triggered reference-data reload."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="DATA_SYNC_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(
+        default=False, description="Mount the /admin/data-sync endpoint"
+    )
+    s3_bucket: str = Field(default="", description="Bucket holding dump objects")
+    s3_prefix: str = Field(default="", description="Key prefix for dump objects")
+    auth_token: str = Field(
+        default="", description="Shared token required to trigger a reload"
+    )
+    lock_key: int = Field(
+        default=728191, description="Postgres advisory lock key for reload runs"
+    )
+    tables: list[str] = Field(
+        default_factory=lambda: [
+            "coefficient_layer",
+            "edp_boundary_layer",
+            "edp_edges",
+            "gcn_ponds",
+            "gcn_risk_zones",
+            "lookup_table",
+            "lpa_boundaries",
+            "nn_catchments",
+            "subcatchments",
+            "wwtw_catchments",
+        ],
+        description="Fallback allow-list; manifest 'tables' map is authoritative",
+    )
 
 
 class DebugConfig:
