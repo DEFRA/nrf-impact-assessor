@@ -73,8 +73,8 @@ def test_never_raises_even_if_counting_blows_up(caplog):
     assert any("table status" in r.message for r in caplog.records)
 
 
-def _do_run_with(monkeypatch, *, reload_needed: bool) -> MagicMock:
-    """Drive _do_run with everything stubbed; return the _log_table_status mock."""
+def _do_run_with(monkeypatch, *, reload_needed: bool) -> tuple[MagicMock, MagicMock]:
+    """Drive _do_run with everything stubbed; return relevant collaborator mocks."""
     fake_session = MagicMock()
     fake_session.get.return_value = MagicMock()
     monkeypatch.setattr(service, "Session", lambda bind: fake_session)  # noqa: ARG005
@@ -84,6 +84,8 @@ def _do_run_with(monkeypatch, *, reload_needed: bool) -> MagicMock:
     monkeypatch.setattr(service, "_restore_all", MagicMock())
     log_status = MagicMock()
     monkeypatch.setattr(service, "_log_table_status", log_status)
+    clear_caches = MagicMock()
+    monkeypatch.setattr(service, "clear_spatial_caches", clear_caches)
 
     service._do_run(
         MagicMock(),  # engine
@@ -95,14 +97,20 @@ def _do_run_with(monkeypatch, *, reload_needed: bool) -> MagicMock:
         MagicMock(),  # manifest
         force=False,
     )
-    return log_status
+    return log_status, clear_caches
 
 
 def test_do_run_logs_table_status_after_successful_restore(monkeypatch):
-    log_status = _do_run_with(monkeypatch, reload_needed=True)
+    log_status, _ = _do_run_with(monkeypatch, reload_needed=True)
     log_status.assert_called_once()
 
 
+def test_do_run_clears_spatial_caches_after_successful_restore(monkeypatch):
+    _, clear_caches = _do_run_with(monkeypatch, reload_needed=True)
+    clear_caches.assert_called_once()
+
+
 def test_do_run_skips_table_status_on_noop(monkeypatch):
-    log_status = _do_run_with(monkeypatch, reload_needed=False)
+    log_status, clear_caches = _do_run_with(monkeypatch, reload_needed=False)
     log_status.assert_not_called()
+    clear_caches.assert_not_called()
