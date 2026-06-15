@@ -30,6 +30,7 @@ from app.models.db import (
     WwtwCatchments,
 )
 from app.repositories.engine import create_db_engine
+from app.repositories.repository import clear_spatial_caches
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +235,10 @@ def _do_run(
 
         _restore_all(session, s3, cfg, db, region, run_id, manifest)
         _log_table_status(session)
+        # Reference data just changed; drop in-process spatial caches so the
+        # next assessment re-reads from the database rather than serving
+        # pre-reload results until their TTL expires.
+        clear_spatial_caches()
         _finish(session, run, status="success")
     except Exception as exc:
         logger.exception("data sync run %s failed", run_id)

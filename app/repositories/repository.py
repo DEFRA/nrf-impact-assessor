@@ -32,6 +32,20 @@ _intersection_cache: TTLCache = TTLCache(
 logger = logging.getLogger(__name__)
 
 
+def clear_spatial_caches() -> None:
+    """Drop all cached spatial query results.
+
+    The caches key on input geometry and (for land use) the resolved data
+    version, but not on the underlying table contents. A data-sync reload can
+    replace reference data without bumping the version, leaving cached results
+    stale until their TTL expires. Call this after a successful reload so the
+    next query re-reads from the database.
+    """
+    _land_use_cache.clear()
+    _intersection_cache.clear()
+    logger.info("Cleared spatial query caches")
+
+
 def _coerce_param(value: Any) -> Any:
     """Convert Python Enum instances to their .name string for psycopg2.
 

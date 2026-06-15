@@ -36,7 +36,7 @@ from app.assess._geometry import inject_job_fields
 from app.clients.backend_client import BackendClient
 from app.clients.payload_mapper import build_quote_patch_payload
 from app.common.tracing import ctx_trace_id
-from app.config import AWSConfig, BackendConfig, DatabaseSettings
+from app.config import AWSConfig, BackendConfig
 from app.models.db import (
     CoefficientLayer,
     EdpBoundaryLayer,
