@@ -29,7 +29,7 @@ from app.models.db import (
     Subcatchments,
     WwtwCatchments,
 )
-from app.repositories.engine import create_db_engine
+from app.repositories.engine import create_db_engine, get_shared_repository
 from app.repositories.repository import clear_spatial_caches
 
 logger = logging.getLogger(__name__)
@@ -49,10 +49,11 @@ _REFERENCE_TABLES = [
 ]
 
 
-def _log_table_status(session: Session) -> None:
-    """Log one line of per-table row counts so an empty reference table after a
-    reload is visible in the logs. Never raises: the reload has already
-    committed, so a failed count must not fail the run.
+def _log_table_status(session: Session, *, context: str = "Post-sync") -> None:
+    """Log one line of per-table row counts so an empty reference table is
+    visible in the logs. `context` labels the message (e.g. "Post-sync",
+    "No-op sync", "Startup"). Never raises: callers run it best-effort, so a
+    failed count must not fail the surrounding operation.
     """
     try:
         parts: list[str] = []
@@ -69,7 +70,7 @@ def _log_table_status(session: Session) -> None:
             parts.append(f"{label}={n}")
             if not n:
                 empty.append(label)
-        summary = "Post-sync table status: " + " ".join(parts)
+        summary = f"{context} table status: " + " ".join(parts)
         if empty or errors:
             if empty:
                 summary += " EMPTY: " + ", ".join(empty)
@@ -80,6 +81,19 @@ def _log_table_status(session: Session) -> None:
             logger.info("%s — all tables have rows", summary)
     except Exception:  # noqa: BLE001
         logger.warning("post-sync table status check failed", exc_info=True)
+
+
+def log_startup_table_status() -> None:
+    """Log reference-table row counts at app startup so an empty reference
+    table is visible even when no reload ever runs. Best-effort: never raises,
+    so a count failure (or an unavailable engine) cannot block startup.
+    """
+    try:
+        repository = get_shared_repository()
+        with repository.session() as session:
+            _log_table_status(session, context="Startup")
+    except Exception:  # noqa: BLE001
+        logger.warning("startup table status check failed", exc_info=True)
 
 
 def needs_reload(manifest: Manifest, applied_version: str | None, force: bool) -> bool:
@@ -230,6 +244,9 @@ def _do_run(
 
         if not needs_reload(manifest, _last_applied_version(session), force):
             logger.info("data_version %s already applied; no-op", manifest.data_version)
+            # No reload, but still surface an empty reference table: emptiness
+            # persists across no-op runs and would otherwise never be logged.
+            _log_table_status(session, context="No-op sync")
             _finish(session, run, status="success")
             return
 

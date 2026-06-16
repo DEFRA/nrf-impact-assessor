@@ -27,6 +27,18 @@ def test_logs_single_info_line_when_all_tables_have_rows(caplog):
     assert "all tables have rows" in record.message
 
 
+def test_status_message_uses_context_label(caplog):
+    session = MagicMock()
+    session.scalar.return_value = 5
+
+    with caplog.at_level(logging.INFO, logger="app.data_sync.service"):
+        _log_table_status(session, context="Startup")
+
+    records = [r for r in caplog.records if "Startup table status" in r.message]
+    assert len(records) == 1
+    assert "Post-sync" not in records[0].message
+
+
 def test_warns_and_names_empty_tables(caplog):
     session = MagicMock()
     # lookup_table (3rd in the list) comes back empty
@@ -110,7 +122,10 @@ def test_do_run_clears_spatial_caches_after_successful_restore(monkeypatch):
     clear_caches.assert_called_once()
 
 
-def test_do_run_skips_table_status_on_noop(monkeypatch):
+def test_do_run_logs_table_status_on_noop(monkeypatch):
+    # A no-op sync still reports table status so an empty reference table is
+    # visible even when the data version is already applied and no reload runs.
     log_status, clear_caches = _do_run_with(monkeypatch, reload_needed=False)
-    log_status.assert_not_called()
+    log_status.assert_called_once()
+    # No reload happened, so caches are left intact.
     clear_caches.assert_not_called()
