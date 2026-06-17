@@ -14,12 +14,12 @@ from typing import Any
 import geopandas as gpd
 import pandas as pd
 from cachetools import TTLCache
-from sqlalchemy import Select, select, text
+from sqlalchemy import Select, func, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import SpatialCacheConfig
-from app.models.db import Base
+from app.models.db import Base, DataLoadHistory
 
 _cache_cfg = SpatialCacheConfig()
 _land_use_cache: TTLCache = TTLCache(
@@ -102,6 +102,57 @@ def _gdf_key(gdf: gpd.GeoDataFrame, cols: list[str]) -> str:
         for row, wkt in zip(gdf.to_dict("records"), gdf.geometry.to_wkt(), strict=False)
     )
     return hashlib.sha256(str(rows).encode()).hexdigest()
+
+
+def _spatial_cache_generation(session: Session) -> str:
+    """Return DB-visible generation for reference data used by spatial caches."""
+    loaded_at = session.scalar(
+        select(func.max(DataLoadHistory.loaded_at)).where(
+            DataLoadHistory.status == "success"
+        )
+    )
+    return loaded_at.isoformat() if loaded_at else "no-successful-data-load"
+
+
+def _land_use_cache_key(
+    input_gdf: gpd.GeoDataFrame,
+    *,
+    coeff_version: int,
+    nn_version: int,
+    generation: str,
+) -> tuple[str, int, int, str]:
+    return (
+        _gdf_key(
+            input_gdf,
+            ["rlb_id", "dwellings", "name", "dwelling_category", "source"],
+        ),
+        coeff_version,
+        nn_version,
+        generation,
+    )
+
+
+def _intersection_cache_key(
+    *,
+    input_wkt: str,
+    overlay_table: type[Base],
+    filter_str: str,
+    overlay_columns: list[str],
+    json_extracts: dict[str, list[str]] | None,
+    generation: str,
+) -> str:
+    return hashlib.sha256(
+        "|".join(
+            [
+                input_wkt,
+                overlay_table.__tablename__,
+                filter_str,
+                str(sorted(overlay_columns)),
+                str(sorted(json_extracts.items()) if json_extracts else []),
+                generation,
+            ]
+        ).encode()
+    ).hexdigest()
 
 
 class Repository:
@@ -359,18 +410,6 @@ class Repository:
         nn_version: int,
     ) -> pd.DataFrame:
         """Perform 3-way spatial intersection (RLB x coefficient x NN catchment) in PostGIS."""
-        cache_key = (
-            _gdf_key(
-                input_gdf,
-                ["rlb_id", "dwellings", "name", "dwelling_category", "source"],
-            ),
-            coeff_version,
-            nn_version,
-        )
-        if cache_key in _land_use_cache:
-            logger.debug("land_use_intersection_postgis cache hit")
-            return _land_use_cache[cache_key].copy()
-
         if len(input_gdf) == 0:
             return pd.DataFrame(
                 columns=[
@@ -390,6 +429,17 @@ class Repository:
             )
 
         with self.session() as session:
+            generation = _spatial_cache_generation(session)
+            cache_key = _land_use_cache_key(
+                input_gdf,
+                coeff_version=coeff_version,
+                nn_version=nn_version,
+                generation=generation,
+            )
+            if cache_key in _land_use_cache:
+                logger.debug("land_use_intersection_postgis cache hit")
+                return _land_use_cache[cache_key].copy()
+
             session.execute(
                 text(
                     "CREATE TEMPORARY TABLE _tmp_rlb ("
@@ -515,17 +565,16 @@ class Repository:
         input_wkt = input_union.wkt
 
         filter_str = str(overlay_filter.compile(compile_kwargs={"literal_binds": True}))
-        cache_key = hashlib.sha256(
-            "|".join(
-                [
-                    input_wkt,
-                    overlay_table.__tablename__,
-                    filter_str,
-                    str(sorted(overlay_columns)),
-                    str(sorted(json_extracts.items()) if json_extracts else []),
-                ]
-            ).encode()
-        ).hexdigest()
+        with self.session() as session:
+            generation = _spatial_cache_generation(session)
+        cache_key = _intersection_cache_key(
+            input_wkt=input_wkt,
+            overlay_table=overlay_table,
+            filter_str=filter_str,
+            overlay_columns=overlay_columns,
+            json_extracts=json_extracts,
+            generation=generation,
+        )
         if cache_key in _intersection_cache:
             logger.debug("intersection_postgis cache hit")
             return _intersection_cache[cache_key].copy()
