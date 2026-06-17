@@ -59,6 +59,16 @@ Organise new modules in the repo's existing style. For FastAPI router modules, p
 - Set `response_model` on public endpoints and use `response_model_by_alias=True` when API responses require aliases.
 - Keep test-only endpoints behind existing test configuration gates.
 
+## Database & SQL Safety
+
+The repository layer mixes the SQLAlchemy ORM/query builder with raw `text()` for PostGIS work, so SQL injection is a live risk. Follow these rules when writing or reviewing DB code:
+
+- Pass **values** as bound parameters, never interpolate them into the SQL. With `text()` use named placeholders and a params dict: `session.execute(text("... WHERE name = :name"), {"name": name})`. Never f-string, `.format()`, `%`, or `+` a value into a SQL string.
+- Geometry/WKT from request input must go through bound params (`ST_GeomFromText(:geom_wkt)`) or a GeoAlchemy2 expression inside a `select()` — never string-interpolated.
+- SQL **identifiers** (schema, table, column names) cannot be parameterised. Only interpolate an identifier when both are true: (1) it comes from a hard-coded allowlist (e.g. the `TILE_LAYERS` dict) or a validated ORM construct, never request input; and (2) it is checked with a strict allowlist regex (see `_assert_safe_identifier` / `_assert_safe_qualified` in `app/repositories/repository.py`) before it reaches the SQL string.
+- When `text()` SQL is built from compiled ORM expressions (e.g. `_sa_params`), the structural args (`overlay_table`, `overlay_filter`, `output_field`) must be developer-controlled ORM constructs, not request-derived — the regex allowlists are the last line of defence, not a licence to pass user input.
+- A `# noqa: S608` (Ruff's SQL-injection lint) is only acceptable alongside a comment proving the interpolated value is from an allowlist/constant. When reviewing, treat any `S608` suppression, f-string/`.format()`/`%`/`+` in a `text()` call, or identifier interpolation as a finding until you have traced the value to a non-request, validated source.
+
 ## Performance
 
 - Never block the event loop from async request handlers.
