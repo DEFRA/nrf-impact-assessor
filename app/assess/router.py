@@ -23,8 +23,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.assess._geometry import inject_job_fields, read_geometry_from_upload
-from app.config import ApiServerConfig, DatabaseSettings
-from app.repositories.engine import create_db_engine
+from app.config import ApiServerConfig
+from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
 from app.runner.runner import run_assessment
 
@@ -78,22 +78,9 @@ class AssessStatusResponse(BaseModel):
     timing_s: float | None = None
 
 
-# ---------------------------------------------------------------------------
-# Lazy-initialised repository singleton
-# ---------------------------------------------------------------------------
-_repository: Repository | None = None
-
-
 def _get_repository() -> Repository:
-    """Get or create the module-level Repository singleton."""
-    global _repository
-    if _repository is None:
-        logger.info("Initialising Repository for /assess endpoint...")
-        db_settings = DatabaseSettings()
-        engine = create_db_engine(db_settings, pool_size=2, max_overflow=2)
-        _repository = Repository(engine)
-        logger.info("Repository initialised")
-    return _repository
+    """Return the process-wide shared Repository."""
+    return get_shared_repository()
 
 
 # ---------------------------------------------------------------------------

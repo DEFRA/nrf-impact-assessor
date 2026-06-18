@@ -23,31 +23,18 @@ from pydantic.alias_generators import to_camel
 from shapely.geometry import shape
 from sqlalchemy import select, text
 
-from app.config import DatabaseSettings
 from app.models.db import LookupTable, WwtwCatchments
-from app.repositories.engine import create_db_engine
+from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# ---------------------------------------------------------------------------
-# Lazy-initialised repository singleton
-# ---------------------------------------------------------------------------
-_repository: Repository | None = None
-
 
 def _get_repository() -> Repository:
-    """Get or create the module-level Repository singleton."""
-    global _repository
-    if _repository is None:
-        logger.info("Initialising Repository for /wwtw/nearby endpoint...")
-        db_settings = DatabaseSettings()
-        engine = create_db_engine(db_settings, pool_size=2, max_overflow=2)
-        _repository = Repository(engine)
-        logger.info("Repository initialised")
-    return _repository
+    """Return the process-wide shared Repository."""
+    return get_shared_repository()
 
 
 # ---------------------------------------------------------------------------

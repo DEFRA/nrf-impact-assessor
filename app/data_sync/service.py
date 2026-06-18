@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import boto3
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -15,10 +15,85 @@ from app.aws.s3 import S3Client, S3ObjectError
 from app.config import AWSConfig, DatabaseSettings, DataSyncConfig
 from app.data_sync.manifest import Manifest
 from app.data_sync.restore import old_version_cleanup_sql, restore_all_atomic
-from app.models.db import DataLoadHistory, DataSyncRun
-from app.repositories.engine import create_db_engine
+from app.models.db import (
+    CoefficientLayer,
+    DataLoadHistory,
+    DataSyncRun,
+    EdpBoundaryLayer,
+    EdpEdges,
+    GcnPonds,
+    GcnRiskZones,
+    LookupTable,
+    LpaBoundaries,
+    NnCatchments,
+    Subcatchments,
+    WwtwCatchments,
+)
+from app.repositories.engine import create_db_engine, get_shared_repository
+from app.repositories.repository import clear_spatial_caches
 
 logger = logging.getLogger(__name__)
+
+# Same reference tables the /test/db check endpoint reports on.
+_REFERENCE_TABLES = [
+    (CoefficientLayer, "coefficient_layer"),
+    (EdpBoundaryLayer, "edp_boundary_layer"),
+    (LookupTable, "lookup_table"),
+    (WwtwCatchments, "wwtw_catchments"),
+    (LpaBoundaries, "lpa_boundaries"),
+    (NnCatchments, "nn_catchments"),
+    (Subcatchments, "subcatchments"),
+    (GcnRiskZones, "gcn_risk_zones"),
+    (GcnPonds, "gcn_ponds"),
+    (EdpEdges, "edp_edges"),
+]
+
+
+def _log_table_status(session: Session, *, context: str = "Post-sync") -> None:
+    """Log one line of per-table row counts so an empty reference table is
+    visible in the logs. `context` labels the message (e.g. "Post-sync",
+    "No-op sync", "Startup"). Never raises: callers run it best-effort, so a
+    failed count must not fail the surrounding operation.
+    """
+    try:
+        parts: list[str] = []
+        empty: list[str] = []
+        errors: list[str] = []
+        for model, label in _REFERENCE_TABLES:
+            try:
+                n = session.scalar(select(func.count()).select_from(model))
+            except Exception as exc:  # noqa: BLE001
+                session.rollback()
+                parts.append(f"{label}=error")
+                errors.append(f"{label} ({exc})")
+                continue
+            parts.append(f"{label}={n}")
+            if not n:
+                empty.append(label)
+        summary = f"{context} table status: " + " ".join(parts)
+        if empty or errors:
+            if empty:
+                summary += " EMPTY: " + ", ".join(empty)
+            if errors:
+                summary += " ERROR: " + ", ".join(errors)
+            logger.warning(summary)
+        else:
+            logger.info("%s — all tables have rows", summary)
+    except Exception:  # noqa: BLE001
+        logger.warning("post-sync table status check failed", exc_info=True)
+
+
+def log_startup_table_status() -> None:
+    """Log reference-table row counts at app startup so an empty reference
+    table is visible even when no reload ever runs. Best-effort: never raises,
+    so a count failure (or an unavailable engine) cannot block startup.
+    """
+    try:
+        repository = get_shared_repository()
+        with repository.session() as session:
+            _log_table_status(session, context="Startup")
+    except Exception:  # noqa: BLE001
+        logger.warning("startup table status check failed", exc_info=True)
 
 
 def needs_reload(manifest: Manifest, applied_version: str | None, force: bool) -> bool:
@@ -169,10 +244,18 @@ def _do_run(
 
         if not needs_reload(manifest, _last_applied_version(session), force):
             logger.info("data_version %s already applied; no-op", manifest.data_version)
+            # No reload, but still surface an empty reference table: emptiness
+            # persists across no-op runs and would otherwise never be logged.
+            _log_table_status(session, context="No-op sync")
             _finish(session, run, status="success")
             return
 
         _restore_all(session, s3, cfg, db, region, run_id, manifest)
+        _log_table_status(session)
+        # Reference data just changed; drop in-process spatial caches so the
+        # next assessment re-reads from the database rather than serving
+        # pre-reload results until their TTL expires.
+        clear_spatial_caches()
         _finish(session, run, status="success")
     except Exception as exc:
         logger.exception("data sync run %s failed", run_id)

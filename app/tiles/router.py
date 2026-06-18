@@ -14,8 +14,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy import text
 
-from app.config import DatabaseSettings, TileServerConfig
-from app.repositories.engine import create_db_engine
+from app.config import TileServerConfig
+from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
 
 logger = logging.getLogger(__name__)
@@ -38,9 +38,6 @@ _tile_config = TileServerConfig()
 # ---------------------------------------------------------------------------
 # Module-level singletons
 # ---------------------------------------------------------------------------
-
-_repository: Repository | None = None
-_repository_lock = threading.Lock()
 
 # Per-layer resolved version cache: slug → (version, expiry)
 _version_cache: dict[str, tuple[int, float]] = {}
@@ -110,22 +107,8 @@ _EDP_TILE_SQL = text("""
 
 
 def _get_repository() -> Repository:
-    """Get or create the module-level Repository singleton (thread-safe)."""
-    global _repository
-    if _repository is not None:
-        return _repository
-    with _repository_lock:
-        if _repository is None:
-            logger.info("Initialising Repository for /tiles endpoint...")
-            db_settings = DatabaseSettings()
-            engine = create_db_engine(
-                db_settings,
-                pool_size=_tile_config.db_pool_size,
-                max_overflow=_tile_config.db_max_overflow,
-            )
-            _repository = Repository(engine)
-            logger.info("Repository initialised")
-        return _repository
+    """Return the process-wide shared Repository."""
+    return get_shared_repository()
 
 
 def _resolve_layer_version(slug: str) -> int:

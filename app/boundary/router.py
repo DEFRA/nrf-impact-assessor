@@ -28,9 +28,9 @@ from geoalchemy2.functions import (
 from sqlalchemy import select
 
 from app.boundary.validation import SUPPORTED_CRS, validate_geometry
-from app.config import ApiServerConfig, DatabaseSettings
+from app.config import ApiServerConfig
 from app.models.db import EdpBoundaryLayer
-from app.repositories.engine import create_db_engine
+from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
 from app.spatial.utils import UnsupportedCRSError, ensure_crs
 
@@ -45,22 +45,10 @@ router = APIRouter()
 _config = ApiServerConfig()
 _max_upload_bytes = _config.max_upload_bytes
 
-# ---------------------------------------------------------------------------
-# Lazy-initialised repository singleton
-# ---------------------------------------------------------------------------
-_repository: Repository | None = None
-
 
 def _get_repository() -> Repository:
-    """Get or create the module-level Repository singleton."""
-    global _repository
-    if _repository is None:
-        logger.info("Initialising Repository for /check-boundary endpoint...")
-        db_settings = DatabaseSettings()
-        engine = create_db_engine(db_settings, pool_size=2, max_overflow=2)
-        _repository = Repository(engine)
-        logger.info("Repository initialised")
-    return _repository
+    """Return the process-wide shared Repository."""
+    return get_shared_repository()
 
 
 _EXT_GEOJSON = ".geojson"

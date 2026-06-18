@@ -7,6 +7,7 @@ import geopandas as gpd
 from shapely.geometry import shape
 
 from app.assessments.adapters import nutrient_adapter
+from app.assessments.reference_data import assert_reference_data_present
 from app.clients.backend_client import BackendClient
 from app.clients.payload_mapper import build_quote_patch_payload
 from app.common.tracing import ctx_trace_id
@@ -17,6 +18,14 @@ from app.repositories.repository import Repository
 from app.runner.runner import run_assessment
 
 logger = logging.getLogger(__name__)
+
+
+class JobProcessingError(RuntimeError):
+    """Raised when a job cannot be completed (bad input, no results, etc.).
+
+    The consumer treats any exception out of process_job as "not done" and
+    leaves the SQS message on the queue for redelivery / DLQ.
+    """
 
 
 class JobOrchestrator:
@@ -42,8 +51,13 @@ class JobOrchestrator:
             assessment_type: The type of assessment to run for this job.
 
         Returns:
-            Dictionary of assessment result DataFrames, or empty dict if validation
-            fails or an error occurs.
+            Dictionary of assessment result DataFrames on success.
+
+        Raises:
+            JobProcessingError: The job could not be completed (missing geometry,
+                invalid geometry, or the assessment produced no results).
+            EmptyReferenceDataError: A reference table the assessment needs is
+                empty. Propagated so the caller leaves the message on the queue.
         """
         start_time = time.time()
         job_id = job.reference or "unknown"
@@ -61,16 +75,20 @@ class JobOrchestrator:
 
         try:
             if not job.boundary_geojson:
-                logger.error(
+                msg = (
                     f"No geometry source for job {job_id}: boundaryGeojson is required"
                 )
-                return {}
+                raise JobProcessingError(msg)
+
+            # Fail loudly (rather than producing empty results) when a required
+            # reference table is empty, so the message is retried, not deleted.
+            assert_reference_data_present(self.repository, assessment_type.value)
 
             dataframes = self._process_inline_geometry(job, assessment_type)
 
             if not dataframes:
-                logger.error(f"Assessment produced no results for job {job_id}")
-                return {}
+                msg = f"Assessment produced no results for job {job_id}"
+                raise JobProcessingError(msg)
 
             processing_time = time.time() - start_time
             logger.info(
@@ -85,9 +103,9 @@ class JobOrchestrator:
 
             return dataframes
 
-        except Exception as e:
-            logger.exception(f"Job {job_id} failed with exception: {e}")
-            return {}
+        except Exception:
+            logger.exception(f"Job {job_id} failed with exception")
+            raise
 
     def _process_inline_geometry(
         self, job: ImpactAssessmentJob, assessment_type: AssessmentType
@@ -111,8 +129,8 @@ class JobOrchestrator:
         validation_errors = self._validate_geodataframe(gdf)
         if validation_errors:
             error_msg = "; ".join(validation_errors)
-            logger.error(f"Geometry validation failed for job {job_id}: {error_msg}")
-            return {}
+            msg = f"Geometry validation failed for job {job_id}: {error_msg}"
+            raise JobProcessingError(msg)
 
         logger.info("Step 3: Injecting job data")
         gdf = self._inject_job_data(gdf, job)

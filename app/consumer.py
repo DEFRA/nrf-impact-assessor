@@ -163,14 +163,24 @@ class SqsConsumer:
                 for job_message, receipt_handle in results:
                     job_id = job_message.reference or "unknown"
                     logger.info(f"Processing job: {job_id}")
-                    _with_visibility_heartbeat(
-                        lambda msg=job_message: self.orchestrator.process_job(
-                            msg, AssessmentType.NUTRIENT
-                        ),
-                        self.sqs_client,
-                        receipt_handle,
-                        self._visibility_timeout,
-                    )
+                    try:
+                        _with_visibility_heartbeat(
+                            lambda msg=job_message: self.orchestrator.process_job(
+                                msg, AssessmentType.NUTRIENT
+                            ),
+                            self.sqs_client,
+                            receipt_handle,
+                            self._visibility_timeout,
+                        )
+                    except Exception:
+                        # Leave the message on the queue: SQS redelivers it and,
+                        # after maxReceiveCount, moves it to the DLQ. Deleting here
+                        # would silently drop a job that did not complete.
+                        logger.exception(
+                            f"Job {job_id} failed; leaving message on queue "
+                            "for redelivery / DLQ"
+                        )
+                        continue
                     self.sqs_client.delete_message(receipt_handle)
                     logger.info(
                         f"Job {job_id} processing complete, message deleted from queue"
