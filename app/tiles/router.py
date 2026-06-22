@@ -288,6 +288,35 @@ def _get_tile(layer_slug: str, z: int, x: int, y: int) -> tuple[bytes, TileTimin
     return tile_bytes, timings
 
 
+def _log_tile_timing(layer: str, z: int, x: int, y: int, timings: TileTimings) -> None:
+    """Emit phase timings, always for DB misses/slow requests and 1-in-N hits."""
+    is_slow = timings.total_ms >= _tile_config.log_slow_ms
+    is_sampled = next(_log_counter) % _tile_config.log_sample_n == 0
+    if timings.cache_hit and not is_slow and not is_sampled:
+        return
+
+    # Log only the whitelisted slug, never the raw request value, so no
+    # user-controlled data reaches the log (CWE-117). z/x/y are ints.
+    safe_layer = (
+        layer if (layer in TILE_LAYERS or layer in EDP_TILE_LAYERS) else "unknown"
+    )
+    logger.info(
+        "tile %s/%d/%d/%d %s total=%.1fms version=%.1fms cache=%.3fms "
+        "connect=%.1fms query=%.1fms size=%dB",
+        safe_layer,
+        int(z),
+        int(x),
+        int(y),
+        "HIT" if timings.cache_hit else "MISS",
+        timings.total_ms,
+        timings.version_ms,
+        timings.cache_ms,
+        timings.connect_ms,
+        timings.query_ms,
+        timings.size_bytes,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Route
 # ---------------------------------------------------------------------------
@@ -321,31 +350,7 @@ def get_tile(request: Request, layer: str, z: int, x: int, y: int) -> Response:
         )
 
     tile_bytes, timings = _get_tile(layer, z, x, y)
-
-    # Always log DB-touching misses and slow requests; sample cheap hits 1-in-N.
-    is_slow = timings.total_ms >= _tile_config.log_slow_ms
-    is_sampled = next(_log_counter) % _tile_config.log_sample_n == 0
-    if not timings.cache_hit or is_slow or is_sampled:
-        # Log only the whitelisted slug, never the raw request value, so no
-        # user-controlled data reaches the log (CWE-117). z/x/y are ints.
-        safe_layer = (
-            layer if (layer in TILE_LAYERS or layer in EDP_TILE_LAYERS) else "unknown"
-        )
-        logger.info(
-            "tile %s/%d/%d/%d %s total=%.1fms version=%.1fms cache=%.3fms "
-            "connect=%.1fms query=%.1fms size=%dB",
-            safe_layer,
-            int(z),
-            int(x),
-            int(y),
-            "HIT" if timings.cache_hit else "MISS",
-            timings.total_ms,
-            timings.version_ms,
-            timings.cache_ms,
-            timings.connect_ms,
-            timings.query_ms,
-            timings.size_bytes,
-        )
+    _log_tile_timing(layer, z, x, y, timings)
 
     if layer in EDP_TILE_LAYERS:
         version = _edp_version_cache[0] if _edp_version_cache else 1
