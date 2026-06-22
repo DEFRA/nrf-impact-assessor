@@ -22,18 +22,18 @@ jobs:
         with:
           fetch-depth: 0 # Depth 0 is required for branch-based versioning
 
-      - name: Test code and Create Test Coverage Reports
-        uses: actions/setup-python@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
-          python-version: 3.14
-          cache: 'pip'
-      - run: |
-          pipx install uv
+          enable-cache: true
+
+      - name: Test code and Create Test Coverage Reports
+        run: |
           uv sync --frozen
           uv run ruff check
           uv run pytest
 
       - name: Publish Hot Fix
-        uses: DEFRA/cdp-build-action/build-hotfix@main
+        uses: DEFRA/cdp-build-action/build-hotfix@e96983a427efc87dee7923f4ffdb5b9867259239 # main
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}

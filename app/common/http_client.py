@@ -9,7 +9,9 @@ logger = getLogger(__name__)
 
 async_proxy_mounts = (
     {
-        "http://": httpx.AsyncHTTPTransport(proxy=str(config.http_proxy)),
+        "http://": httpx.AsyncHTTPTransport(
+            proxy=str(config.http_proxy)
+        ),  # NOSONAR(python:S5332) - httpx mount routing key, not a cleartext connection
         "https://": httpx.AsyncHTTPTransport(proxy=str(config.http_proxy)),
     }
     if config.http_proxy
@@ -18,7 +20,9 @@ async_proxy_mounts = (
 
 sync_proxy_mounts = (
     {
-        "http://": httpx.HTTPTransport(proxy=str(config.http_proxy)),
+        "http://": httpx.HTTPTransport(
+            proxy=str(config.http_proxy)
+        ),  # NOSONAR(python:S5332) - httpx mount routing key, not a cleartext connection
         "https://": httpx.HTTPTransport(proxy=str(config.http_proxy)),
     }
     if config.http_proxy
