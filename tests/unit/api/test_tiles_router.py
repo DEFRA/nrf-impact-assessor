@@ -33,11 +33,11 @@ def _mock_resolve_version(_layer_type):
     return 1
 
 
-def _mock_query_tile(_z, _x, _y, _layer_type, _layer_name, _version):
+def _mock_query_tile(_z, _x, _y, _layer_type, _layer_name, _version, _timings):
     return FAKE_TILE
 
 
-def _mock_query_tile_empty(_z, _x, _y, _layer_type, _layer_name, _version):
+def _mock_query_tile_empty(_z, _x, _y, _layer_type, _layer_name, _version, _timings):
     return b""
 
 
@@ -136,7 +136,7 @@ class TestTilesRouterCache:
     def test_cache_hit_on_second_request_calls_query_once(self, client):
         call_count = 0
 
-        def counting_query_tile(z, x, y, layer_type, layer_name, version):
+        def counting_query_tile(z, x, y, layer_type, layer_name, version, timings):
             nonlocal call_count
             call_count += 1
             return FAKE_TILE
@@ -151,7 +151,7 @@ class TestTilesRouterCache:
     def test_different_coordinates_each_query_separately(self, client):
         call_count = 0
 
-        def counting_query_tile(z, x, y, layer_type, layer_name, version):
+        def counting_query_tile(z, x, y, layer_type, layer_name, version, timings):
             nonlocal call_count
             call_count += 1
             return FAKE_TILE

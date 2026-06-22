@@ -449,6 +449,12 @@ class TileServerConfig(BaseSettings):
     min_zoom: int = Field(default=0)
     max_zoom: int = Field(default=22)
 
+    # Timing-log sampling. Cache misses (DB hit) and slow requests are always
+    # logged; cheap cache hits are sampled at 1-in-N to limit log volume during
+    # heavy panning. Set log_sample_n=1 to log every request.
+    log_sample_n: int = Field(default=50)
+    log_slow_ms: float = Field(default=250.0)
+
 
 class DataSyncConfig(BaseSettings):
     """Configuration for S3-triggered reference-data reload."""
