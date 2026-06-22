@@ -35,6 +35,13 @@ TILE_LAYERS: dict[str, str] = {
 
 EDP_TILE_LAYERS: frozenset[str] = frozenset({"edp_boundaries"})
 
+# Allow-list mapping for logging: known slug → canonical constant label. Looking
+# the request value up here (rather than logging it) guarantees only a source
+# literal is logged, never user-controlled data (CWE-117).
+_LOG_LAYER_LABELS: dict[str, str] = {
+    slug: slug for slug in (*TILE_LAYERS, *EDP_TILE_LAYERS)
+}
+
 _tile_config = TileServerConfig()
 
 # ---------------------------------------------------------------------------
@@ -295,11 +302,9 @@ def _log_tile_timing(layer: str, z: int, x: int, y: int, timings: TileTimings) -
     if timings.cache_hit and not is_slow and not is_sampled:
         return
 
-    # Log only the whitelisted slug, never the raw request value, so no
-    # user-controlled data reaches the log (CWE-117). z/x/y are ints.
-    safe_layer = (
-        layer if (layer in TILE_LAYERS or layer in EDP_TILE_LAYERS) else "unknown"
-    )
+    # Resolve to a canonical constant label via the allow-list map; the request
+    # value is used only as a lookup key, never logged (CWE-117). z/x/y are ints.
+    safe_layer = _LOG_LAYER_LABELS.get(layer, "unknown")
     logger.info(
         "tile %s/%d/%d/%d %s total=%.1fms version=%.1fms cache=%.3fms "
         "connect=%.1fms query=%.1fms size=%dB",
