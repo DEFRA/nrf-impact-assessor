@@ -326,13 +326,18 @@ def get_tile(request: Request, layer: str, z: int, x: int, y: int) -> Response:
     is_slow = timings.total_ms >= _tile_config.log_slow_ms
     is_sampled = next(_log_counter) % _tile_config.log_sample_n == 0
     if not timings.cache_hit or is_slow or is_sampled:
+        # Log only the whitelisted slug, never the raw request value, so no
+        # user-controlled data reaches the log (CWE-117). z/x/y are ints.
+        safe_layer = (
+            layer if (layer in TILE_LAYERS or layer in EDP_TILE_LAYERS) else "unknown"
+        )
         logger.info(
             "tile %s/%d/%d/%d %s total=%.1fms version=%.1fms cache=%.3fms "
             "connect=%.1fms query=%.1fms size=%dB",
-            layer,
-            z,
-            x,
-            y,
+            safe_layer,
+            int(z),
+            int(x),
+            int(y),
             "HIT" if timings.cache_hit else "MISS",
             timings.total_ms,
             timings.version_ms,
