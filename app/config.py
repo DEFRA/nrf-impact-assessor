@@ -417,6 +417,21 @@ class ApiServerConfig(BaseSettings):
     )
 
 
+class SpatialCacheConfig(BaseSettings):
+    """Configuration for the in-memory spatial query cache."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="SPATIAL_CACHE_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    max_size: int = Field(default=256, description="Max number of cached query results")
+    ttl_seconds: int = Field(default=3600, description="Cache entry TTL in seconds")
+
+
 class TileServerConfig(BaseSettings):
     """Configuration for the XYZ vector tile endpoint."""
 
@@ -433,8 +448,12 @@ class TileServerConfig(BaseSettings):
     version_ttl_seconds: int = Field(default=300)
     min_zoom: int = Field(default=0)
     max_zoom: int = Field(default=22)
-    db_pool_size: int = Field(default=5)
-    db_max_overflow: int = Field(default=5)
+
+    # Timing-log sampling. Cache misses (DB hit) and slow requests are always
+    # logged; cheap cache hits are sampled at 1-in-N to limit log volume during
+    # heavy panning. Set log_sample_n=1 to log every request.
+    log_sample_n: int = Field(default=50)
+    log_slow_ms: float = Field(default=250.0)
 
 
 class DataSyncConfig(BaseSettings):
@@ -451,11 +470,8 @@ class DataSyncConfig(BaseSettings):
     enabled: bool = Field(
         default=False, description="Mount the /admin/data-sync endpoint"
     )
-    s3_bucket: str = Field(default="", description="Bucket holding dumps + manifest")
-    s3_prefix: str = Field(default="", description="Key prefix for dumps + manifest")
-    manifest_key: str = Field(
-        default="manifest.json", description="Manifest object key (relative to prefix)"
-    )
+    s3_bucket: str = Field(default="", description="Bucket holding dump objects")
+    s3_prefix: str = Field(default="", description="Key prefix for dump objects")
     auth_token: str = Field(
         default="", description="Shared token required to trigger a reload"
     )

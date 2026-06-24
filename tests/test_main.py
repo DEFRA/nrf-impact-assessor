@@ -11,10 +11,13 @@ def test_lifespan(mocker):
     mock_init_certs = mocker.patch("app.main.init_custom_certificates")
     mock_cleanup = mocker.patch("app.main.cleanup_cert_files")
 
+    mock_table_status = mocker.patch("app.main.log_startup_table_status")
+
     # Using TestClient as a context manager triggers lifespan startup/shutdown
     with TestClient(app):
         mock_init_certs.assert_called_once()  # Startup: certs initialized
         mock_get_mongo.assert_called_once()  # Startup: connect called
+        mock_table_status.assert_called_once()  # Startup: reference tables logged
 
     mock_mongo_client.close.assert_awaited_once()  # Shutdown: close called
     mock_cleanup.assert_called_once()  # Shutdown: cert files cleaned up

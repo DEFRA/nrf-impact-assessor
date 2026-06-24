@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- No Alembic counterpart: grants only matter where the app connects as a
+         non-owner (CDP/RDS, where DB_USER=nrf_impact_assessor and the tables are
+         owned by nrf_impact_assessor_ddl). Local/test runs Alembic as the
+         postgres superuser, so these privileges are implicit there. -->
+
+    <!-- Data-sync reload privileges: the app user reloads reference data with a
+         versioned staging load (see app/data_sync/restore.py): COPY into a TEMP
+         staging table, then INSERT the new version into the live table and
+         DELETE superseded versions. As a non-owner it needs INSERT and DELETE on
+         every table in the data-sync allow-list (app/config.py
+         DataSyncConfig.tables). SELECT (read access for normal assessment
+         queries) is granted separately and is not (re)granted here, so GRANT and
+         the rollback REVOKE stay symmetric. The staging step relies on the
+         database-default TEMPORARY privilege (verified present in CDP); if
+         revoked, CREATE TEMP TABLE will fail.
+
+         The GRANT is wrapped in a DO block guarded on role existence: the
+         nrf_impact_assessor role is provisioned by CDP/RDS infra and does NOT
+         exist in the local compose database (which connects as postgres), so an
+         unguarded GRANT would break `make db-migrate-liquibase` and CI. -->
+
+    <changeSet id="03-data-sync-grants" author="nrf">
+        <sql splitStatements="false">
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nrf_impact_assessor') THEN
+                    GRANT INSERT, DELETE ON
+                        public.coefficient_layer,
+                        public.edp_boundary_layer,
+                        public.edp_edges,
+                        public.gcn_ponds,
+                        public.gcn_risk_zones,
+                        public.lookup_table,
+                        public.lpa_boundaries,
+                        public.nn_catchments,
+                        public.subcatchments,
+                        public.wwtw_catchments
+                    TO nrf_impact_assessor;
+                END IF;
+            END $$;
+        </sql>
+        <rollback>
+            <sql splitStatements="false">
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nrf_impact_assessor') THEN
+                        REVOKE INSERT, DELETE ON
+                            public.coefficient_layer,
+                            public.edp_boundary_layer,
+                            public.edp_edges,
+                            public.gcn_ponds,
+                            public.gcn_risk_zones,
+                            public.lookup_table,
+                            public.lpa_boundaries,
+                            public.nn_catchments,
+                            public.subcatchments,
+                            public.wwtw_catchments
+                        FROM nrf_impact_assessor;
+                    END IF;
+                END $$;
+            </sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

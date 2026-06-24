@@ -7,10 +7,16 @@ from app.config import config
 
 logger = getLogger(__name__)
 
+# httpx mount routing keys (match outgoing request scheme), not cleartext connections.
+_HTTP_SCHEME = (
+    "http://"  # NOSONAR(S5332) httpx mount routing key, not a cleartext connection
+)
+_HTTPS_SCHEME = "https://"
+
 async_proxy_mounts = (
     {
-        "http://": httpx.AsyncHTTPTransport(proxy=str(config.http_proxy)),
-        "https://": httpx.AsyncHTTPTransport(proxy=str(config.http_proxy)),
+        _HTTP_SCHEME: httpx.AsyncHTTPTransport(proxy=str(config.http_proxy)),
+        _HTTPS_SCHEME: httpx.AsyncHTTPTransport(proxy=str(config.http_proxy)),
     }
     if config.http_proxy
     else {}
@@ -18,8 +24,8 @@ async_proxy_mounts = (
 
 sync_proxy_mounts = (
     {
-        "http://": httpx.HTTPTransport(proxy=str(config.http_proxy)),
-        "https://": httpx.HTTPTransport(proxy=str(config.http_proxy)),
+        _HTTP_SCHEME: httpx.HTTPTransport(proxy=str(config.http_proxy)),
+        _HTTPS_SCHEME: httpx.HTTPTransport(proxy=str(config.http_proxy)),
     }
     if config.http_proxy
     else {}

@@ -283,10 +283,9 @@ without a redeploy, via an authenticated background job.
    curl "$BASE_URL/admin/data-sync/<run_id>" -H "X-Data-Sync-Token: $TOKEN"
    ```
 
-Each run replaces every listed table transactionally (drop indexes, truncate,
-`COPY`, recreate indexes) and is recorded in `data_sync_run` /
-`data_load_history`. A partial unique index allows only one run in flight at a
-time (a concurrent trigger returns `409`).
+Each run replaces every listed table transactionally (truncate, `COPY`) and is
+recorded in `data_sync_run` / `data_load_history`. A partial unique index allows
+only one run in flight at a time (a concurrent trigger returns `409`).
 
 ## Custom Cloudwatch Metrics
 

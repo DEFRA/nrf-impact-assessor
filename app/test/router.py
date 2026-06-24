@@ -36,7 +36,7 @@ from app.assess._geometry import inject_job_fields
 from app.clients.backend_client import BackendClient
 from app.clients.payload_mapper import build_quote_patch_payload
 from app.common.tracing import ctx_trace_id
-from app.config import AWSConfig, BackendConfig, DatabaseSettings
+from app.config import AWSConfig, BackendConfig
 from app.models.db import (
     CoefficientLayer,
     EdpBoundaryLayer,
@@ -60,7 +60,7 @@ from app.models.domain import (
 )
 from app.models.enums import AssessmentType
 from app.models.job import BoundaryGeojson, ImpactAssessmentJob
-from app.repositories.engine import create_db_engine
+from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
 from app.runner.runner import run_assessment
 
@@ -72,22 +72,10 @@ _CRS_BNG = "EPSG:27700"
 
 router = APIRouter()
 
-# ---------------------------------------------------------------------------
-# Lazy-initialised repository singleton
-# ---------------------------------------------------------------------------
-_repository: Repository | None = None
-
 
 def _get_repository() -> Repository:
-    """Get or create the module-level Repository singleton for test endpoints."""
-    global _repository
-    if _repository is None:
-        logger.info("Initialising Repository for /test endpoints...")
-        db_settings = DatabaseSettings()
-        engine = create_db_engine(db_settings, pool_size=1, max_overflow=1)
-        _repository = Repository(engine)
-        logger.info("Repository initialised")
-    return _repository
+    """Return the process-wide shared Repository."""
+    return get_shared_repository()
 
 
 # ---------------------------------------------------------------------------

@@ -30,18 +30,6 @@ NOW = sa.text("now()")
 def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS postgis")
 
-    sa.Enum(
-        "WWTW_CATCHMENTS",
-        "LPA_BOUNDARIES",
-        "NN_CATCHMENTS",
-        "SUBCATCHMENTS",
-        "GCN_RISK_ZONES",
-        "GCN_PONDS",
-        "EDP_EDGES",
-        name="spatial_layer_type",
-        schema="public",
-    ).create(op.get_bind())
-
     op.create_table(
         "coefficient_layer",
         sa.Column("id", sa.Uuid(), nullable=False),
@@ -136,71 +124,6 @@ def upgrade() -> None:
     )
 
     op.create_table(
-        "spatial_layer",
-        sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column(
-            "layer_type",
-            postgresql.ENUM(
-                "WWTW_CATCHMENTS",
-                "LPA_BOUNDARIES",
-                "NN_CATCHMENTS",
-                "SUBCATCHMENTS",
-                "GCN_RISK_ZONES",
-                "GCN_PONDS",
-                "EDP_EDGES",
-                name="spatial_layer_type",
-                schema="public",
-                create_type=False,
-            ),
-            nullable=False,
-        ),
-        sa.Column("version", sa.Integer(), nullable=False),
-        sa.Column(
-            "geometry",
-            geoalchemy2.types.Geometry(
-                srid=27700,
-                dimension=2,
-                from_text="ST_GeomFromEWKT",
-                name="geometry",
-                nullable=False,
-            ),
-            nullable=False,
-        ),
-        sa.Column("name", sa.String(), nullable=True),
-        sa.Column("attributes", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column(
-            "created_at", sa.DateTime(timezone=True), server_default=NOW, nullable=False
-        ),
-        sa.PrimaryKeyConstraint("id"),
-        schema="public",
-    )
-    op.create_index(
-        "ix_public_spatial_layer_layer_type",
-        "spatial_layer",
-        ["layer_type"],
-        schema="public",
-    )
-    op.create_index(
-        "ix_public_spatial_layer_name",
-        "spatial_layer",
-        ["name"],
-        schema="public",
-    )
-    op.create_index(
-        "ix_public_spatial_layer_version",
-        "spatial_layer",
-        ["version"],
-        schema="public",
-    )
-    # Full GiST index created automatically by GeoAlchemy2 (spatial_index=True default)
-    op.create_index(
-        "ix_spatial_layer_type_version",
-        "spatial_layer",
-        ["layer_type", "version"],
-        schema="public",
-    )
-
-    op.create_table(
         "edp_boundary_layer",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False),
@@ -243,7 +166,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS public.coefficient_layer CASCADE")
-    op.execute("DROP TABLE IF EXISTS public.spatial_layer CASCADE")
     op.execute("DROP TABLE IF EXISTS public.lookup_table CASCADE")
     op.execute("DROP TABLE IF EXISTS public.edp_boundary_layer CASCADE")
-    op.execute("DROP TYPE IF EXISTS public.spatial_layer_type CASCADE")

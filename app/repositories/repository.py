@@ -4,6 +4,7 @@ This module provides a unified interface for querying spatial layers and lookup
 tables stored in PostGIS using SQLAlchemy 2.x query builder patterns.
 """
 
+import hashlib
 import logging
 import re
 import time
@@ -12,13 +13,37 @@ from typing import Any
 
 import geopandas as gpd
 import pandas as pd
-from sqlalchemy import Select, select, text
+from cachetools import TTLCache
+from sqlalchemy import Select, func, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.models.db import Base
+from app.config import SpatialCacheConfig
+from app.models.db import Base, DataLoadHistory
+
+_cache_cfg = SpatialCacheConfig()
+_land_use_cache: TTLCache = TTLCache(
+    maxsize=_cache_cfg.max_size, ttl=_cache_cfg.ttl_seconds
+)
+_intersection_cache: TTLCache = TTLCache(
+    maxsize=_cache_cfg.max_size, ttl=_cache_cfg.ttl_seconds
+)
 
 logger = logging.getLogger(__name__)
+
+
+def clear_spatial_caches() -> None:
+    """Drop all cached spatial query results.
+
+    The caches key on input geometry and (for land use) the resolved data
+    version, but not on the underlying table contents. A data-sync reload can
+    replace reference data without bumping the version, leaving cached results
+    stale until their TTL expires. Call this after a successful reload so the
+    next query re-reads from the database.
+    """
+    _land_use_cache.clear()
+    _intersection_cache.clear()
+    logger.info("Cleared spatial query caches")
 
 
 def _coerce_param(value: Any) -> Any:
@@ -68,6 +93,66 @@ def _sa_params(compiled_sql: str, params: dict, prefix: str = "") -> tuple[str, 
         return f":{new_name}"
 
     return re.sub(r"%\((\w+)\)s", repl, compiled_sql), renamed
+
+
+def _gdf_key(gdf: gpd.GeoDataFrame, cols: list[str]) -> str:
+    """Stable hash of selected GeoDataFrame columns + geometry WKT."""
+    rows = tuple(
+        tuple(str(row[c]) for c in cols) + (wkt,)
+        for row, wkt in zip(gdf.to_dict("records"), gdf.geometry.to_wkt(), strict=False)
+    )
+    return hashlib.sha256(str(rows).encode()).hexdigest()
+
+
+def _spatial_cache_generation(session: Session) -> str:
+    """Return DB-visible generation for reference data used by spatial caches."""
+    loaded_at = session.scalar(
+        select(func.max(DataLoadHistory.loaded_at)).where(
+            DataLoadHistory.status == "success"
+        )
+    )
+    return loaded_at.isoformat() if loaded_at else "no-successful-data-load"
+
+
+def _land_use_cache_key(
+    input_gdf: gpd.GeoDataFrame,
+    *,
+    coeff_version: int,
+    nn_version: int,
+    generation: str,
+) -> tuple[str, int, int, str]:
+    return (
+        _gdf_key(
+            input_gdf,
+            ["rlb_id", "dwellings", "name", "dwelling_category", "source"],
+        ),
+        coeff_version,
+        nn_version,
+        generation,
+    )
+
+
+def _intersection_cache_key(
+    *,
+    input_wkt: str,
+    overlay_table: type[Base],
+    filter_str: str,
+    overlay_columns: list[str],
+    json_extracts: dict[str, list[str]] | None,
+    generation: str,
+) -> str:
+    return hashlib.sha256(
+        "|".join(
+            [
+                input_wkt,
+                overlay_table.__tablename__,
+                filter_str,
+                str(sorted(overlay_columns)),
+                str(sorted(json_extracts.items()) if json_extracts else []),
+                generation,
+            ]
+        ).encode()
+    ).hexdigest()
 
 
 class Repository:
@@ -344,6 +429,17 @@ class Repository:
             )
 
         with self.session() as session:
+            generation = _spatial_cache_generation(session)
+            cache_key = _land_use_cache_key(
+                input_gdf,
+                coeff_version=coeff_version,
+                nn_version=nn_version,
+                generation=generation,
+            )
+            if cache_key in _land_use_cache:
+                logger.debug("land_use_intersection_postgis cache hit")
+                return _land_use_cache[cache_key].copy()
+
             session.execute(
                 text(
                     "CREATE TEMPORARY TABLE _tmp_rlb ("
@@ -438,7 +534,9 @@ class Repository:
             "oid",
             "area_in_nn_catchment_ha",
         ]
-        return pd.DataFrame(rows, columns=columns)
+        result = pd.DataFrame(rows, columns=columns)
+        _land_use_cache[cache_key] = result
+        return result.copy()
 
     def intersection_postgis(
         self,
@@ -466,6 +564,21 @@ class Repository:
         input_union = input_gdf.union_all()
         input_wkt = input_union.wkt
 
+        filter_str = str(overlay_filter.compile(compile_kwargs={"literal_binds": True}))
+        with self.session() as session:
+            generation = _spatial_cache_generation(session)
+        cache_key = _intersection_cache_key(
+            input_wkt=input_wkt,
+            overlay_table=overlay_table,
+            filter_str=filter_str,
+            overlay_columns=overlay_columns,
+            json_extracts=json_extracts,
+            generation=generation,
+        )
+        if cache_key in _intersection_cache:
+            logger.debug("intersection_postgis cache hit")
+            return _intersection_cache[cache_key].copy()
+
         overlay_cols = [getattr(overlay_table, col) for col in overlay_columns]
 
         if json_extracts:
@@ -488,9 +601,11 @@ class Repository:
             ),
         )
 
-        return gpd.read_postgis(
+        result = gpd.read_postgis(
             stmt, self.engine, geom_col="geometry", crs="EPSG:27700"
         )
+        _intersection_cache[cache_key] = result
+        return result.copy()
 
     def close(self) -> None:
         """Close the repository and dispose of the engine."""
