@@ -10,16 +10,14 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Set up Python 3.14
-      uses: actions/setup-python@v6
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
       with:
-        python-version: "3.14"
+        enable-cache: true
 
-    - name: Install uv and sync dependencies
+    - name: Sync dependencies
       shell: bash
-      run: |
-        pipx install uv
-        uv sync --frozen
+      run: uv sync --frozen
 
     - name: Wait for PostGIS
       shell: bash

@@ -9,10 +9,9 @@ ENV LOG_CONFIG="logging-dev.json"
 
 WORKDIR /home/nonroot
 
-COPY --chown=nonroot:nonroot pyproject.toml .
-COPY --chown=nonroot:nonroot README.md .
-COPY --chown=nonroot:nonroot uv.lock .
-COPY --chown=nonroot:nonroot app/ ./app/
+COPY --chown=nonroot:nonroot --chmod=444 pyproject.toml .
+COPY --chown=nonroot:nonroot --chmod=444 uv.lock .
+COPY --chown=nonroot:nonroot --chmod=555 app/ ./app/
 COPY --chmod=444 .git-has[h] ./
 
 RUN --mount=type=cache,target=/home/nonroot/.cache/uv,uid=1000,gid=1000 \
