@@ -1187,7 +1187,7 @@ requires-dist = [
 dev = [
     { name = "boto3-stubs", specifier = "==1.43.28" },
     { name = "httpx", specifier = "==0.28.1" },
-    { name = "moto", extras = ["s3", "sqs"], specifier = ">=5.2.1" },
+    { name = "moto", extras = ["s3", "sqs"], specifier = ">=5.2.2" },
     { name = "pre-commit", specifier = "==4.6.0" },
     { name = "pytest", specifier = "==9.1.1" },
     { name = "pytest-asyncio", specifier = "==1.4.0" },
