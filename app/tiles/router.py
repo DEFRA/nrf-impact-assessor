@@ -4,7 +4,9 @@ Serves spatial reference layers as Mapbox Vector Tiles (MVT) via:
     GET /tiles/{layer}/{z}/{x}/{y}.mvt
 """
 
+import dataclasses
 import hashlib
+import itertools
 import logging
 import threading
 import time
@@ -33,6 +35,13 @@ TILE_LAYERS: dict[str, str] = {
 
 EDP_TILE_LAYERS: frozenset[str] = frozenset({"edp_boundaries"})
 
+# Allow-list mapping for logging: known slug → canonical constant label. Looking
+# the request value up here (rather than logging it) guarantees only a source
+# literal is logged, never user-controlled data (CWE-117).
+_LOG_LAYER_LABELS: dict[str, str] = {
+    slug: slug for slug in (*TILE_LAYERS, *EDP_TILE_LAYERS)
+}
+
 _tile_config = TileServerConfig()
 
 # ---------------------------------------------------------------------------
@@ -49,6 +58,9 @@ _edp_version_cache: tuple[int, float] | None = None
 # In-process LRU tile cache: (layer_slug, z, x, y, version) → (bytes, expiry)
 _tile_cache: OrderedDict[tuple, tuple[bytes, float]] = OrderedDict()
 _tile_cache_lock = threading.Lock()
+
+# Monotonic request counter for 1-in-N sampling of cheap cache-hit timing logs.
+_log_counter = itertools.count()
 
 # ---------------------------------------------------------------------------
 # Prepared SQL (reusable text() clauses)
@@ -99,6 +111,45 @@ _EDP_TILE_SQL = text("""
     ) q
     WHERE q.geom IS NOT NULL
 """)
+
+
+# ---------------------------------------------------------------------------
+# Timing
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class TileTimings:
+    """Per-request phase timings (milliseconds) for tile generation.
+
+    Phases isolate where wall-clock time goes so a slow tile can be attributed:
+      - ``connect_ms``: pool checkout. A spike here means the pooled socket was
+        dropped while idle and ``pool_pre_ping`` forced a TCP+TLS+IAM reconnect.
+      - ``query_ms``: server-side PostGIS execution + network transfer of the
+        result bytea. Compare against ``size_bytes`` to separate compute from
+        transfer.
+    """
+
+    version_ms: float = 0.0
+    cache_ms: float = 0.0
+    connect_ms: float = 0.0
+    query_ms: float = 0.0
+    total_ms: float = 0.0
+    cache_hit: bool = False
+    size_bytes: int = 0
+
+    def server_timing_header(self) -> str:
+        """Render as an HTTP ``Server-Timing`` header value (visible in devtools)."""
+        return ", ".join(
+            (
+                f"version;dur={self.version_ms:.1f}",
+                f"cache;dur={self.cache_ms:.3f}",
+                f"connect;dur={self.connect_ms:.1f}",
+                f"query;dur={self.query_ms:.1f}",
+                f"total;dur={self.total_ms:.1f}",
+                f"size;desc=bytes;dur={self.size_bytes}",
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -158,53 +209,80 @@ def _resolve_edp_version() -> int:
 
 
 def _query_tile(
-    z: int, x: int, y: int, slug: str, layer_name: str, version: int
+    z: int,
+    x: int,
+    y: int,
+    slug: str,
+    layer_name: str,
+    version: int,
+    timings: TileTimings,
 ) -> bytes:
     """Execute the MVT SQL query against the dedicated layer table and return raw tile bytes."""
     table = TILE_LAYERS[slug]
     sql = text(_TILE_SQL_TEMPLATE.format(table=table))
     repo = _get_repository()
+    t0 = time.perf_counter()
     with repo.engine.connect() as conn:
+        timings.connect_ms += (time.perf_counter() - t0) * 1000
+        t1 = time.perf_counter()
         row = conn.execute(
             sql,
             {"layer_name": layer_name, "z": z, "x": x, "y": y, "version": version},
         ).fetchone()
+        timings.query_ms += (time.perf_counter() - t1) * 1000
     return bytes(row[0]) if row and row[0] else b""
 
 
-def _query_edp_tile(z: int, x: int, y: int, layer_name: str, version: int) -> bytes:
+def _query_edp_tile(
+    z: int, x: int, y: int, layer_name: str, version: int, timings: TileTimings
+) -> bytes:
     """Execute the MVT SQL query against edp_boundary_layer and return raw tile bytes."""
     repo = _get_repository()
+    t0 = time.perf_counter()
     with repo.engine.connect() as conn:
+        timings.connect_ms += (time.perf_counter() - t0) * 1000
+        t1 = time.perf_counter()
         row = conn.execute(
             _EDP_TILE_SQL,
             {"layer_name": layer_name, "z": z, "x": x, "y": y, "version": version},
         ).fetchone()
+        timings.query_ms += (time.perf_counter() - t1) * 1000
     return bytes(row[0]) if row and row[0] else b""
 
 
-def _get_tile(layer_slug: str, z: int, x: int, y: int) -> bytes:
-    """Return tile bytes from cache, or query PostGIS on a cache miss."""
+def _get_tile(layer_slug: str, z: int, x: int, y: int) -> tuple[bytes, TileTimings]:
+    """Return tile bytes (with phase timings) from cache, or query PostGIS on a miss."""
+    timings = TileTimings()
+    t_start = time.perf_counter()
+
+    t_version = time.perf_counter()
     if layer_slug in EDP_TILE_LAYERS:
         version = _resolve_edp_version()
     else:
         version = _resolve_layer_version(layer_slug)
+    timings.version_ms = (time.perf_counter() - t_version) * 1000
 
     cache_key = (layer_slug, z, x, y, version)
     now = time.monotonic()
 
+    t_cache = time.perf_counter()
     with _tile_cache_lock:
         if cache_key in _tile_cache:
             tile_bytes, expiry = _tile_cache[cache_key]
             if now < expiry:
                 _tile_cache.move_to_end(cache_key)
-                return tile_bytes
+                timings.cache_hit = True
+                timings.cache_ms = (time.perf_counter() - t_cache) * 1000
+                timings.size_bytes = len(tile_bytes)
+                timings.total_ms = (time.perf_counter() - t_start) * 1000
+                return tile_bytes, timings
             del _tile_cache[cache_key]
+    timings.cache_ms = (time.perf_counter() - t_cache) * 1000
 
     if layer_slug in EDP_TILE_LAYERS:
-        tile_bytes = _query_edp_tile(z, x, y, layer_slug, version)
+        tile_bytes = _query_edp_tile(z, x, y, layer_slug, version, timings)
     else:
-        tile_bytes = _query_tile(z, x, y, layer_slug, layer_slug, version)
+        tile_bytes = _query_tile(z, x, y, layer_slug, layer_slug, version, timings)
 
     with _tile_cache_lock:
         # Evict oldest entries when at capacity
@@ -212,7 +290,36 @@ def _get_tile(layer_slug: str, z: int, x: int, y: int) -> bytes:
             _tile_cache.popitem(last=False)
         _tile_cache[cache_key] = (tile_bytes, now + _tile_config.cache_ttl_seconds)
 
-    return tile_bytes
+    timings.size_bytes = len(tile_bytes)
+    timings.total_ms = (time.perf_counter() - t_start) * 1000
+    return tile_bytes, timings
+
+
+def _log_tile_timing(layer: str, z: int, x: int, y: int, timings: TileTimings) -> None:
+    """Emit phase timings, always for DB misses/slow requests and 1-in-N hits."""
+    is_slow = timings.total_ms >= _tile_config.log_slow_ms
+    is_sampled = next(_log_counter) % _tile_config.log_sample_n == 0
+    if timings.cache_hit and not is_slow and not is_sampled:
+        return
+
+    # Resolve to a canonical constant label via the allow-list map; the request
+    # value is used only as a lookup key, never logged (CWE-117). z/x/y are ints.
+    safe_layer = _LOG_LAYER_LABELS.get(layer, "unknown")
+    logger.info(
+        "tile %s/%d/%d/%d %s total=%.1fms version=%.1fms cache=%.3fms "
+        "connect=%.1fms query=%.1fms size=%dB",
+        safe_layer,
+        int(z),
+        int(x),
+        int(y),
+        "HIT" if timings.cache_hit else "MISS",
+        timings.total_ms,
+        timings.version_ms,
+        timings.cache_ms,
+        timings.connect_ms,
+        timings.query_ms,
+        timings.size_bytes,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +354,8 @@ def get_tile(request: Request, layer: str, z: int, x: int, y: int) -> Response:
             ),
         )
 
-    tile_bytes = _get_tile(layer, z, x, y)
+    tile_bytes, timings = _get_tile(layer, z, x, y)
+    _log_tile_timing(layer, z, x, y, timings)
 
     if layer in EDP_TILE_LAYERS:
         version = _edp_version_cache[0] if _edp_version_cache else 1
@@ -256,10 +364,12 @@ def get_tile(request: Request, layer: str, z: int, x: int, y: int) -> Response:
     etag = hashlib.sha256(f"{layer}:{z}:{x}:{y}:{version}".encode()).hexdigest()
     quoted_etag = f'"{etag}"'
 
+    server_timing = timings.server_timing_header()
+
     if request.headers.get("if-none-match") == quoted_etag:
         return Response(
             status_code=304,
-            headers={"ETag": quoted_etag},
+            headers={"ETag": quoted_etag, "Server-Timing": server_timing},
         )
 
     return Response(
@@ -268,5 +378,6 @@ def get_tile(request: Request, layer: str, z: int, x: int, y: int) -> Response:
         headers={
             "Cache-Control": "public, max-age=3600",
             "ETag": quoted_etag,
+            "Server-Timing": server_timing,
         },
     )

@@ -27,6 +27,14 @@ IAM_TOKEN_POOL_RECYCLE_SECONDS = 600
 # 9 minutes still has 6 minutes of validity left when a connection uses it.
 IAM_TOKEN_CACHE_SECONDS = 540
 
+# libpq TCP keepalive settings.
+TCP_KEEPALIVE_CONNECT_ARGS: dict = {
+    "keepalives": 1,
+    "keepalives_idle": 60,
+    "keepalives_interval": 30,
+    "keepalives_count": 5,
+}
+
 _token_cache: dict[tuple[str, int, str, str], tuple[float, str]] = {}
 _token_cache_lock = threading.Lock()
 
@@ -113,7 +121,7 @@ def _get_password(settings: DatabaseSettings, region: str) -> str:
 
 def _build_ssl_connect_args(settings: DatabaseSettings, region: str) -> dict:
     """Build SSL connect_args for IAM authentication."""
-    connect_args: dict = {"sslmode": settings.ssl_mode}
+    connect_args: dict = {"sslmode": settings.ssl_mode, **TCP_KEEPALIVE_CONNECT_ARGS}
     cert_path = tls.get_cert_path(settings.rds_truststore)
     if cert_path:
         connect_args["sslrootcert"] = cert_path
@@ -233,7 +241,9 @@ def create_db_engine(
 
     base_url = settings.connection_url
     connect_args = (
-        _build_ssl_connect_args(settings, region) if settings.iam_authentication else {}
+        _build_ssl_connect_args(settings, region)
+        if settings.iam_authentication
+        else dict(TCP_KEEPALIVE_CONNECT_ARGS)
     )
 
     if use_null_pool:
