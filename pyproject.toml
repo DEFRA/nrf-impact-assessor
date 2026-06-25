@@ -30,7 +30,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "moto[s3,sqs]>=5.2.1",
+    "moto[s3,sqs]>=5.2.2",
     "httpx==0.28.1",
     "pre-commit==4.6.0",
     "pytest==9.1.1",
