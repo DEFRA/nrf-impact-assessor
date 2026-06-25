@@ -9,11 +9,7 @@ dependencies = [
     "alembic-postgresql-enum>=1.10.0",
     "asgi-logger==0.1.0",
     "aws-embedded-metrics==3.5.0",
-<<<<<<< dependabot/pip/boto3-1.43.28
-    "boto3==1.43.32",
-=======
     "boto3==1.43.36",
->>>>>>> main
     "cachetools>=5.3.0",
     "dnspython==2.8.0",
     "ecs-logging==2.3.0",
@@ -34,7 +30,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "moto[s3,sqs]>=5.2.1",
+    "moto[s3,sqs]>=5.2.2",
     "httpx==0.28.1",
     "pre-commit==4.6.0",
     "pytest==9.1.1",
