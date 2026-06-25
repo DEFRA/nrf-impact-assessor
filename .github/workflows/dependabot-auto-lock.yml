@@ -1,0 +1,47 @@
+name: Dependabot Auto Lock
+
+# Dependabot's uv ecosystem updates pyproject.toml and the bumped package's
+# entry in uv.lock, but the lockfile can drift out of full consistency
+# (e.g. transitive deps, or several Dependabot PRs merging without rebasing).
+# This regenerates uv.lock so `uv sync --frozen` / `uv sync --locked` pass.
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  relock:
+    name: Regenerate uv.lock
+    # Only run on Dependabot PRs.
+    if: ${{ github.actor == 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+
+      - name: Regenerate lockfile
+        run: uv lock
+
+      - name: Commit and push if uv.lock changed
+        run: |
+          if git diff --quiet -- uv.lock; then
+            echo "uv.lock already consistent; nothing to do."
+            exit 0
+          fi
+          git config user.name 'dependabot[bot]'
+          git config user.email '49699333+dependabot[bot]@users.noreply.github.com'
+          git add uv.lock
+          git commit -m 'chore: regenerate uv.lock'
+          git push
