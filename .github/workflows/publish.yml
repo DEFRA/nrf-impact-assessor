@@ -23,6 +23,17 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v6
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+
+      # Guard against a stale lockfile reaching main (e.g. a Dependabot merge
+      # that the PR auto-lock did not catch). Runs before any step that
+      # consumes uv.lock (the CDP Docker build does `uv sync --locked`).
+      - name: Regenerate lockfile
+        run: uv lock
+
       - name: Set git hash
         run: echo "${{ github.sha }}" > .git-hash
 
@@ -36,11 +47,6 @@ jobs:
         with:
           path: ./changelog
           github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
-        with:
-          enable-cache: true
 
       - name: Test code and Create Test Coverage Reports
         run: |

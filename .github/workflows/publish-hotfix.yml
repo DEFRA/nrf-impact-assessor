@@ -27,6 +27,10 @@ jobs:
         with:
           enable-cache: true
 
+      # Guard against a stale lockfile (hotfix branches skip the PR auto-lock).
+      - name: Regenerate lockfile
+        run: uv lock
+
       - name: Test code and Create Test Coverage Reports
         run: |
           uv sync --frozen

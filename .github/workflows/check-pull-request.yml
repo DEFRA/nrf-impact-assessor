@@ -27,6 +27,11 @@ jobs:
         with:
           enable-cache: true
 
+      # Self-heal a stale lockfile (e.g. a Dependabot bump that did not fully
+      # update uv.lock) so the checks below pass on the first run.
+      - name: Regenerate lockfile
+        run: uv lock
+
       - name: Test code and Create Test Coverage Reports
         run: |
           uv sync --frozen
