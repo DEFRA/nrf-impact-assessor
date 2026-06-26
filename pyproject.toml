@@ -5,7 +5,7 @@ description = "nrf-impact-assessor"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "alembic>=1.18.4",
+    "alembic>=1.18.5",
     "alembic-postgresql-enum>=1.10.0",
     "asgi-logger==0.1.0",
     "aws-embedded-metrics==3.5.0",
