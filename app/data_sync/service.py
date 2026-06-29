@@ -176,6 +176,60 @@ def _restore_all(
         _cleanup_old_versions(session, [table for table, _ in items])
 
 
+def _reconcile_load_history(
+    session: Session, run_id: UUID, manifest: Manifest
+) -> list[str]:
+    """Backfill DataLoadHistory rows for any live table version that has no
+    corresponding history record.
+
+    The data load commits on the psql subprocess connection and DataLoadHistory
+    commits separately on the ORM session (see _restore_all), so a crash between
+    the two leaves the new version live but unrecorded. This detects a live
+    MAX(version) per manifest table with no matching history row at that
+    data_version and backfills a row marked `status = 'reconciled'`. Best-effort:
+    a per-table failure is logged and skipped. Returns the tables it backfilled.
+    """
+    backfilled: list[str] = []
+    model_by_name = {label: model for model, label in _REFERENCE_TABLES}
+    for table in manifest.tables:
+        model = model_by_name.get(table)
+        if model is None:
+            continue
+        try:
+            live_version = session.scalar(select(func.max(model.version)))
+            if live_version is None:
+                continue
+            history_rows = session.scalar(
+                select(func.count())
+                .select_from(DataLoadHistory)
+                .where(
+                    DataLoadHistory.table_name == table,
+                    DataLoadHistory.data_version == manifest.data_version,
+                )
+            )
+            if history_rows:
+                continue
+            session.add(
+                DataLoadHistory(
+                    id=uuid4(),
+                    run_id=run_id,
+                    table_name=table,
+                    s3_key=manifest.tables[table],
+                    etag="",
+                    data_version=manifest.data_version,
+                    status="reconciled",
+                )
+            )
+            session.commit()
+            backfilled.append(table)
+        except Exception:  # noqa: BLE001
+            session.rollback()
+            logger.warning(
+                "history reconciliation failed for table %s", table, exc_info=True
+            )
+    return backfilled
+
+
 def _cleanup_old_versions(session: Session, tables: list[str]) -> None:
     """Delete superseded versions per table (keep-latest). Best-effort: a
     failure is logged and skipped, since stale rows are ignored by MAX(version)
@@ -241,6 +295,13 @@ def _do_run(
         s3 = _build_s3_client(cfg, aws)
         run.data_version = manifest.data_version
         session.commit()
+
+        reconciled = _reconcile_load_history(session, run_id, manifest)
+        if reconciled:
+            logger.warning(
+                "reconciled missing DataLoadHistory rows for: %s",
+                ", ".join(reconciled),
+            )
 
         if not needs_reload(manifest, _last_applied_version(session), force):
             logger.info("data_version %s already applied; no-op", manifest.data_version)
