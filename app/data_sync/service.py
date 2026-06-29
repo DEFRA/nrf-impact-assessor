@@ -29,6 +29,7 @@ from app.models.db import (
     Subcatchments,
     WwtwCatchments,
 )
+from app.models.domain import DataProvenance
 from app.repositories.engine import create_db_engine, get_shared_repository
 from app.repositories.repository import clear_spatial_caches
 
@@ -111,6 +112,24 @@ def _last_applied_version(session: Session) -> str | None:
         .first()
     )
     return row[0] if row else None
+
+
+def resolve_active_provenance(session: Session) -> DataProvenance:
+    """Return the active reference-data provenance (latest successful run).
+
+    Mirrors `_last_applied_version`'s query but also carries the run id, so an
+    assessment result can be traced to the exact reference-data load. Returns an
+    all-None DataProvenance when no successful run exists.
+    """
+    row = (
+        session.query(DataSyncRun.id, DataSyncRun.data_version)
+        .filter(DataSyncRun.status == "success", DataSyncRun.data_version.isnot(None))
+        .order_by(DataSyncRun.started_at.desc())
+        .first()
+    )
+    if row is None:
+        return DataProvenance()
+    return DataProvenance(data_sync_run_id=row[0], data_version=row[1])
 
 
 def _build_s3_client(cfg: DataSyncConfig, aws: AWSConfig) -> S3Client:
