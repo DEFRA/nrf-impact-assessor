@@ -153,8 +153,10 @@ def _restore_all(
         # commits are not atomic: a crash between them leaves the new version
         # applied but unrecorded in DataLoadHistory. This is low severity — the
         # version scheme self-heals (the next reload supersedes it) and readers
-        # always see MAX(version) — but DataLoadHistory may under-report what is
-        # actually loaded. Treat it as an audit log, not the source of truth.
+        # always see MAX(version) — and any momentary under-report is repaired by
+        # _reconcile_load_history at the start of the next sync (status =
+        # 'reconciled'). Treat DataLoadHistory as an audit log, not the source of
+        # truth.
         restore_all_atomic(db, region, items)
 
         # Only reached once the restore transaction has committed.
