@@ -71,12 +71,17 @@ def post_sql(table: str) -> str:
 
 
 def old_version_cleanup_sql(table: str) -> str:
-    """SQL that deletes every superseded version, keeping only the latest."""
+    """SQL that deletes every version older than the retained pair.
+
+    Retention keeps MAX(version) and MAX(version)-1 (not latest-only), so a
+    rollback (app/data_sync/active_version.py) always has a previous version's
+    rows to point back at.
+    """
     _assert_safe_identifier(table, "table")
     # noqa justified: identifier validated by _assert_safe_identifier
     sql = (
         f"DELETE FROM public.{table} "  # noqa: S608
-        f"WHERE version < (SELECT MAX(version) FROM public.{table});"
+        f"WHERE version < (SELECT MAX(version) FROM public.{table}) - 1;"
     )
     return sql
 

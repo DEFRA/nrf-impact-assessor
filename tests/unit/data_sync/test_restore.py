@@ -137,16 +137,18 @@ def test_post_sql_bumps_version_inserts_and_drops_staging():
     assert "COMMIT;" not in sql
 
 
-def test_old_version_cleanup_sql_keeps_only_latest():
+def test_old_version_cleanup_sql_keeps_latest_two_versions():
     from app.data_sync.restore import old_version_cleanup_sql
 
     sql = old_version_cleanup_sql("nn_catchments")
-    assert sql == (
-        "DELETE FROM public.nn_catchments "
-        "WHERE version < (SELECT MAX(version) FROM public.nn_catchments);"
-    )
+    assert "WHERE version < (SELECT MAX(version) FROM public.nn_catchments) - 1" in sql
+
+
+def test_old_version_cleanup_sql_rejects_unsafe_identifier():
+    from app.data_sync.restore import old_version_cleanup_sql
+
     with pytest.raises(ValueError, match="identifier"):
-        old_version_cleanup_sql("nn; DROP TABLE users; --")
+        old_version_cleanup_sql("nn_catchments; DROP TABLE users; --")
 
 
 def test_rewrite_copy_line_redirects_only_the_header():

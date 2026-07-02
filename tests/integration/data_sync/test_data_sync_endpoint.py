@@ -256,7 +256,7 @@ def test_reload_rejects_non_gzip_dump(
 def test_reload_bumps_version_and_removes_old(
     test_engine, s3_localstack, monkeypatch, single_table_allow_list
 ):
-    """A second reload lands as version+1 and cleanup keeps only the latest."""
+    """Reloads bump the version and cleanup keeps only the latest two (DM-4)."""
     monkeypatch.setenv("DB_IAM_AUTHENTICATION", "false")
     monkeypatch.setenv("DB_DATABASE", "test_nrf_impact")
 
@@ -293,19 +293,77 @@ def test_reload_bumps_version_and_removes_old(
         second = conn.execute(
             text("SELECT MAX(version), COUNT(*) FROM public.nn_catchments")
         ).one()
+        version_1_rows = conn.execute(
+            text("SELECT COUNT(*) FROM public.nn_catchments WHERE version = 1")
+        ).scalar()
+        second_ids = set(
+            conn.execute(
+                text("SELECT id FROM public.nn_catchments WHERE version = 2")
+            ).scalars()
+        )
+    assert second[0] == 2  # version bumped
+    assert second[1] == 4  # cleanup retains version 1 (MAX-1) and version 2 (MAX)
+    assert version_1_rows == 2  # version-1 rows retained for rollback
+    assert first_ids.isdisjoint(second_ids)  # ids regenerated on load
+
+    _run("20260605_120000")
+    with test_engine.connect() as conn:
+        third = conn.execute(
+            text("SELECT MAX(version), COUNT(*) FROM public.nn_catchments")
+        ).one()
         old_rows = conn.execute(
             text("SELECT COUNT(*) FROM public.nn_catchments WHERE version < 2")
         ).scalar()
-        second_ids = set(
-            conn.execute(text("SELECT id FROM public.nn_catchments")).scalars()
-        )
-    assert second[0] == 2  # version bumped
-    assert second[1] == 2  # cleanup kept only the latest version
-    assert old_rows == 0  # version-1 rows removed
-    assert first_ids.isdisjoint(second_ids)  # ids regenerated on load
+    assert third[0] == 3  # version bumped again
+    assert third[1] == 4  # only versions 2 and 3 remain
+    assert old_rows == 0  # version-1 rows now removed once version 3 lands
 
     # cleanup
     with test_engine.begin() as conn:
         conn.execute(text("DELETE FROM public.data_load_history"))
         conn.execute(text("DELETE FROM public.data_sync_run"))
+        conn.execute(text("DELETE FROM public.data_active_version"))
+        conn.execute(text("TRUNCATE public.nn_catchments"))
+
+
+def test_two_reloads_retain_previous_version_rows(
+    test_engine, s3_localstack, monkeypatch, single_table_allow_list
+):
+    """Retention keeps MAX(version) and MAX(version)-1 (DM-4), not latest-only."""
+    monkeypatch.setenv("DB_IAM_AUTHENTICATION", "false")
+    monkeypatch.setenv("DB_DATABASE", "test_nrf_impact")
+
+    with test_engine.begin() as conn:
+        conn.execute(text("TRUNCATE public.nn_catchments"))
+
+    for version in ("20260701_120000", "20260701_130000"):
+        manifest = _seed(s3_localstack, version)
+        run_id = uuid4()
+        with test_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.data_sync_run (id, status) VALUES (:id, 'running')"
+                ),
+                {"id": str(run_id)},
+            )
+        run_data_sync(run_id, manifest, force=True)
+
+    with test_engine.connect() as conn:
+        versions = (
+            conn.execute(
+                text(
+                    "SELECT DISTINCT version FROM public.nn_catchments ORDER BY version"
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert versions == [1, 2]  # both retained, not just the latest
+
+    # cleanup
+    with test_engine.begin() as conn:
+        conn.execute(text("DELETE FROM public.data_load_history"))
+        conn.execute(text("DELETE FROM public.data_sync_run"))
+        conn.execute(text("DELETE FROM public.data_active_version"))
         conn.execute(text("TRUNCATE public.nn_catchments"))
