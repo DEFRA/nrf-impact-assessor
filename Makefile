@@ -191,6 +191,7 @@ logs: ## Tail service logs
 	docker compose logs -f service
 
 rebuild: build ## Rebuild and restart service
+	docker compose --profile service down --remove-orphans
 	docker compose --profile service up -d service
 
 # ---------------------------------------------------------------------------
