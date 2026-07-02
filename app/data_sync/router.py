@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -35,8 +36,12 @@ _engine: Engine | None = None
 def _get_engine() -> Engine:
     global _engine
     if _engine is None:
+        # pool_size=2: the rollback endpoint holds an advisory-lock connection
+        # and a Session connection concurrently for the duration of the call
+        # (see rollback_data_sync), so a single-connection pool would
+        # self-deadlock waiting for a second connection that never frees up.
         _engine = create_db_engine(
-            DatabaseSettings(), AWSConfig(), pool_size=1, max_overflow=0
+            DatabaseSettings(), AWSConfig(), pool_size=2, max_overflow=0
         )
     return _engine
 
@@ -145,45 +150,65 @@ def rollback_data_sync(body: RollbackRequest | None = None) -> dict:
     cfg = DataSyncConfig()
     allowed = set(cfg.tables)
 
-    with Session(bind=_get_engine()) as session:
-        running = (
-            session.query(DataSyncRun).filter(DataSyncRun.status == "running").first()
-        )
-        if running is not None:
-            raise HTTPException(
-                status_code=409, detail="a reload run is currently in progress"
-            )
-
-        tables = body.tables if body and body.tables else _last_run_tables(session)
-        if not tables:
-            raise HTTPException(
-                status_code=400, detail="no reference tables to roll back"
-            )
-        invalid = [t for t in tables if t not in allowed]
-        if invalid:
-            raise HTTPException(
-                status_code=400,
-                detail=f"not in the data-sync allow-list: {', '.join(invalid)}",
-            )
-
-        rolled_back: dict[str, dict[str, int]] = {}
-        skipped: dict[str, str] = {}
-        for table in tables:
-            try:
-                from_v, to_v = rollback_table(session, table)
-            except ValueError as exc:
-                skipped[table] = str(exc)
-                continue
-            rolled_back[table] = {"from": from_v, "to": to_v}
-            session.add(
-                DataRollbackEvent(
-                    id=uuid4(),
-                    table_name=table,
-                    from_version=from_v,
-                    to_version=to_v,
+    # Share the same advisory lock a reload holds for its entire duration
+    # (see app/data_sync/service.py::run_data_sync), so a reload can never
+    # start (or be mid-flight) while a rollback is reading/mutating the
+    # active-version pointer, and vice versa. The in-progress `running`-row
+    # check below stays — it gives a clearer 409 than blocking on the lock —
+    # but now runs *after* the lock is held, closing the check-then-act race.
+    engine = _get_engine()
+    rolled_back: dict[str, dict[str, int]] = {}
+    skipped: dict[str, str] = {}
+    with engine.connect() as lock_conn:
+        lock_conn.execution_options(isolation_level="AUTOCOMMIT")
+        lock_conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": cfg.lock_key})
+        try:
+            with Session(bind=engine) as session:
+                running = (
+                    session.query(DataSyncRun)
+                    .filter(DataSyncRun.status == "running")
+                    .first()
                 )
+                if running is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="a reload run is currently in progress",
+                    )
+
+                tables = (
+                    body.tables if body and body.tables else _last_run_tables(session)
+                )
+                if not tables:
+                    raise HTTPException(
+                        status_code=400, detail="no reference tables to roll back"
+                    )
+                invalid = [t for t in tables if t not in allowed]
+                if invalid:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"not in the data-sync allow-list: {', '.join(invalid)}",
+                    )
+
+                for table in tables:
+                    try:
+                        from_v, to_v = rollback_table(session, table)
+                    except ValueError as exc:
+                        skipped[table] = str(exc)
+                        continue
+                    rolled_back[table] = {"from": from_v, "to": to_v}
+                    session.add(
+                        DataRollbackEvent(
+                            id=uuid4(),
+                            table_name=table,
+                            from_version=from_v,
+                            to_version=to_v,
+                        )
+                    )
+                session.commit()
+        finally:
+            lock_conn.execute(
+                text("SELECT pg_advisory_unlock(:k)"), {"k": cfg.lock_key}
             )
-        session.commit()
 
     if rolled_back:
         # Active versions changed; drop in-process spatial caches so the next

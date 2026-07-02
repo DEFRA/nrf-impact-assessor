@@ -1,5 +1,6 @@
 """Integration tests for POST /admin/data-sync/rollback."""
 
+import threading
 from uuid import uuid4
 
 import pytest
@@ -181,3 +182,59 @@ def test_rollback_rejects_while_run_in_progress(client, test_engine, monkeypatch
 def test_rollback_requires_token(client, test_engine):
     resp = client.post("/admin/data-sync/rollback")
     assert resp.status_code == 401
+
+
+def test_rollback_blocks_until_reload_advisory_lock_is_released(
+    client, test_engine, monkeypatch
+):
+    """Proves the fix for the rollback/reload race (finding 1): the rollback
+    endpoint must share the same Postgres advisory lock a reload holds for
+    its entire duration, not just a point-in-time 'no run is running' check.
+
+    A real reload race is hard to reproduce deterministically end-to-end (it
+    depends on timing between a reload's promote step and its retention
+    cleanup), so instead this test proves the mechanism directly: it holds
+    the advisory lock on a separate connection (simulating an in-flight
+    reload) and confirms the rollback endpoint call — issued concurrently on
+    a background thread — is genuinely blocked for as long as the lock is
+    held, then proceeds and succeeds as soon as the lock is released. That is
+    exactly the property the fix relies on to close the race.
+    """
+    from app.config import DataSyncConfig
+
+    monkeypatch.setenv("DATA_SYNC_TABLES", '["nn_catchments"]')
+    run_id = uuid4()
+    _seed_two_versions(test_engine, run_id)
+
+    lock_key = DataSyncConfig().lock_key
+
+    # Simulate an in-flight reload holding the advisory lock for its duration.
+    lock_conn = test_engine.connect()
+    lock_conn.execution_options(isolation_level="AUTOCOMMIT")
+    lock_conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": lock_key})
+
+    result: dict = {}
+
+    def call_rollback() -> None:
+        result["resp"] = client.post(
+            "/admin/data-sync/rollback", headers={"X-Data-Sync-Token": "test-token"}
+        )
+
+    thread = threading.Thread(target=call_rollback)
+    try:
+        thread.start()
+        thread.join(timeout=1.0)
+        assert thread.is_alive(), (
+            "rollback endpoint returned before the advisory lock was released "
+            "— it is not actually blocking on the reload's lock"
+        )
+    finally:
+        lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": lock_key})
+        lock_conn.close()
+
+    thread.join(timeout=5.0)
+    assert not thread.is_alive(), "rollback endpoint never returned after lock release"
+
+    resp = result["resp"]
+    assert resp.status_code == 200
+    assert resp.json()["rolled_back"] == {"nn_catchments": {"from": 2, "to": 1}}

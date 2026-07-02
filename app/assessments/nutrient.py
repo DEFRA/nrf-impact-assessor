@@ -200,7 +200,11 @@ class NutrientAssessment:
             .where(LookupTable.name == name, LookupTable.version == version)
             .limit(1)
         )
-        obj = self.repository.execute_query(stmt, as_gdf=False)[0]
+        rows = self.repository.execute_query(stmt, as_gdf=False)
+        if not rows:
+            msg = f"no lookup_table row for name={name!r} at version={version}"
+            raise ValueError(msg)
+        obj = rows[0]
         df = pd.DataFrame(obj.data)
 
         with _lookup_cache_lock:
