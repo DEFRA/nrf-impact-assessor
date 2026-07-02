@@ -367,3 +367,42 @@ def test_two_reloads_retain_previous_version_rows(
         conn.execute(text("DELETE FROM public.data_sync_run"))
         conn.execute(text("DELETE FROM public.data_active_version"))
         conn.execute(text("TRUNCATE public.nn_catchments"))
+
+
+def test_reload_promotes_active_version(
+    test_engine, s3_localstack, monkeypatch, single_table_allow_list
+):
+    monkeypatch.setenv("DB_IAM_AUTHENTICATION", "false")
+    monkeypatch.setenv("DB_DATABASE", "test_nrf_impact")
+
+    with test_engine.begin() as conn:
+        conn.execute(text("TRUNCATE public.nn_catchments"))
+        conn.execute(text("DELETE FROM public.data_active_version"))
+
+    manifest = _seed(s3_localstack, "20260701_140000")
+    run_id = uuid4()
+    with test_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO public.data_sync_run (id, status) VALUES (:id, 'running')"
+            ),
+            {"id": str(run_id)},
+        )
+    run_data_sync(run_id, manifest, force=False)
+
+    with test_engine.connect() as conn:
+        active = conn.execute(
+            text(
+                "SELECT active_version FROM public.data_active_version "
+                "WHERE table_name = 'nn_catchments'"
+            )
+        ).scalar()
+
+    assert active == 1
+
+    # cleanup
+    with test_engine.begin() as conn:
+        conn.execute(text("DELETE FROM public.data_load_history"))
+        conn.execute(text("DELETE FROM public.data_sync_run"))
+        conn.execute(text("DELETE FROM public.data_active_version"))
+        conn.execute(text("TRUNCATE public.nn_catchments"))

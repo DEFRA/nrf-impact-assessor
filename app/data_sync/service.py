@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.aws.s3 import S3Client, S3ObjectError
 from app.config import AWSConfig, DatabaseSettings, DataSyncConfig
+from app.data_sync.active_version import set_active_version
 from app.data_sync.manifest import Manifest
 from app.data_sync.qc import parse_qc_failures
 from app.data_sync.qc_rules import load_qc_rules
@@ -51,6 +52,8 @@ _REFERENCE_TABLES = [
     (GcnPonds, "gcn_ponds"),
     (EdpEdges, "edp_edges"),
 ]
+
+_MODEL_BY_TABLE_NAME = {label: model for model, label in _REFERENCE_TABLES}
 
 
 def _log_table_status(session: Session, *, context: str = "Post-sync") -> None:
@@ -205,6 +208,20 @@ def _restore_all(
             )
         session.commit()
 
+        # Point reads at the version just loaded. Must run before cleanup:
+        # cleanup only removes rows below MAX(version)-1, so ordering
+        # relative to cleanup doesn't matter for correctness, but promoting
+        # first means a crash between promotion and cleanup still leaves
+        # reads correct (cleanup is best-effort and retried next reload).
+        for table, _key, _etag in audit:
+            model = _MODEL_BY_TABLE_NAME.get(table)
+            if model is None:
+                continue
+            new_version = session.scalar(select(func.max(model.version)))
+            if new_version is not None:
+                set_active_version(session, table, new_version)
+        session.commit()
+
         # Cutover has committed; remove superseded versions (best-effort).
         _cleanup_old_versions(session, [table for table, _ in items])
 
@@ -261,7 +278,7 @@ def _reconcile_load_history(
     a per-table failure is logged and skipped. Returns the tables it backfilled.
     """
     backfilled: list[str] = []
-    model_by_name = {label: model for model, label in _REFERENCE_TABLES}
+    model_by_name = _MODEL_BY_TABLE_NAME
     for table in manifest.tables:
         model = model_by_name.get(table)
         if model is None:
