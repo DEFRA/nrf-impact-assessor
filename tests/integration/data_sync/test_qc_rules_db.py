@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import InternalError
 
 from app.data_sync.qc import build_qc_sql
 from app.data_sync.qc_rules import (
@@ -195,8 +196,9 @@ def test_multiple_failures_are_aggregated_not_fail_fast(test_engine):
         sql = build_qc_sql(
             [("gcn_ponds", Path("a.gz")), ("coefficient_layer", Path("b.gz"))], qc_rules
         )
-        with pytest.raises(Exception) as exc_info:  # noqa: PT011 - asserted below via message substrings
-            conn.execute(text(sql))
+        stmt = text(sql)
+        with pytest.raises(InternalError) as exc_info:
+            conn.execute(stmt)
         message = str(exc_info.value)
         assert "table=gcn_ponds rule=row_count" in message
         assert "table=coefficient_layer rule=coefficient_range" in message

@@ -94,5 +94,6 @@ def test_referential_checks_loaded():
 
 
 def test_load_qc_rules_missing_file_raises():
+    missing = Path("/nonexistent/qc_rules.yaml")
     with pytest.raises(FileNotFoundError):
-        load_qc_rules(Path("/nonexistent/qc_rules.yaml"))
+        load_qc_rules(missing)

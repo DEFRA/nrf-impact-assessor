@@ -12,6 +12,36 @@ from app.data_sync.restore import (
 )
 
 
+@pytest.fixture
+def psql_stdin(monkeypatch):
+    """Replace subprocess.Popen with a fake psql whose stdin captures every byte
+    restore_all_atomic writes. Yields the capture buffer so tests can assert on
+    the generated SQL without spawning a real psql process.
+    """
+    written = bytearray()
+
+    class _FakeStdin:
+        def write(self, data):
+            written.extend(data)
+
+        def close(self):
+            # No-op: the fake has no real OS pipe to flush or close; we only
+            # capture the bytes written. restore_all_atomic calls stdin.close()
+            # to signal EOF to psql, so the method must exist but do nothing.
+            pass
+
+    class _FakeProc:
+        def __init__(self):
+            self.stdin = _FakeStdin()
+            self.returncode = 0
+
+        def communicate(self):
+            return b"", b""
+
+    monkeypatch.setattr(restore_mod.subprocess, "Popen", lambda *a, **k: _FakeProc())  # noqa: ARG005
+    return written
+
+
 def test_restore_all_atomic_rejects_unsafe_table_before_psql(tmp_path, monkeypatch):
     """An unsafe name anywhere in the batch aborts before psql is spawned."""
     dump = tmp_path / "x.sql.gz"
@@ -168,11 +198,8 @@ def test_stream_dump_to_staging_raises_without_copy_header(tmp_path):
 
 
 def test_restore_all_atomic_writes_qc_block_between_stage_and_promote(
-    tmp_path, monkeypatch
+    tmp_path, psql_stdin
 ):
-    import gzip
-
-    from app.data_sync import restore as restore_mod
     from app.data_sync.qc_rules import load_qc_rules
 
     dump = tmp_path / "nn.sql.gz"
@@ -180,25 +207,6 @@ def test_restore_all_atomic_writes_qc_block_between_stage_and_promote(
         gzip.compress(b"COPY public.nn_catchments (id) FROM stdin;\nabc\n\\.\n")
     )
     settings = restore_mod.DatabaseSettings(iam_authentication=False)
-
-    written = bytearray()
-
-    class _FakeStdin:
-        def write(self, data):
-            written.extend(data)
-
-        def close(self):
-            pass
-
-    class _FakeProc:
-        def __init__(self):
-            self.stdin = _FakeStdin()
-            self.returncode = 0
-
-        def communicate(self):
-            return b"", b""
-
-    monkeypatch.setattr(restore_mod.subprocess, "Popen", lambda *a, **k: _FakeProc())  # noqa: ARG005
 
     rules = load_qc_rules()
     restore_mod.restore_all_atomic(
@@ -208,7 +216,7 @@ def test_restore_all_atomic_writes_qc_block_between_stage_and_promote(
         qc_rules=rules,
     )
 
-    text = written.decode()
+    text = psql_stdin.decode()
     stage_idx = text.index("CREATE TEMP TABLE _ds_stage_nn_catchments")
     qc_idx = text.index("DO $qc$")
     promote_idx = text.index("INSERT INTO public.nn_catchments")
@@ -216,55 +224,28 @@ def test_restore_all_atomic_writes_qc_block_between_stage_and_promote(
 
 
 def test_restore_all_atomic_omits_qc_block_when_rules_not_supplied(
-    tmp_path, monkeypatch
+    tmp_path, psql_stdin
 ):
-    import gzip
-
-    from app.data_sync import restore as restore_mod
-
     dump = tmp_path / "nn.sql.gz"
     dump.write_bytes(
         gzip.compress(b"COPY public.nn_catchments (id) FROM stdin;\nabc\n\\.\n")
     )
     settings = restore_mod.DatabaseSettings(iam_authentication=False)
 
-    written = bytearray()
-
-    class _FakeStdin:
-        def write(self, data):
-            written.extend(data)
-
-        def close(self):
-            pass
-
-    class _FakeProc:
-        def __init__(self):
-            self.stdin = _FakeStdin()
-            self.returncode = 0
-
-        def communicate(self):
-            return b"", b""
-
-    monkeypatch.setattr(restore_mod.subprocess, "Popen", lambda *a, **k: _FakeProc())  # noqa: ARG005
-
     restore_mod.restore_all_atomic(
         settings=settings, region="eu-west-2", items=[("nn_catchments", dump)]
     )
-    assert "DO $qc$" not in written.decode()
+    assert "DO $qc$" not in psql_stdin.decode()
 
 
 def test_restore_all_atomic_stages_all_tables_before_promoting_any(
-    tmp_path, monkeypatch
+    tmp_path, psql_stdin
 ):
     """With 2+ tables and no qc_rules, both STAGE passes must complete before
     either PROMOTE pass runs (pre1, stream1, pre2, stream2, post1, post2) —
     this is the reordering introduced by the STAGE/QC/PROMOTE restructure,
     and it applies even when qc_rules is None (today's default call shape).
     """
-    import gzip
-
-    from app.data_sync import restore as restore_mod
-
     dump1 = tmp_path / "nn.sql.gz"
     dump1.write_bytes(
         gzip.compress(b"COPY public.nn_catchments (id) FROM stdin;\nabc\n\\.\n")
@@ -275,32 +256,13 @@ def test_restore_all_atomic_stages_all_tables_before_promoting_any(
     )
     settings = restore_mod.DatabaseSettings(iam_authentication=False)
 
-    written = bytearray()
-
-    class _FakeStdin:
-        def write(self, data):
-            written.extend(data)
-
-        def close(self):
-            pass
-
-    class _FakeProc:
-        def __init__(self):
-            self.stdin = _FakeStdin()
-            self.returncode = 0
-
-        def communicate(self):
-            return b"", b""
-
-    monkeypatch.setattr(restore_mod.subprocess, "Popen", lambda *a, **k: _FakeProc())  # noqa: ARG005
-
     restore_mod.restore_all_atomic(
         settings=settings,
         region="eu-west-2",
         items=[("nn_catchments", dump1), ("lpa_boundaries", dump2)],
     )
 
-    text = written.decode()
+    text = psql_stdin.decode()
     stage1_idx = text.index("CREATE TEMP TABLE _ds_stage_nn_catchments")
     copy1_idx = text.index("COPY pg_temp._ds_stage_nn_catchments")
     stage2_idx = text.index("CREATE TEMP TABLE _ds_stage_lpa_boundaries")

@@ -289,6 +289,40 @@ def _referential_sql(check: ReferentialCheck, staged_tables: set[str]) -> str:
     )
 
 
+def _table_parts(table: str, rules: TableRules, floor_pct: float) -> list[str]:
+    """Every applicable per-table rule for one staged table, in check order."""
+    parts = [_row_count_sql(table, rules, floor_pct)]
+    if rules.key is not None:
+        if rules.key.source == "column":
+            parts.append(_column_key_sql(table, rules))
+        else:
+            parts.append(_json_key_sql(table, rules))
+    if rules.lookup_rows:
+        parts.append(_lookup_row_sql(table, rules))
+    if rules.geometry is not None:
+        parts.append(_geometry_sql(table, rules))
+    if rules.coefficient_ranges:
+        parts.append(_coefficient_range_sql(table, rules))
+    return parts
+
+
+def _referential_parts(
+    checks: list[ReferentialCheck], staged_tables: set[str]
+) -> list[str]:
+    """Rule 9 for every referential check touching a staged table, de-duplicated
+    by check name so a check shared across tables is emitted only once.
+    """
+    seen_checks: set[str] = set()
+    parts = []
+    for check in checks:
+        if check.name in seen_checks:
+            continue
+        if check.from_.table in staged_tables or check.to.table in staged_tables:
+            parts.append(_referential_sql(check, staged_tables))
+            seen_checks.add(check.name)
+    return parts
+
+
 def build_qc_sql(items: list[tuple[str, Path]], rules: QcRules) -> str:
     """Build the full `DO $qc$ ... $qc$;` block checking every applicable rule
     against every table in `items`. Raises (via the generated SQL) once, with
@@ -307,27 +341,9 @@ def build_qc_sql(items: list[tuple[str, Path]], rules: QcRules) -> str:
     ]
     for table in staged_tables:
         table_rules = rules.tables.get(table)
-        if table_rules is None:
-            continue
-        parts.append(_row_count_sql(table, table_rules, rules.row_count_floor_pct))
-        if table_rules.key is not None:
-            if table_rules.key.source == "column":
-                parts.append(_column_key_sql(table, table_rules))
-            else:
-                parts.append(_json_key_sql(table, table_rules))
-        if table_rules.lookup_rows:
-            parts.append(_lookup_row_sql(table, table_rules))
-        if table_rules.geometry is not None:
-            parts.append(_geometry_sql(table, table_rules))
-        if table_rules.coefficient_ranges:
-            parts.append(_coefficient_range_sql(table, table_rules))
-    seen_checks: set[str] = set()
-    for check in rules.referential_checks:
-        if check.name in seen_checks:
-            continue
-        if check.from_.table in staged_tables or check.to.table in staged_tables:
-            parts.append(_referential_sql(check, staged_tables))
-            seen_checks.add(check.name)
+        if table_rules is not None:
+            parts.extend(_table_parts(table, table_rules, rules.row_count_floor_pct))
+    parts.extend(_referential_parts(rules.referential_checks, staged_tables))
     parts.append(
         "IF array_length(failures, 1) > 0 THEN\n"
         "  RAISE EXCEPTION '%', array_to_string(failures, E'\\n');\n"

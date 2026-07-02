@@ -32,11 +32,11 @@ def test_restore_all_rejects_manifest_missing_allow_listed_table(monkeypatch):
     cfg.tables = ["nn_catchments", "coefficient_layer"]
     manifest = Manifest(data_version="v1", tables={"nn_catchments": "k1"})
     session = MagicMock()
+    s3 = MagicMock()
+    settings = MagicMock()
 
     with pytest.raises(ValueError, match="missing required table"):
-        service._restore_all(
-            session, MagicMock(), cfg, MagicMock(), "eu-west-2", None, manifest
-        )
+        service._restore_all(session, s3, cfg, settings, "eu-west-2", None, manifest)
 
 
 def test_restore_all_records_failed_history_row_per_table_on_qc_failure(
@@ -70,10 +70,9 @@ def test_restore_all_records_failed_history_row_per_table_on_qc_failure(
     monkeypatch.setattr(service, "restore_all_atomic", _raise)
 
     run_id = uuid4()
+    settings = MagicMock()
     with pytest.raises(RuntimeError):
-        service._restore_all(
-            session, s3, cfg, MagicMock(), "eu-west-2", run_id, manifest
-        )
+        service._restore_all(session, s3, cfg, settings, "eu-west-2", run_id, manifest)
 
     added = [call.args[0] for call in session.add.call_args_list]
     statuses = {row.table_name: row.status for row in added}
@@ -120,10 +119,9 @@ def test_restore_all_aggregates_multiple_qc_failures_for_same_table(
     monkeypatch.setattr(service, "restore_all_atomic", _raise)
 
     run_id = uuid4()
+    settings = MagicMock()
     with pytest.raises(RuntimeError):
-        service._restore_all(
-            session, s3, cfg, MagicMock(), "eu-west-2", run_id, manifest
-        )
+        service._restore_all(session, s3, cfg, settings, "eu-west-2", run_id, manifest)
 
     added = [call.args[0] for call in session.add.call_args_list]
     nn_row = next(row for row in added if row.table_name == "nn_catchments")
