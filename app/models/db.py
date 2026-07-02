@@ -235,6 +235,7 @@ class DataLoadHistory(Base):
     etag: Mapped[str] = mapped_column(String, nullable=False)
     data_version: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
+    status_detail: Mapped[str | None] = mapped_column(String, nullable=True)
     loaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

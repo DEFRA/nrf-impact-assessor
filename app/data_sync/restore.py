@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import IO
 
 from app.config import DatabaseSettings
+from app.data_sync.qc_rules import QcRules
 from app.repositories.repository import _assert_safe_identifier
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,7 @@ def restore_all_atomic(
     settings: DatabaseSettings,
     region: str,
     items: list[tuple[str, Path]],
+    qc_rules: QcRules | None = None,
 ) -> None:
     """Load every (table, dump) in a single psql transaction. All-or-nothing.
 
@@ -165,6 +167,11 @@ def restore_all_atomic(
     is spawned, so an unsafe name aborts the whole batch before any subprocess
     side effect. `--single-transaction` + `ON_ERROR_STOP=1` make the batch
     atomic: the first error rolls back every table.
+
+    When `qc_rules` is supplied, a generated QC `DO` block (see
+    `app.data_sync.qc.build_qc_sql`) runs after every table has staged and
+    before any table promotes, so a QC failure rolls back the whole batch
+    exactly like any other error.
     """
     for table, dump in items:
         assert_gzip(table, dump)
@@ -192,21 +199,36 @@ def restore_all_atomic(
     if proc.stdin is None:
         msg = "failed to open psql stdin"
         raise RuntimeError(msg)
-    # Per-table durations measure time to feed the dump into psql's stdin. Under
-    # --single-transaction the pipe back-pressures, so this reflects feed + apply
-    # (incl. inline index maintenance), but the final COMMIT cost is deferred to
-    # communicate() below and logged separately. These numbers are the tripwire
-    # for the index-maintenance trade-off documented in the module docstring.
     try:
-        for table, dump, stage, pre, post in plans:
+        # STAGE: every table's staging table + COPY data, in order.
+        for table, dump, stage, pre, _post in plans:
             logger.info("Loading table %s from %s", table, dump)
             start = time.perf_counter()
             proc.stdin.write(pre.encode())
             _stream_dump_to_staging(proc.stdin, dump, table, stage)
-            proc.stdin.write(post.encode())
             logger.info(
                 "Streamed table %s in %.2fs", table, time.perf_counter() - start
             )
+        # QC: one generated block checking every applicable rule against every
+        # staged table, reached only after all tables have staged (referential
+        # checks need every side of a pair available).
+        if qc_rules is not None:
+            # Local import: app.data_sync.qc imports staging_name from this
+            # module, so a module-level import here would create an import
+            # cycle (restore -> qc -> restore) that fails depending on which
+            # module a caller imports first.
+            from app.data_sync.qc import build_qc_sql
+
+            proc.stdin.write(build_qc_sql(items, qc_rules).encode())
+        # PROMOTE: reached only if QC didn't raise. Not individually timed per table:
+        # post_sql's writes are too small to be backpressure-limited by the pipe (unlike
+        # STAGE's bulk COPY data), so a per-table timer here would report near-zero
+        # durations regardless of actual INSERT/index-maintenance cost, misleadingly
+        # implying promotion is cheap. The INSERT/index-maintenance cost (the NRF2-694
+        # tripwire) is only visible in aggregate via the "Committed" log below, which
+        # also includes QC evaluation time and the final COMMIT.
+        for _table, _dump, _stage, _pre, post in plans:
+            proc.stdin.write(post.encode())
         proc.stdin.close()
     except BrokenPipeError:  # psql already exited with an error
         pass

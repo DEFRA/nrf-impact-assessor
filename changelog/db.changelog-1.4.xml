@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- Alembic revision: 94839dfef894 -->
+
+    <!-- QC gate (DM-1): human-readable rule detail for a failed data-sync
+         table load, alongside the existing status column. -->
+
+    <changeSet id="04-data-load-history-status-detail" author="nrf">
+        <addColumn tableName="data_load_history" schemaName="public">
+            <column name="status_detail" type="varchar"/>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="data_load_history" schemaName="public"
+                        columnName="status_detail"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

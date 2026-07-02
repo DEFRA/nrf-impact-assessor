@@ -2,6 +2,7 @@
 
 import logging
 import tempfile
+from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -14,6 +15,8 @@ from sqlalchemy.orm import Session
 from app.aws.s3 import S3Client, S3ObjectError
 from app.config import AWSConfig, DatabaseSettings, DataSyncConfig
 from app.data_sync.manifest import Manifest
+from app.data_sync.qc import parse_qc_failures
+from app.data_sync.qc_rules import load_qc_rules
 from app.data_sync.restore import old_version_cleanup_sql, restore_all_atomic
 from app.models.db import (
     CoefficientLayer,
@@ -147,6 +150,11 @@ def _restore_all(
     manifest: Manifest,
 ) -> None:
     allowed = set(cfg.tables)
+    missing = allowed - set(manifest.tables)
+    if missing:
+        msg = f"manifest is missing required table(s): {', '.join(sorted(missing))}"
+        raise ValueError(msg)
+
     with tempfile.TemporaryDirectory() as tmp:
         items: list[tuple[str, Path]] = []
         audit: list[tuple[str, str, str]] = []
@@ -176,7 +184,11 @@ def _restore_all(
         # _reconcile_load_history at the start of the next sync (status =
         # 'reconciled'). Treat DataLoadHistory as an audit log, not the source of
         # truth.
-        restore_all_atomic(db, region, items)
+        try:
+            restore_all_atomic(db, region, items, qc_rules=load_qc_rules())
+        except RuntimeError as exc:
+            _record_failed_history(session, run_id, manifest, str(exc))
+            raise
 
         # Only reached once the restore transaction has committed.
         for table, key, etag in audit:
@@ -195,6 +207,44 @@ def _restore_all(
 
         # Cutover has committed; remove superseded versions (best-effort).
         _cleanup_old_versions(session, [table for table, _ in items])
+
+
+def _record_failed_history(
+    session: Session, run_id: UUID, manifest: Manifest, error: str
+) -> None:
+    """Write one `DataLoadHistory` row per manifest table after a failed
+    restore, so the audit trail shows which table/rule blocked the load even
+    though nothing was promoted (the whole batch rolled back together). A
+    table can fail multiple independent rules in one run (QC collects every
+    failure before raising) — all of them are joined into status_detail, not
+    just the last one.
+    """
+    failures = parse_qc_failures(error)
+    details_by_table: dict[str, list[str]] = defaultdict(list)
+    for f in failures:
+        details_by_table[f.table].append(f"{f.rule}: {f.detail}")
+    generic_detail = "blocked by QC failure on other table(s) in the same batch"
+    for table, key in manifest.tables.items():
+        detail = (
+            "; ".join(details_by_table[table])
+            if table in details_by_table
+            else generic_detail
+        )
+        session.add(
+            DataLoadHistory(
+                id=uuid4(),
+                run_id=run_id,
+                table_name=table,
+                s3_key=key,
+                etag="",
+                data_version=manifest.data_version,
+                status="failed",
+                status_detail=detail,
+            )
+        )
+        if table in details_by_table:
+            logger.warning("QC failure on table %s: %s", table, detail)
+    session.commit()
 
 
 def _reconcile_load_history(
