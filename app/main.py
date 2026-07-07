@@ -14,7 +14,7 @@ from app.common.auth import require_api_key
 from app.common.mongo import get_mongo_client
 from app.common.tls import cleanup_cert_files, init_custom_certificates
 from app.common.tracing import TraceIdMiddleware
-from app.config import ApiServerConfig, DataSyncConfig, config
+from app.config import ApiServerConfig, DataSyncConfig, DlqAdminConfig, config
 from app.data_sync.service import log_startup_table_status
 from app.health.router import router as health_router
 from app.repositories.engine import warm_shared_engine
@@ -99,6 +99,18 @@ if _data_sync_config.enabled:
         _data_sync_config.s3_prefix,
     )
     app.include_router(data_sync_router, tags=["data-sync"])
+
+_dlq_config = DlqAdminConfig()
+if _dlq_config.enabled:
+    from app.dlq.router import router as dlq_router
+
+    if not _dlq_config.auth_token:
+        logger.warning(
+            "DLQ_ADMIN_ENABLED=true but DLQ_AUTH_TOKEN is not set; "
+            "all /admin/dlq requests will be rejected until it is configured"
+        )
+    logger.info("DLQ_ADMIN_ENABLED=true: mounting /admin/dlq endpoints")
+    app.include_router(dlq_router, tags=["dlq-admin"])
 
 
 def main() -> None:  # pragma: no cover
