@@ -375,6 +375,7 @@ class AWSConfig(BaseSettings):
     account_id: str = ""
     region: str = Field(default="eu-west-2")
     sqs_queue_url: str = ""
+    sqs_dlq_url: str = ""
     endpoint_url: str | None = Field(
         default=None, description="Override AWS endpoint for LocalStack"
     )
@@ -492,6 +493,34 @@ class DataSyncConfig(BaseSettings):
             "wwtw_catchments",
         ],
         description="Fallback allow-list; manifest 'tables' map is authoritative",
+    )
+
+
+class DlqAdminConfig(BaseSettings):
+    """Configuration for the /admin/dlq DLQ inspection & redrive endpoints."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="DLQ_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=False, description="Mount the /admin/dlq endpoints")
+    auth_token: str = Field(
+        default="", description="Shared token required for DLQ admin actions"
+    )
+    peek_hold_seconds: int = Field(
+        default=60,
+        ge=10,
+        le=300,
+        description="Default visibility hold applied by peek (the lock window)",
+    )
+    body_preview_limit: int = Field(
+        default=4096,
+        ge=256,
+        description="Byte length of the display-only body_preview field",
     )
 
 

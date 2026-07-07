@@ -63,3 +63,44 @@ def test_data_sync_config_from_env(monkeypatch):
     assert cfg.s3_bucket == "ref-data"
     assert cfg.s3_prefix == "dumps"
     assert cfg.auth_token == "secret"  # noqa: S105
+
+
+def test_aws_config_has_dlq_url(monkeypatch):
+    monkeypatch.setenv("AWS_SQS_DLQ_URL", "http://localhost:4566/000000000000/nrf-dlq")
+    from app.config import AWSConfig
+
+    assert AWSConfig().sqs_dlq_url == "http://localhost:4566/000000000000/nrf-dlq"
+
+
+def test_aws_config_dlq_url_defaults_empty(monkeypatch):
+    monkeypatch.delenv("AWS_SQS_DLQ_URL", raising=False)
+    from app.config import AWSConfig
+
+    assert AWSConfig().sqs_dlq_url == ""
+
+
+def test_dlq_admin_config_defaults(monkeypatch):
+    for var in (
+        "DLQ_ENABLED",
+        "DLQ_AUTH_TOKEN",
+        "DLQ_PEEK_HOLD_SECONDS",
+        "DLQ_BODY_PREVIEW_LIMIT",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    from app.config import DlqAdminConfig
+
+    cfg = DlqAdminConfig()
+    assert cfg.enabled is False
+    assert cfg.auth_token == ""
+    assert cfg.peek_hold_seconds == 60
+    assert cfg.body_preview_limit == 4096
+
+
+def test_dlq_admin_config_from_env(monkeypatch):
+    monkeypatch.setenv("DLQ_ENABLED", "true")
+    monkeypatch.setenv("DLQ_AUTH_TOKEN", "s3cret")
+    from app.config import DlqAdminConfig
+
+    cfg = DlqAdminConfig()
+    assert cfg.enabled is True
+    assert cfg.auth_token == "s3cret"  # noqa: S105
