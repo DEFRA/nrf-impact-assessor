@@ -129,3 +129,32 @@ def test_do_run_logs_table_status_on_noop(monkeypatch):
     log_status.assert_called_once()
     # No reload happened, so caches are left intact.
     clear_caches.assert_not_called()
+
+
+def test_reference_tables_populated_true_when_all_have_rows():
+    from app.data_sync.service import (
+        _CRITICAL_REFERENCE_TABLES,
+        reference_tables_populated,
+    )
+
+    session = MagicMock()
+    session.scalar.return_value = 5
+    assert reference_tables_populated(session) is True
+    assert session.scalar.call_count == len(_CRITICAL_REFERENCE_TABLES)
+
+
+def test_reference_tables_populated_false_when_any_empty():
+    from app.data_sync.service import reference_tables_populated
+
+    session = MagicMock()
+    session.scalar.side_effect = [5, 0]  # second critical table empty
+    assert reference_tables_populated(session) is False
+
+
+def test_reference_tables_populated_false_on_count_error():
+    from app.data_sync.service import reference_tables_populated
+
+    session = MagicMock()
+    session.scalar.side_effect = RuntimeError("relation does not exist")
+    assert reference_tables_populated(session) is False
+    session.rollback.assert_called_once()

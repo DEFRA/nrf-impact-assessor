@@ -55,6 +55,35 @@ _REFERENCE_TABLES = [
 
 _MODEL_BY_TABLE_NAME = {label: model for model, label in _REFERENCE_TABLES}
 
+# The subset of reference tables that must be non-empty for ANY assessment to
+# succeed. Used by the consumer readiness gate. Kept deliberately small so a
+# legitimately-empty ancillary table cannot wedge the consumer.
+_CRITICAL_REFERENCE_TABLES = [
+    CoefficientLayer,
+    LookupTable,
+    NnCatchments,
+    Subcatchments,
+    WwtwCatchments,
+]
+
+
+def reference_tables_populated(session: Session) -> bool:
+    """True when every critical reference table has at least one row.
+
+    Empty reference data fails every job, so the consumer's readiness gate uses
+    this to stop pulling rather than burn maxReceiveCount on healthy jobs. Any
+    count error (e.g. table missing) is treated as not-ready.
+    """
+    for model in _CRITICAL_REFERENCE_TABLES:
+        try:
+            n = session.scalar(select(func.count()).select_from(model))
+        except Exception:  # noqa: BLE001
+            session.rollback()
+            return False
+        if not n:
+            return False
+    return True
+
 
 def _log_table_status(session: Session, *, context: str = "Post-sync") -> None:
     """Log one line of per-table row counts so an empty reference table is
