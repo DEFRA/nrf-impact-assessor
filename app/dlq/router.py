@@ -47,9 +47,21 @@ def _get_service() -> DlqService:
     return _service
 
 
-def dlq_auth(x_dlq_token: str | None = Header(default=None)) -> str:
+def get_dlq_config() -> DlqAdminConfig:
+    """FastAPI dependency for the DLQ admin config.
+
+    Injected (rather than constructed inline) so FastAPI caches it per request:
+    a default peek resolves the config once for both auth and hold_seconds
+    instead of re-reading .env twice.
+    """
+    return DlqAdminConfig()
+
+
+def dlq_auth(
+    x_dlq_token: str | None = Header(default=None),
+    cfg: DlqAdminConfig = Depends(get_dlq_config),
+) -> str:
     """Validate the DLQ admin token; return a short non-reversible fingerprint."""
-    cfg = DlqAdminConfig()
     if not cfg.auth_token or x_dlq_token != cfg.auth_token:
         raise HTTPException(
             status_code=401,
@@ -93,10 +105,9 @@ def peek(
     limit: int = Query(default=10, ge=1, le=10),
     hold_seconds: int | None = Query(default=None, ge=10, le=300),
     fp: str = Depends(dlq_auth),
+    cfg: DlqAdminConfig = Depends(get_dlq_config),
 ) -> DlqPeekResult:
-    hs = (
-        hold_seconds if hold_seconds is not None else DlqAdminConfig().peek_hold_seconds
-    )
+    hs = hold_seconds if hold_seconds is not None else cfg.peek_hold_seconds
     result = _handle(lambda: _get_service().peek(limit, hs))
     _audit("peek", fp, count=len(result.messages))
     return result

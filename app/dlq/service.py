@@ -160,7 +160,8 @@ class DlqService:
         if confirm is not True:
             msg = "confirm must be true for bulk redrive"
             raise InvalidParameterError(msg)
-        kwargs: dict = {"SourceArn": self._arn()}
+        arn = self._arn()
+        kwargs: dict = {"SourceArn": arn}
         if max_per_second is not None:
             kwargs["MaxNumberOfMessagesPerSecond"] = int(max_per_second)
         try:
@@ -170,7 +171,7 @@ class DlqService:
         return RedriveTask(
             task_handle=resp.get("TaskHandle"),
             status="RUNNING",
-            source_arn=self._dlq_arn,
+            source_arn=arn,
         )
 
     def list_tasks(self) -> list[RedriveTask]:

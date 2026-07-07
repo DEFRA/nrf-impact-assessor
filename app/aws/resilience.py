@@ -60,11 +60,9 @@ class ReadinessGate:
 
     def ok(self) -> bool:
         now = self._clock()
-        if (
-            self._cached is not None
-            and self._checked_at is not None
-            and now - self._checked_at < self._ttl
-        ):
+        # _cached and _checked_at are always assigned together, so a set
+        # timestamp implies a cached result.
+        if self._checked_at is not None and now - self._checked_at < self._ttl:
             return self._cached
 
         result = True
