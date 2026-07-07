@@ -25,8 +25,10 @@ import uvicorn
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.aws.resilience import Backoff, ReadinessGate
 from app.aws.sqs import SQSClient
 from app.clients.backend_client import BackendClient
+from app.common import metrics
 from app.common.proxy_utils import configure_proxy_settings
 from app.common.tls import init_custom_certificates
 from app.config import ApiServerConfig, AWSConfig, BackendConfig, DatabaseSettings
@@ -136,12 +138,19 @@ class SqsConsumer:
         sqs_client: SQSClient,
         orchestrator: JobOrchestrator,
         worker_config: WorkerConfig | None = None,
+        readiness_gate: ReadinessGate | None = None,
+        backoff: Backoff | None = None,
     ):
         self.sqs_client = sqs_client
         self.orchestrator = orchestrator
         self._visibility_timeout = (
             worker_config.visibility_timeout if worker_config else 300
         )
+        # Empty gate (no checks) is always open — preserves behaviour when no
+        # probes are wired (e.g. unit tests constructing SqsConsumer directly).
+        self._gate = readiness_gate or ReadinessGate(checks=[])
+        self._backoff = backoff or Backoff()
+        self._gate_open = True
         self.running = True
 
         signal.signal(signal.SIGTERM, self._handle_sigterm)
@@ -153,7 +162,21 @@ class SqsConsumer:
 
         while self.running:
             try:
+                if not self._gate.ok():
+                    if self._gate_open:
+                        self._gate_open = False
+                        logger.warning("Readiness gate closed; pausing SQS polling")
+                    metrics.counter("consumer.readiness_gate.closed", 1)
+                    time.sleep(self._backoff.next_delay())
+                    continue
+
+                if not self._gate_open:
+                    self._gate_open = True
+                    self._backoff.reset()
+                    logger.info("Readiness gate reopened; resuming SQS polling")
+
                 results = self.sqs_client.receive_messages()
+                self._backoff.reset()
 
                 if not results:
                     continue
@@ -190,14 +213,17 @@ class SqsConsumer:
                 logger.info("Received keyboard interrupt, shutting down...")
                 break
             except Exception as e:
+                metrics.counter("consumer.receive_error", 1)
                 logger.exception(f"Unexpected error in consumer loop: {e}")
-                time.sleep(5)
+                time.sleep(self._backoff.next_delay())
 
         logger.info("SQS consumer stopped")
 
     def _handle_sigterm(self, _signum, _frame):
         """Handle SIGTERM for graceful ECS task shutdown."""
-        logger.info("Received SIGTERM, initiating graceful shutdown...")
+        logger.info(
+            "Received SIGTERM: draining in-flight job, not pulling new messages"
+        )
         self.running = False
 
     def _handle_sigint(self, _signum, _frame):
@@ -272,6 +298,27 @@ def main():
         engine = create_db_engine(db_settings, aws_config)
         repository = Repository(engine)
 
+        from app.data_sync.service import reference_tables_populated
+
+        def _db_probe() -> bool:
+            try:
+                with engine.connect() as conn:
+                    conn.execute(text("SELECT 1"))
+                return True
+            except Exception:  # noqa: BLE001
+                return False
+
+        def _refdata_probe() -> bool:
+            try:
+                with repository.session() as session:
+                    return reference_tables_populated(session)
+            except Exception:  # noqa: BLE001
+                return False
+
+        readiness_gate = ReadinessGate(
+            checks=[_db_probe, _refdata_probe], ttl_seconds=15
+        )
+
         sqs_client = SQSClient(
             queue_url=aws_config.sqs_queue_url,
             region=aws_config.region,
@@ -279,6 +326,7 @@ def main():
             visibility_timeout=worker_config.visibility_timeout,
             max_messages=worker_config.max_messages,
             endpoint_url=aws_config.endpoint_url,
+            dlq_url=aws_config.sqs_dlq_url,
         )
 
         # Initialize backend client for result callbacks (if configured)
@@ -304,6 +352,7 @@ def main():
             sqs_client=sqs_client,
             orchestrator=orchestrator,
             worker_config=worker_config,
+            readiness_gate=readiness_gate,
         )
         consumer.run()
 
