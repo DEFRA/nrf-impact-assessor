@@ -2,11 +2,13 @@
 
 import json
 import logging
+from datetime import UTC, datetime
 
 import boto3
 from botocore.exceptions import ClientError
 from pydantic import ValidationError
 
+from app.common import metrics
 from app.models.job import ImpactAssessmentJob
 
 logger = logging.getLogger(__name__)
@@ -25,8 +27,10 @@ class SQSClient:
         visibility_timeout: int,
         max_messages: int,
         endpoint_url: str | None = None,
+        dlq_url: str | None = None,
     ):
         self.queue_url = queue_url
+        self.dlq_url = dlq_url
         self.region = region
         self.wait_time_seconds = wait_time_seconds
         self.visibility_timeout = visibility_timeout
@@ -66,33 +70,138 @@ class SQSClient:
         for raw_message in messages:
             receipt_handle = raw_message["ReceiptHandle"]
             raw_body = raw_message["Body"]
+
             if len(raw_body) > _max_body_bytes:
-                logger.error(
-                    "SQS message body exceeds size limit (%d bytes), skipping",
-                    len(raw_body),
-                    extra={"message_id": raw_message.get("MessageId")},
+                self._fast_fail(
+                    raw_message,
+                    "oversized",
+                    f"body {len(raw_body)} bytes exceeds limit {_max_body_bytes}",
                 )
                 continue
-            body = json.loads(raw_body)
+
+            try:
+                body = json.loads(raw_body)
+            except json.JSONDecodeError as e:
+                self._fast_fail(raw_message, "json-decode-error", str(e))
+                continue
 
             # Unwrap SNS envelope if present
             if body.get("Type") == "Notification" and "Message" in body:
                 logger.debug("Unwrapping SNS envelope from SQS message")
-                body = json.loads(body["Message"])
+                try:
+                    body = json.loads(body["Message"])
+                except json.JSONDecodeError as e:
+                    self._fast_fail(raw_message, "sns-message-decode-error", str(e))
+                    continue
 
             try:
                 job_message = ImpactAssessmentJob.model_validate(body)
-                logger.info(f"Received job message: {job_message.reference}")
-                results.append((job_message, receipt_handle))
             except ValidationError as e:
-                logger.error(
-                    f"Invalid job message format: {e}",
-                    extra={"message_id": raw_message.get("MessageId")},
-                )
-                # Don't delete - let visibility timeout expire
-                # Message will retry and eventually move to DLQ after maxReceiveCount
+                self._fast_fail(raw_message, "validation-error", str(e))
+                continue
+
+            logger.info(f"Received job message: {job_message.reference}")
+            results.append((job_message, receipt_handle))
 
         return results
+
+    def _fast_fail(self, raw_message: dict, reason: str, detail: str) -> None:
+        """Remove a non-recoverable ('poison') message from the hot path.
+
+        When a DLQ is configured, send the message to it with forensic context
+        then delete it from the source. Without a DLQ, fall back to today's
+        behaviour: log and leave on the queue (SQS will DLQ it after
+        maxReceiveCount).
+        """
+        message_id = raw_message.get("MessageId")
+        metrics.counter(f"consumer.poison_fast_fail.{reason}", 1)
+
+        if not self.dlq_url:
+            logger.error(
+                "Poison message (%s) left on queue (no DLQ configured): %s",
+                reason,
+                detail,
+                extra={"message_id": message_id},
+            )
+            return
+
+        try:
+            self.send_to_dlq(raw_message, reason, detail)
+        except ClientError as e:
+            metrics.counter("dlq.send_failure", 1)
+            logger.error(
+                "Failed to send poison message to DLQ; leaving on source: %s",
+                e,
+                extra={"message_id": message_id},
+            )
+            return
+
+        try:
+            self.sqs.delete_message(
+                QueueUrl=self.queue_url, ReceiptHandle=raw_message["ReceiptHandle"]
+            )
+        except ClientError as e:
+            metrics.counter("dlq.delete_failure", 1)
+            logger.warning(
+                "Poison message sent to DLQ but source delete failed; message "
+                "may be reprocessed (id=%s): %s",
+                message_id,
+                e,
+            )
+            return
+
+        logger.info(
+            "Poison message fast-failed to DLQ (reason=%s, id=%s)",
+            reason,
+            message_id,
+        )
+
+    def send_to_dlq(self, raw_message: dict, reason: str, detail: str) -> None:
+        """Send a poison message to the DLQ, preserving forensic context.
+
+        Copies safe original message attributes and adds failure metadata.
+        SQS allows at most 10 message attributes, so forensic attributes take
+        precedence and any remaining slots are filled with copied originals.
+        """
+        body = raw_message["Body"]
+        forensic: dict = {
+            "originalMessageId": {
+                "DataType": "String",
+                "StringValue": raw_message.get("MessageId", "unknown"),
+            },
+            "sourceQueueUrl": {"DataType": "String", "StringValue": self.queue_url},
+            "failureReason": {"DataType": "String", "StringValue": reason},
+            "failureDetail": {"DataType": "String", "StringValue": detail[:1024]},
+            "failedAt": {
+                "DataType": "String",
+                "StringValue": datetime.now(UTC).isoformat(),
+            },
+        }
+        if reason in ("json-decode-error", "sns-message-decode-error"):
+            forensic["rawBodyPreview"] = {
+                "DataType": "String",
+                "StringValue": body[:1024],
+            }
+
+        attrs = dict(forensic)
+        budget = 10 - len(attrs)
+        for key, value in (raw_message.get("MessageAttributes") or {}).items():
+            if budget <= 0:
+                break
+            if key.startswith(("AWS.", "Amazon.")) or key in attrs:
+                continue
+            string_value = value.get("StringValue")
+            if string_value is None:
+                continue  # skip binary attributes
+            attrs[key] = {
+                "DataType": value.get("DataType", "String"),
+                "StringValue": string_value,
+            }
+            budget -= 1
+
+        self.sqs.send_message(
+            QueueUrl=self.dlq_url, MessageBody=body, MessageAttributes=attrs
+        )
 
     def change_message_visibility(
         self, receipt_handle: str, visibility_timeout: int

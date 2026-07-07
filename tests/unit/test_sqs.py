@@ -11,6 +11,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+from botocore.exceptions import ClientError
 
 from app.aws.sqs import SQSClient
 
@@ -97,3 +98,97 @@ class TestTracePropagation:
         job = _receive_one(sqs_client, envelope)
         assert job.reference == "NRF-000001"
         assert job.trace_id is None
+
+
+# -- DLQ fast-fail --
+
+
+@pytest.fixture
+def sqs_client_with_dlq():
+    with patch("app.aws.sqs.boto3.client") as mock_client:
+        mock_sqs = MagicMock()
+        mock_client.return_value = mock_sqs
+        client = SQSClient(
+            queue_url="http://localhost:4566/000000000000/nrf-queue",
+            region="eu-west-2",
+            wait_time_seconds=1,
+            visibility_timeout=30,
+            max_messages=1,
+            dlq_url="http://localhost:4566/000000000000/nrf-dlq",
+        )
+        client.sqs = mock_sqs
+        yield client
+
+
+def _raw(body: str, message_id="mid-1"):
+    return {"ReceiptHandle": "rh-1", "Body": body, "MessageId": message_id}
+
+
+def test_json_decode_failure_fast_fails_to_dlq(sqs_client_with_dlq):
+    c = sqs_client_with_dlq
+    c.sqs.receive_message.return_value = {"Messages": [_raw("{not json")]}
+    results = c.receive_messages()
+    assert results == []
+    c.sqs.send_message.assert_called_once()
+    kwargs = c.sqs.send_message.call_args.kwargs
+    assert kwargs["QueueUrl"] == c.dlq_url
+    attrs = kwargs["MessageAttributes"]
+    assert attrs["failureReason"]["StringValue"] == "json-decode-error"
+    assert attrs["sourceQueueUrl"]["StringValue"] == c.queue_url
+    assert "rawBodyPreview" in attrs
+    c.sqs.delete_message.assert_called_once_with(
+        QueueUrl=c.queue_url, ReceiptHandle="rh-1"
+    )
+
+
+def test_sns_inner_decode_failure_fast_fails(sqs_client_with_dlq):
+    c = sqs_client_with_dlq
+    envelope = {"Type": "Notification", "Message": "{broken"}
+    c.sqs.receive_message.return_value = {"Messages": [_raw(json.dumps(envelope))]}
+    results = c.receive_messages()
+    assert results == []
+    attrs = c.sqs.send_message.call_args.kwargs["MessageAttributes"]
+    assert attrs["failureReason"]["StringValue"] == "sns-message-decode-error"
+
+
+def test_validation_error_fast_fails(sqs_client_with_dlq):
+    c = sqs_client_with_dlq
+    # `reference` must match ^NRF-\d{6}$; a bad value is a real ValidationError.
+    # (Most keys are optional on ImpactAssessmentJob, so an arbitrary dict would
+    # actually validate — the constraint violation is what exercises this path.)
+    c.sqs.receive_message.return_value = {
+        "Messages": [_raw(json.dumps({"reference": "not-a-valid-ref"}))]
+    }
+    results = c.receive_messages()
+    assert results == []
+    attrs = c.sqs.send_message.call_args.kwargs["MessageAttributes"]
+    assert attrs["failureReason"]["StringValue"] == "validation-error"
+
+
+def test_oversized_fast_fails(sqs_client_with_dlq):
+    c = sqs_client_with_dlq
+    big = "x" * (262_144 + 1)
+    c.sqs.receive_message.return_value = {"Messages": [_raw(big)]}
+    results = c.receive_messages()
+    assert results == []
+    attrs = c.sqs.send_message.call_args.kwargs["MessageAttributes"]
+    assert attrs["failureReason"]["StringValue"] == "oversized"
+
+
+def test_poison_left_on_queue_when_no_dlq_configured(sqs_client):
+    # sqs_client fixture has no dlq_url
+    sqs_client.sqs.receive_message.return_value = {"Messages": [_raw("{not json")]}
+    results = sqs_client.receive_messages()
+    assert results == []
+    sqs_client.sqs.send_message.assert_not_called()
+    sqs_client.sqs.delete_message.assert_not_called()
+
+
+def test_send_ok_delete_fail_does_not_raise(sqs_client_with_dlq):
+    c = sqs_client_with_dlq
+    c.sqs.receive_message.return_value = {"Messages": [_raw("{not json")]}
+    c.sqs.delete_message.side_effect = ClientError(
+        {"Error": {"Code": "X", "Message": "boom"}}, "DeleteMessage"
+    )
+    # Must not raise — message stays on source and will be reprocessed.
+    assert c.receive_messages() == []
