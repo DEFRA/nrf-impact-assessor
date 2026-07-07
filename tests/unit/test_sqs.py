@@ -153,11 +153,9 @@ def test_sns_inner_decode_failure_fast_fails(sqs_client_with_dlq):
 
 def test_validation_error_fast_fails(sqs_client_with_dlq):
     c = sqs_client_with_dlq
-    # `reference` must match ^NRF-\d{6}$; a bad value is a real ValidationError.
-    # (Most keys are optional on ImpactAssessmentJob, so an arbitrary dict would
-    # actually validate — the constraint violation is what exercises this path.)
+    # Missing the required boundaryGeojson => ValidationError => fast-fail.
     c.sqs.receive_message.return_value = {
-        "Messages": [_raw(json.dumps({"reference": "not-a-valid-ref"}))]
+        "Messages": [_raw(json.dumps({"not": "a job"}))]
     }
     results = c.receive_messages()
     assert results == []

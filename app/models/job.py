@@ -23,14 +23,13 @@ class ImpactAssessmentJob(BaseModel):
     """SQS message schema for impact assessment jobs.
 
     Quote payload from nrf-backend, delivered via SNS → SQS. `boundaryGeojson`
-    is required; all other fields are optional so malformed messages can still
-    be parsed for logging/DLQ.
+    is required — a message without it can never be assessed, so it must fail
+    validation and fast-fail to the DLQ rather than parse into an all-None job.
+    All other fields are optional.
     """
 
     reference: str | None = Field(default=None, pattern=r"^NRF-\d{6}$")
-    boundary_geojson: BoundaryGeojson | None = Field(
-        default=None, alias="boundaryGeojson"
-    )
+    boundary_geojson: BoundaryGeojson = Field(alias="boundaryGeojson")
     development_types: list[str] | None = Field(default=None, alias="developmentTypes")
     residential_building_count: int | None = Field(
         default=None, ge=1, alias="residentialBuildingCount"

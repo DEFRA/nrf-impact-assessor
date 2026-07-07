@@ -57,6 +57,15 @@ def test_quote_payload_invalid_reference():
         ImpactAssessmentJob(reference="INVALID-REF")
 
 
+def test_boundary_geojson_is_required():
+    """A payload omitting boundaryGeojson is a poison message: it can never be
+    assessed, so it must fail validation (and thus fast-fail to the DLQ) rather
+    than validate into an all-None job that only fails deep in the orchestrator.
+    """
+    with pytest.raises(ValidationError):
+        ImpactAssessmentJob.model_validate({"reference": "NRF-000001"})
+
+
 def test_quote_payload_json_roundtrip():
     """JSON serialization/deserialization preserves quote fields."""
     payload = {
