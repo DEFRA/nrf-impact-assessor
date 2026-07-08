@@ -3,6 +3,7 @@
 import hashlib
 import logging
 from collections.abc import Callable
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
@@ -57,9 +58,12 @@ def get_dlq_config() -> DlqAdminConfig:
     return DlqAdminConfig()
 
 
+DlqConfig = Annotated[DlqAdminConfig, Depends(get_dlq_config)]
+
+
 def dlq_auth(
-    x_dlq_token: str | None = Header(default=None),
-    cfg: DlqAdminConfig = Depends(get_dlq_config),
+    cfg: DlqConfig,
+    x_dlq_token: Annotated[str | None, Header()] = None,
 ) -> str:
     """Validate the DLQ admin token; return a short non-reversible fingerprint."""
     if not cfg.auth_token or x_dlq_token != cfg.auth_token:
@@ -68,6 +72,9 @@ def dlq_auth(
             detail={"code": "unauthorized", "message": "invalid or missing token"},
         )
     return hashlib.sha256(x_dlq_token.encode("utf-8")).hexdigest()[:12]
+
+
+AuthFingerprint = Annotated[str, Depends(dlq_auth)]
 
 
 def _handle(fn: Callable):
@@ -93,7 +100,7 @@ def _audit(action: str, fingerprint: str, **fields) -> None:
 
 
 @router.get("/admin/dlq")
-def get_stats(fp: str = Depends(dlq_auth)) -> DlqStats:
+def get_stats(fp: AuthFingerprint) -> DlqStats:
     stats = _handle(lambda: _get_service().stats())
     metrics.counter("dlq.depth", stats.available)
     metrics.counter("dlq.in_flight", stats.in_flight)
@@ -102,10 +109,10 @@ def get_stats(fp: str = Depends(dlq_auth)) -> DlqStats:
 
 @router.get("/admin/dlq/messages")
 def peek(
-    limit: int = Query(default=10, ge=1, le=10),
-    hold_seconds: int | None = Query(default=None, ge=10, le=300),
-    fp: str = Depends(dlq_auth),
-    cfg: DlqAdminConfig = Depends(get_dlq_config),
+    fp: AuthFingerprint,
+    cfg: DlqConfig,
+    limit: Annotated[int, Query(ge=1, le=10)] = 10,
+    hold_seconds: Annotated[int | None, Query(ge=10, le=300)] = None,
 ) -> DlqPeekResult:
     hs = hold_seconds if hold_seconds is not None else cfg.peek_hold_seconds
     result = _handle(lambda: _get_service().peek(limit, hs))
@@ -117,7 +124,7 @@ def peek(
     "/admin/dlq/redrive",
     responses={400: {"description": "confirm must be true"}},
 )
-def redrive_all(body: RedriveAllRequest, fp: str = Depends(dlq_auth)) -> RedriveTask:
+def redrive_all(body: RedriveAllRequest, fp: AuthFingerprint) -> RedriveTask:
     if body.confirm is not True:
         raise HTTPException(
             status_code=400,
@@ -137,12 +144,12 @@ def redrive_all(body: RedriveAllRequest, fp: str = Depends(dlq_auth)) -> Redrive
 
 
 @router.get("/admin/dlq/redrive")
-def list_tasks(fp: str = Depends(dlq_auth)) -> list[RedriveTask]:
+def list_tasks(fp: AuthFingerprint) -> list[RedriveTask]:
     return _handle(lambda: _get_service().list_tasks())
 
 
 @router.delete("/admin/dlq/redrive/{task_handle}")
-def cancel_task(task_handle: str, fp: str = Depends(dlq_auth)) -> RedriveTask:
+def cancel_task(task_handle: str, fp: AuthFingerprint) -> RedriveTask:
     task = _handle(lambda: _get_service().cancel_task(task_handle))
     metrics.counter("dlq.redrive_cancel", 1)
     _audit("cancel_task", fp, task_handle=task_handle)
@@ -150,7 +157,7 @@ def cancel_task(task_handle: str, fp: str = Depends(dlq_auth)) -> RedriveTask:
 
 
 @router.post("/admin/dlq/messages/redrive")
-def redrive_message(body: RedriveMessageRequest, fp: str = Depends(dlq_auth)) -> dict:
+def redrive_message(body: RedriveMessageRequest, fp: AuthFingerprint) -> dict:
     body_sha256 = _handle(
         lambda: _get_service().redrive_message(body.receipt_handle, body.body)
     )
