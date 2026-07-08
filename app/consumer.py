@@ -162,18 +162,8 @@ class SqsConsumer:
 
         while self.running:
             try:
-                if not self._gate.ok():
-                    if self._gate_open:
-                        self._gate_open = False
-                        logger.warning("Readiness gate closed; pausing SQS polling")
-                    metrics.counter("consumer.readiness_gate.closed", 1)
-                    time.sleep(self._backoff.next_delay())
+                if not self._gate_allows_polling():
                     continue
-
-                if not self._gate_open:
-                    self._gate_open = True
-                    self._backoff.reset()
-                    logger.info("Readiness gate reopened; resuming SQS polling")
 
                 results = self.sqs_client.receive_messages()
                 self._backoff.reset()
@@ -184,30 +174,7 @@ class SqsConsumer:
                 logger.info(f"SQS poll received {len(results)} message(s)")
 
                 for job_message, receipt_handle in results:
-                    job_id = job_message.reference or "unknown"
-                    logger.info(f"Processing job: {job_id}")
-                    try:
-                        _with_visibility_heartbeat(
-                            lambda msg=job_message: self.orchestrator.process_job(
-                                msg, AssessmentType.NUTRIENT
-                            ),
-                            self.sqs_client,
-                            receipt_handle,
-                            self._visibility_timeout,
-                        )
-                    except Exception:
-                        # Leave the message on the queue: SQS redelivers it and,
-                        # after maxReceiveCount, moves it to the DLQ. Deleting here
-                        # would silently drop a job that did not complete.
-                        logger.exception(
-                            f"Job {job_id} failed; leaving message on queue "
-                            "for redelivery / DLQ"
-                        )
-                        continue
-                    self.sqs_client.delete_message(receipt_handle)
-                    logger.info(
-                        f"Job {job_id} processing complete, message deleted from queue"
-                    )
+                    self._process_message(job_message, receipt_handle)
 
             except KeyboardInterrupt:
                 logger.info("Received keyboard interrupt, shutting down...")
@@ -218,6 +185,53 @@ class SqsConsumer:
                 time.sleep(self._backoff.next_delay())
 
         logger.info("SQS consumer stopped")
+
+    def _gate_allows_polling(self) -> bool:
+        """Return True if the readiness gate is open, else pause and return False.
+
+        When closed, records a metric and sleeps for the current backoff delay so
+        the caller can `continue` without pulling messages. Logs the open/close
+        transition once and resets the backoff on reopen.
+        """
+        if not self._gate.ok():
+            if self._gate_open:
+                self._gate_open = False
+                logger.warning("Readiness gate closed; pausing SQS polling")
+            metrics.counter("consumer.readiness_gate.closed", 1)
+            time.sleep(self._backoff.next_delay())
+            return False
+
+        if not self._gate_open:
+            self._gate_open = True
+            self._backoff.reset()
+            logger.info("Readiness gate reopened; resuming SQS polling")
+        return True
+
+    def _process_message(self, job_message, receipt_handle) -> None:
+        """Process a single SQS message, deleting it only on success.
+
+        On failure the message is left on the queue: SQS redelivers it and, after
+        maxReceiveCount, moves it to the DLQ. Deleting here would silently drop a
+        job that did not complete.
+        """
+        job_id = job_message.reference or "unknown"
+        logger.info(f"Processing job: {job_id}")
+        try:
+            _with_visibility_heartbeat(
+                lambda msg=job_message: self.orchestrator.process_job(
+                    msg, AssessmentType.NUTRIENT
+                ),
+                self.sqs_client,
+                receipt_handle,
+                self._visibility_timeout,
+            )
+        except Exception:
+            logger.exception(
+                f"Job {job_id} failed; leaving message on queue for redelivery / DLQ"
+            )
+            return
+        self.sqs_client.delete_message(receipt_handle)
+        logger.info(f"Job {job_id} processing complete, message deleted from queue")
 
     def _handle_sigterm(self, _signum, _frame):
         """Handle SIGTERM for graceful ECS task shutdown."""
