@@ -113,7 +113,10 @@ def peek(
     return result
 
 
-@router.post("/admin/dlq/redrive")
+@router.post(
+    "/admin/dlq/redrive",
+    responses={400: {"description": "confirm must be true"}},
+)
 def redrive_all(body: RedriveAllRequest, fp: str = Depends(dlq_auth)) -> RedriveTask:
     if body.confirm is not True:
         raise HTTPException(

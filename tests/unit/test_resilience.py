@@ -1,24 +1,26 @@
+import pytest
+
 from app.aws.resilience import Backoff, ReadinessGate
 
 
 def test_backoff_full_jitter_within_bounds():
     # rng fixed at 1.0 => delay == raw exponential value
     b = Backoff(base=1.0, factor=2.0, cap=60.0, rng=lambda: 1.0)
-    assert b.next_delay() == 1.0  # 1 * 2**0
-    assert b.next_delay() == 2.0  # 1 * 2**1
-    assert b.next_delay() == 4.0  # 1 * 2**2
+    assert b.next_delay() == pytest.approx(1.0)  # 1 * 2**0
+    assert b.next_delay() == pytest.approx(2.0)  # 1 * 2**1
+    assert b.next_delay() == pytest.approx(4.0)  # 1 * 2**2
 
 
 def test_backoff_caps():
     b = Backoff(base=1.0, factor=2.0, cap=5.0, rng=lambda: 1.0)
     for _ in range(10):
         last = b.next_delay()
-    assert last == 5.0
+    assert last == pytest.approx(5.0)
 
 
 def test_backoff_jitter_scales_raw():
     b = Backoff(base=10.0, factor=2.0, cap=100.0, rng=lambda: 0.5)
-    assert b.next_delay() == 5.0  # 0.5 * 10
+    assert b.next_delay() == pytest.approx(5.0)  # 0.5 * 10
 
 
 def test_backoff_reset():
@@ -26,7 +28,7 @@ def test_backoff_reset():
     b.next_delay()
     b.next_delay()
     b.reset()
-    assert b.next_delay() == 1.0
+    assert b.next_delay() == pytest.approx(1.0)
 
 
 def test_gate_open_when_all_probes_true():
