@@ -117,6 +117,11 @@ class SQSClient:
 
         Call periodically during long-running jobs to prevent SQS from
         re-delivering the message before processing completes.
+
+        Never raises: the heartbeat daemon thread calls this, and a raise would
+        kill the thread and silently stop visibility extensions (risking
+        duplicate delivery mid-job). Failures are ERROR level so they are
+        searchable in OpenSearch.
         """
         try:
             self.sqs.change_message_visibility(
@@ -124,8 +129,8 @@ class SQSClient:
                 ReceiptHandle=receipt_handle,
                 VisibilityTimeout=visibility_timeout,
             )
-        except ClientError as e:
-            logger.warning(f"Failed to extend message visibility timeout: {e}")
+        except Exception as e:
+            logger.error(f"Failed to extend message visibility timeout: {e}")
 
     def delete_message(self, receipt_handle: str) -> None:
         """Delete message from queue after successful processing.
