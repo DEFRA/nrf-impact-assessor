@@ -30,23 +30,28 @@ def test_propagates_empty_reference_data(mocker):
         "app.orchestrator.assert_reference_data_present",
         side_effect=EmptyReferenceDataError("wwtw_catchments is empty"),
     )
+    orchestrator = _orchestrator()
+    job = _job()
     with pytest.raises(EmptyReferenceDataError):
-        _orchestrator().process_job(_job(), AssessmentType.NUTRIENT)
+        orchestrator.process_job(job, AssessmentType.NUTRIENT)
 
 
 def test_raises_when_geometry_missing(mocker):
     mocker.patch("app.orchestrator.assert_reference_data_present")
     job = _job()
     job.boundary_geojson = None
+    orchestrator = _orchestrator()
     with pytest.raises(JobProcessingError):
-        _orchestrator().process_job(job, AssessmentType.NUTRIENT)
+        orchestrator.process_job(job, AssessmentType.NUTRIENT)
 
 
 def test_raises_when_assessment_produces_no_results(mocker):
     mocker.patch("app.orchestrator.assert_reference_data_present")
     mocker.patch.object(JobOrchestrator, "_process_inline_geometry", return_value={})
+    orchestrator = _orchestrator()
+    job = _job()
     with pytest.raises(JobProcessingError):
-        _orchestrator().process_job(_job(), AssessmentType.NUTRIENT)
+        orchestrator.process_job(job, AssessmentType.NUTRIENT)
 
 
 def test_returns_results_on_success(mocker):
