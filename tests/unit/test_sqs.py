@@ -79,6 +79,33 @@ def _receive_one(client: SQSClient, body: dict):
     return job
 
 
+class TestInvalidJson:
+    def test_non_json_body_is_skipped_without_raising(self, sqs_client):
+        """A body that isn't JSON is logged and left on the queue, not raised."""
+        sqs_client.sqs.receive_message.return_value = {
+            "Messages": [
+                {"ReceiptHandle": "rh-1", "Body": "{not json", "MessageId": "m-1"}
+            ]
+        }
+        assert sqs_client.receive_messages() == []
+        sqs_client.sqs.delete_message.assert_not_called()
+
+    def test_broken_sns_inner_message_is_skipped_without_raising(self, sqs_client):
+        """An SNS envelope whose inner Message isn't JSON is logged and skipped."""
+        envelope = {"Type": "Notification", "Message": "{broken"}
+        sqs_client.sqs.receive_message.return_value = {
+            "Messages": [
+                {
+                    "ReceiptHandle": "rh-1",
+                    "Body": json.dumps(envelope),
+                    "MessageId": "m-1",
+                }
+            ]
+        }
+        assert sqs_client.receive_messages() == []
+        sqs_client.sqs.delete_message.assert_not_called()
+
+
 class TestTracePropagation:
     def test_trace_id_extracted_from_sns_message_body(self, sqs_client):
         """SNS-wrapped message: body traceId survives unwrap -> job.trace_id."""

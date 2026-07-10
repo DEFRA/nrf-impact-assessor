@@ -73,12 +73,28 @@ class SQSClient:
                     extra={"message_id": raw_message.get("MessageId")},
                 )
                 continue
-            body = json.loads(raw_body)
+            try:
+                body = json.loads(raw_body)
+            except json.JSONDecodeError as e:
+                logger.error(
+                    f"Message body is not valid JSON: {e}",
+                    extra={"message_id": raw_message.get("MessageId")},
+                )
+                # Don't delete - let visibility timeout expire
+                # Message will retry and eventually move to DLQ after maxReceiveCount
+                continue
 
             # Unwrap SNS envelope if present
             if body.get("Type") == "Notification" and "Message" in body:
                 logger.debug("Unwrapping SNS envelope from SQS message")
-                body = json.loads(body["Message"])
+                try:
+                    body = json.loads(body["Message"])
+                except json.JSONDecodeError as e:
+                    logger.error(
+                        f"SNS inner Message is not valid JSON: {e}",
+                        extra={"message_id": raw_message.get("MessageId")},
+                    )
+                    continue
 
             try:
                 job_message = ImpactAssessmentJob.model_validate(body)
