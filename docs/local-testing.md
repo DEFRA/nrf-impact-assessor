@@ -48,7 +48,7 @@ make sqs-depth                                # visible + in-flight counts
 make sqs-purge                                # clear the queue
 ```
 
-The default payload lives at `scripts/sample_quote_payload.json` and matches the quote schema the real `nrf-backend` publishes: `reference` (`NRF-######`), `boundaryGeojson`, `developmentTypes`, `residentialBuildingCount`, `email`, and an `edps` list used by the callback.
+The default payload lives at `scripts/sample_quote_payload.json` and matches the quote schema the real `nrf-backend` publishes: `reference` (`NRF-######`), `boundaryGeojson`, `housingUnits`, `email`, and an `edps` list used by the callback.
 
 > The LocalStack gateway is remapped to host port `4568` to avoid clashing with `nrf-backend`'s own LocalStack. Override with `make sns-publish LOCALSTACK_URL=http://localhost:4566` if needed.
 

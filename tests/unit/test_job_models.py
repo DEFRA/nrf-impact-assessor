@@ -35,7 +35,7 @@ def test_quote_payload_from_camel_case():
         "reference": "NRF-000001",
         "boundaryGeojson": SAMPLE_GEOJSON,
         "developmentTypes": ["housing"],
-        "residentialBuildingCount": 25,
+        "housingUnits": 25,
         "wasteWaterTreatmentWorksId": "123",
     }
 
@@ -63,7 +63,7 @@ def test_quote_payload_json_roundtrip():
         "reference": "NRF-000001",
         "boundaryGeojson": SAMPLE_GEOJSON,
         "developmentTypes": ["housing"],
-        "residentialBuildingCount": 25,
+        "housingUnits": 25,
     }
 
     job = ImpactAssessmentJob.model_validate(payload)

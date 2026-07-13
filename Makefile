@@ -276,7 +276,7 @@ BACKEND_URL ?= http://localhost:3001
 sns-publish-real: ## POST a quote to nrf-backend, then publish to SNS using the real reference
 	@ref=$$(curl -s -X POST $(BACKEND_URL)/quotes \
 		-H "Content-Type: application/json" \
-		-d '{"boundaryEntryType":"draw","developmentTypes":["housing"],"residentialBuildingCount":25,"email":"developer@example.com"}' \
+		-d '{"boundaryEntryType":"draw","developmentTypes":["housing"],"housingUnits":25,"email":"developer@example.com"}' \
 		| python3 -c "import sys, json; print(json.load(sys.stdin)['reference'])"); \
 	if [ -z "$$ref" ]; then echo "Failed to create quote on $(BACKEND_URL)"; exit 1; fi; \
 	echo "Created quote: $$ref"; \

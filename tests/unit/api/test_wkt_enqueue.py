@@ -104,7 +104,7 @@ class TestWktEnqueueEndpoint:
         assert message["reference"].startswith("NRF-")
         assert len(message["reference"]) == 10  # NRF-######
         assert message["developmentTypes"] == ["house"]
-        assert message["residentialBuildingCount"] == 10
+        assert message["housingUnits"] == 10
 
     def test_job_id_matches_reference_in_message(self, mock_boto3):
         response = client.post("/test/enqueue", json=_VALID_BODY)

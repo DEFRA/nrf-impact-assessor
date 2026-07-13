@@ -36,7 +36,7 @@ _INNER_JOB = {
         ],
     },
     "developmentTypes": ["housing"],
-    "residentialBuildingCount": 25,
+    "housingUnits": 25,
 }
 
 
