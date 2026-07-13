@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- Alembic revision: a1c4f9d02b7e -->
+
+    <!-- DM-4 short-term rollback: an explicit "active version" pointer per
+         reference table, since the previous "latest version always wins"
+         model can't express "roll back to the version before latest" without
+         one. See docs/data-management.md "Rollback". -->
+
+    <changeSet id="05-data-active-version" author="nrf">
+        <createTable tableName="data_active_version" schemaName="public">
+            <column name="table_name" type="varchar">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="active_version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <rollback>
+            <dropTable tableName="data_active_version" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="05-data-rollback-event" author="nrf">
+        <createTable tableName="data_rollback_event" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="table_name" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="from_version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="to_version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="rolled_back_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <rollback>
+            <dropTable tableName="data_rollback_event" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="05-data-active-version-grants" author="nrf">
+        <sql splitStatements="false">
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nrf_impact_assessor') THEN
+                    GRANT SELECT, INSERT, UPDATE ON public.data_active_version TO nrf_impact_assessor;
+                    GRANT SELECT, INSERT ON public.data_rollback_event TO nrf_impact_assessor;
+                END IF;
+            END $$;
+        </sql>
+        <rollback>
+            <sql splitStatements="false">
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nrf_impact_assessor') THEN
+                        REVOKE SELECT, INSERT, UPDATE ON public.data_active_version FROM nrf_impact_assessor;
+                        REVOKE SELECT, INSERT ON public.data_rollback_event FROM nrf_impact_assessor;
+                    END IF;
+                END $$;
+            </sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

@@ -12,7 +12,7 @@ import time
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from app.calculators import (
     apply_buffer,
@@ -21,6 +21,7 @@ from app.calculators import (
     calculate_wastewater_load,
 )
 from app.config import CONSTANTS, AssessmentConfig, DebugConfig, RequiredColumns
+from app.data_sync.active_version import get_active_version
 from app.debug import save_debug_gdf
 from app.models.db import (
     LookupTable,
@@ -159,46 +160,35 @@ class NutrientAssessment:
         return rlb_gdf
 
     def _resolve_versions(self) -> None:
-        """Fetch all required layer versions in two queries and populate the cache.
+        """Fetch all required layer versions and populate the cache.
 
-        Replaces five sequential MAX(version) round-trips with:
-          1. One GROUP BY query covering all four spatial layer types
-          2. One query for the coefficient layer
-        Results are stored in self._version_cache for the lifetime of this instance.
+        Reads the active-version pointer (app/data_sync/active_version.py) so
+        a rollback (DM-4) changes what an assessment reads without needing a
+        new reload. Falls back to MAX(version) per table when no pointer row
+        exists yet.
         """
         if self._version_cache:
             return  # already populated for this instance
 
         with self.repository.session() as session:
             for model in (WwtwCatchments, LpaBoundaries, NnCatchments, Subcatchments):
-                row = session.execute(
-                    text(
-                        f"SELECT MAX(version) FROM public.{model.__tablename__}"  # noqa: S608
-                    )
-                ).fetchone()
-                v = row[0] if row and row[0] is not None else 1
-                self._version_cache[model.__tablename__] = v
-
-            row = session.execute(
-                text("SELECT MAX(version) FROM public.coefficient_layer")
-            ).fetchone()
-            v = row[0] if row and row[0] is not None else 1
-            self._version_cache["coefficient_layer"] = v
+                self._version_cache[model.__tablename__] = get_active_version(
+                    session, model.__tablename__
+                )
+            self._version_cache["coefficient_layer"] = get_active_version(
+                session, "coefficient_layer"
+            )
 
     def _load_lookup(self, name: str) -> pd.DataFrame:
         """Return lookup table data as a DataFrame, using the process-level cache.
 
-        The cache is keyed by (name, version) so a new version automatically
-        causes a fresh load while the old version remains available if needed.
-        Lookup data is static once written, so there is no TTL.
+        The cache is keyed by (name, version) so a new active version (from a
+        reload or a rollback) automatically causes a fresh load while the old
+        version remains available if needed. Lookup data is static once
+        written, so there is no TTL.
         """
-        # Resolve the latest version first (uses the batched version cache)
         with self.repository.session() as session:
-            row = session.execute(
-                text("SELECT MAX(version) FROM public.lookup_table WHERE name = :name"),
-                {"name": name},
-            ).fetchone()
-        version = row[0] if row and row[0] is not None else 1
+            version = get_active_version(session, "lookup_table")
 
         cache_key = (name, version)
         with _lookup_cache_lock:
@@ -210,7 +200,11 @@ class NutrientAssessment:
             .where(LookupTable.name == name, LookupTable.version == version)
             .limit(1)
         )
-        obj = self.repository.execute_query(stmt, as_gdf=False)[0]
+        rows = self.repository.execute_query(stmt, as_gdf=False)
+        if not rows:
+            msg = f"no lookup_table row for name={name!r} at version={version}"
+            raise ValueError(msg)
+        obj = rows[0]
         df = pd.DataFrame(obj.data)
 
         with _lookup_cache_lock:

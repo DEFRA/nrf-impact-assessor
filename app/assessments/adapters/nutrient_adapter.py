@@ -9,6 +9,7 @@ import pandas as pd
 from app.config import RequiredColumns
 from app.models.domain import (
     CatchmentImpact,
+    DataProvenance,
     Development,
     ImpactAssessmentResult,
     LandUseImpact,
@@ -18,12 +19,15 @@ from app.models.domain import (
 )
 
 
-def to_domain_models(dataframes: dict) -> dict:
+def to_domain_models(
+    dataframes: dict, provenance: DataProvenance | None = None
+) -> dict:
     """Convert nutrient DataFrames to Pydantic models.
 
     Args:
         dataframes: Dict from nutrient.run() with keys:
             - "impact_summary": DataFrame with all impact calculations
+        provenance: Reference-data lineage to stamp on every result (DM-3).
 
     Returns:
         Dict with typed domain models:
@@ -33,7 +37,7 @@ def to_domain_models(dataframes: dict) -> dict:
     """
     impact_df = dataframes["impact_summary"]
 
-    results = [_row_to_result(row) for _, row in impact_df.iterrows()]
+    results = [_row_to_result(row, provenance) for _, row in impact_df.iterrows()]
 
     return {"assessment_results": results}
 
@@ -95,7 +99,9 @@ def _build_catchment_impacts(row: pd.Series) -> list[CatchmentImpact]:
     ]
 
 
-def _row_to_result(row: pd.Series) -> ImpactAssessmentResult:
+def _row_to_result(
+    row: pd.Series, provenance: DataProvenance | None = None
+) -> ImpactAssessmentResult:
     """Convert a single DataFrame row to ImpactAssessmentResult."""
     development = Development(
         id=str(row["id"]),
@@ -136,4 +142,5 @@ def _row_to_result(row: pd.Series) -> ImpactAssessmentResult:
         wastewater=_build_wastewater(row),
         total=total,
         catchment_impacts=_build_catchment_impacts(row),
+        provenance=provenance,
     )

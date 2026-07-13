@@ -8,9 +8,24 @@ Includes models for:
 - GCN (Great Crested Newt) impact assessment
 """
 
+from uuid import UUID
+
 from pydantic import BaseModel, ConfigDict, Field
 
 _AREA_TYPE_DESC = "'RLB' or 'Buffer'"
+
+
+class DataProvenance(BaseModel):
+    """Reference-data lineage captured at assessment time."""
+
+    model_config = ConfigDict(frozen=True)
+
+    data_version: str | None = Field(
+        default=None, description="Active reference-data manifest version"
+    )
+    data_sync_run_id: UUID | None = Field(
+        default=None, description="DataSyncRun.id that applied the active version"
+    )
 
 
 class Development(BaseModel):
@@ -242,6 +257,10 @@ class ImpactAssessmentResult(BaseModel):
     catchment_impacts: list[CatchmentImpact] = Field(
         default_factory=list,
         description="Per-catchment EDP entries; empty if outside all NN catchments",
+    )
+    provenance: DataProvenance | None = Field(
+        default=None,
+        description="Reference-data version this result was computed against",
     )
 
     def is_within_nn_catchment(self) -> bool:

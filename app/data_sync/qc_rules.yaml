@@ -1,0 +1,95 @@
+row_count_floor_pct: 90
+
+tables:
+  coefficient_layer:
+    key:
+      columns: ["crome_id"]
+      source: column
+      unique: true
+    non_null_columns: ["land_use_cat", "nn_catchment", "subcatchment"]
+    coefficient_ranges:
+      lu_curr_n_coeff: {min: 0, max: 50}
+      lu_curr_p_coeff: {min: 0, max: 5}
+      n_resi_coeff: {min: 0, max: 50}
+      p_resi_coeff: {min: 0, max: 5}
+
+  lookup_table:
+    key:
+      columns: ["name", "version"]
+      source: column
+      unique: true
+    lookup_rows:
+      wwtw_lookup:
+        json_key: "wwtw_code"
+      rates_lookup:
+        json_key: "nn_catchment"
+
+  wwtw_catchments:
+    key:
+      columns: ["attributes.WwTw_ID"]
+      source: json
+      unique: true
+    geometry: {expected_type: Polygon, expected_srid: 27700}
+
+  lpa_boundaries:
+    key:
+      columns: ["attributes.NAME"]
+      source: json
+      unique: false
+    geometry: {expected_type: MultiPolygon, expected_srid: 27700}
+
+  nn_catchments:
+    key:
+      columns: ["attributes.OID"]
+      source: json
+      unique: true
+    non_null_json_columns: ["attributes.N2K_Site_N"]
+    geometry: {expected_type: Polygon, expected_srid: 27700}
+
+  subcatchments:
+    key:
+      columns: ["attributes.OPCAT_NAME"]
+      source: json
+      unique: false
+    geometry: {expected_type: Polygon, expected_srid: 27700}
+
+  gcn_risk_zones:
+    key:
+      columns: ["attributes.RZ"]
+      source: json
+      unique: false
+    allowed_values:
+      "attributes.RZ": ["Red", "Amber", "Green"]
+    geometry: {expected_type: MultiPolygon, expected_srid: 27700}
+
+  gcn_ponds:
+    geometry: {expected_type: MultiPolygon, expected_srid: 27700}
+
+  edp_edges:
+    geometry: {expected_type: MultiPolygon, expected_srid: 27700}
+
+  edp_boundary_layer:
+    geometry: {expected_type: Polygon, expected_srid: 27700}
+
+referential_checks:
+  - name: rates_lookup_nn_catchment
+    from: {table: lookup_table, lookup_row: rates_lookup, json_key: nn_catchment}
+    to: {table: nn_catchments, json_key: "attributes.N2K_Site_N"}
+
+  - name: coefficient_layer_nn_catchment
+    from: {table: coefficient_layer, column: nn_catchment}
+    to: {table: nn_catchments, json_key: "attributes.N2K_Site_N"}
+
+  - name: coefficient_layer_subcatchment
+    from: {table: coefficient_layer, column: subcatchment}
+    to: {table: subcatchments, json_key: "attributes.OPCAT_NAME"}
+
+  - name: wwtw_lookup_wwtw_code
+    from: {table: lookup_table, lookup_row: wwtw_lookup, json_key: wwtw_code}
+    to: {table: wwtw_catchments, json_key: "attributes.WwTw_ID"}
+    numeric_coercion: true
+
+  - name: wwtw_lookup_subcatchment
+    from: {table: lookup_table, lookup_row: wwtw_lookup, json_key: wwtw_subcatchment}
+    to: {table: subcatchments, json_key: "attributes.OPCAT_NAME"}
+    allow_null_from: true

@@ -235,6 +235,40 @@ class DataLoadHistory(Base):
     etag: Mapped[str] = mapped_column(String, nullable=False)
     data_version: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
+    status_detail: Mapped[str | None] = mapped_column(String, nullable=True)
     loaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class DataActiveVersion(Base):
+    """Points at the version of each reference table that reads should use.
+
+    Reads fall back to MAX(version) when no row exists here (see
+    app/data_sync/active_version.py), so this table only needs a row once a
+    reload or rollback has actually run.
+    """
+
+    __tablename__ = "data_active_version"
+    __table_args__ = {"schema": "public"}
+
+    table_name: Mapped[str] = mapped_column(String, primary_key=True)
+    active_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class DataRollbackEvent(Base):
+    """Audit row for one table's active-version rollback."""
+
+    __tablename__ = "data_rollback_event"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    table_name: Mapped[str] = mapped_column(String, nullable=False)
+    from_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    to_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    rolled_back_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
