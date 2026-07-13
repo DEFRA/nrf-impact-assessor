@@ -23,6 +23,7 @@ dependencies = [
     "pydantic-settings==2.14.2",
     "pymongo[aws,encryption,snappy,zstd]==4.17.0",
     "python-multipart>=0.0.32",
+    "pyyaml>=6.0.3",
     "sqlalchemy>=2.0.51",
     "typer>=0.26.8",
     "uvicorn==0.51.0",

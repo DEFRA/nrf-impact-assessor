@@ -12,6 +12,7 @@ from app.clients.backend_client import BackendClient
 from app.clients.payload_mapper import build_quote_patch_payload
 from app.common.tracing import ctx_trace_id
 from app.config import AWSConfig
+from app.data_sync.service import resolve_active_provenance
 from app.models.enums import AssessmentType
 from app.models.job import ImpactAssessmentJob
 from app.repositories.repository import Repository
@@ -246,7 +247,11 @@ class JobOrchestrator:
             return
 
         try:
-            domain_results = nutrient_adapter.to_domain_models(dataframes)
+            with self.repository.session() as session:
+                provenance = resolve_active_provenance(session)
+            domain_results = nutrient_adapter.to_domain_models(
+                dataframes, provenance=provenance
+            )
             results = domain_results["assessment_results"]
             if not results:
                 logger.error(

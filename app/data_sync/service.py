@@ -2,6 +2,7 @@
 
 import logging
 import tempfile
+from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -13,7 +14,10 @@ from sqlalchemy.orm import Session
 
 from app.aws.s3 import S3Client, S3ObjectError
 from app.config import AWSConfig, DatabaseSettings, DataSyncConfig
+from app.data_sync.active_version import set_active_version
 from app.data_sync.manifest import Manifest
+from app.data_sync.qc import parse_qc_failures
+from app.data_sync.qc_rules import load_qc_rules
 from app.data_sync.restore import old_version_cleanup_sql, restore_all_atomic
 from app.models.db import (
     CoefficientLayer,
@@ -29,6 +33,7 @@ from app.models.db import (
     Subcatchments,
     WwtwCatchments,
 )
+from app.models.domain import DataProvenance
 from app.repositories.engine import create_db_engine, get_shared_repository
 from app.repositories.repository import clear_spatial_caches
 
@@ -47,6 +52,8 @@ _REFERENCE_TABLES = [
     (GcnPonds, "gcn_ponds"),
     (EdpEdges, "edp_edges"),
 ]
+
+_MODEL_BY_TABLE_NAME = {label: model for model, label in _REFERENCE_TABLES}
 
 
 def _log_table_status(session: Session, *, context: str = "Post-sync") -> None:
@@ -113,6 +120,24 @@ def _last_applied_version(session: Session) -> str | None:
     return row[0] if row else None
 
 
+def resolve_active_provenance(session: Session) -> DataProvenance:
+    """Return the active reference-data provenance (latest successful run).
+
+    Mirrors `_last_applied_version`'s query but also carries the run id, so an
+    assessment result can be traced to the exact reference-data load. Returns an
+    all-None DataProvenance when no successful run exists.
+    """
+    row = (
+        session.query(DataSyncRun.id, DataSyncRun.data_version)
+        .filter(DataSyncRun.status == "success", DataSyncRun.data_version.isnot(None))
+        .order_by(DataSyncRun.started_at.desc())
+        .first()
+    )
+    if row is None:
+        return DataProvenance()
+    return DataProvenance(data_sync_run_id=row[0], data_version=row[1])
+
+
 def _build_s3_client(cfg: DataSyncConfig, aws: AWSConfig) -> S3Client:
     boto = boto3.client("s3", region_name=aws.region, endpoint_url=aws.endpoint_url)
     return S3Client(boto, bucket=cfg.s3_bucket, prefix=cfg.s3_prefix)
@@ -128,6 +153,11 @@ def _restore_all(
     manifest: Manifest,
 ) -> None:
     allowed = set(cfg.tables)
+    missing = allowed - set(manifest.tables)
+    if missing:
+        msg = f"manifest is missing required table(s): {', '.join(sorted(missing))}"
+        raise ValueError(msg)
+
     with tempfile.TemporaryDirectory() as tmp:
         items: list[tuple[str, Path]] = []
         audit: list[tuple[str, str, str]] = []
@@ -153,9 +183,15 @@ def _restore_all(
         # commits are not atomic: a crash between them leaves the new version
         # applied but unrecorded in DataLoadHistory. This is low severity — the
         # version scheme self-heals (the next reload supersedes it) and readers
-        # always see MAX(version) — but DataLoadHistory may under-report what is
-        # actually loaded. Treat it as an audit log, not the source of truth.
-        restore_all_atomic(db, region, items)
+        # always see MAX(version) — and any momentary under-report is repaired by
+        # _reconcile_load_history at the start of the next sync (status =
+        # 'reconciled'). Treat DataLoadHistory as an audit log, not the source of
+        # truth.
+        try:
+            restore_all_atomic(db, region, items, qc_rules=load_qc_rules())
+        except RuntimeError as exc:
+            _record_failed_history(session, run_id, manifest, str(exc))
+            raise
 
         # Only reached once the restore transaction has committed.
         for table, key, etag in audit:
@@ -172,8 +208,114 @@ def _restore_all(
             )
         session.commit()
 
+        # Point reads at the version just loaded. Must run before cleanup:
+        # cleanup only removes rows below MAX(version)-1, so ordering
+        # relative to cleanup doesn't matter for correctness, but promoting
+        # first means a crash between promotion and cleanup still leaves
+        # reads correct (cleanup is best-effort and retried next reload).
+        for table, _key, _etag in audit:
+            model = _MODEL_BY_TABLE_NAME.get(table)
+            if model is None:
+                continue
+            new_version = session.scalar(select(func.max(model.version)))
+            if new_version is not None:
+                set_active_version(session, table, new_version)
+        session.commit()
+
         # Cutover has committed; remove superseded versions (best-effort).
         _cleanup_old_versions(session, [table for table, _ in items])
+
+
+def _record_failed_history(
+    session: Session, run_id: UUID, manifest: Manifest, error: str
+) -> None:
+    """Write one `DataLoadHistory` row per manifest table after a failed
+    restore, so the audit trail shows which table/rule blocked the load even
+    though nothing was promoted (the whole batch rolled back together). A
+    table can fail multiple independent rules in one run (QC collects every
+    failure before raising) — all of them are joined into status_detail, not
+    just the last one.
+    """
+    failures = parse_qc_failures(error)
+    details_by_table: dict[str, list[str]] = defaultdict(list)
+    for f in failures:
+        details_by_table[f.table].append(f"{f.rule}: {f.detail}")
+    generic_detail = "blocked by QC failure on other table(s) in the same batch"
+    for table, key in manifest.tables.items():
+        detail = (
+            "; ".join(details_by_table[table])
+            if table in details_by_table
+            else generic_detail
+        )
+        session.add(
+            DataLoadHistory(
+                id=uuid4(),
+                run_id=run_id,
+                table_name=table,
+                s3_key=key,
+                etag="",
+                data_version=manifest.data_version,
+                status="failed",
+                status_detail=detail,
+            )
+        )
+        if table in details_by_table:
+            logger.warning("QC failure on table %s: %s", table, detail)
+    session.commit()
+
+
+def _reconcile_load_history(
+    session: Session, run_id: UUID, manifest: Manifest
+) -> list[str]:
+    """Backfill DataLoadHistory rows for any live table version that has no
+    corresponding history record.
+
+    The data load commits on the psql subprocess connection and DataLoadHistory
+    commits separately on the ORM session (see _restore_all), so a crash between
+    the two leaves the new version live but unrecorded. This detects a live
+    MAX(version) per manifest table with no matching history row at that
+    data_version and backfills a row marked `status = 'reconciled'`. Best-effort:
+    a per-table failure is logged and skipped. Returns the tables it backfilled.
+    """
+    backfilled: list[str] = []
+    model_by_name = _MODEL_BY_TABLE_NAME
+    for table in manifest.tables:
+        model = model_by_name.get(table)
+        if model is None:
+            continue
+        try:
+            live_version = session.scalar(select(func.max(model.version)))
+            if live_version is None:
+                continue
+            history_rows = session.scalar(
+                select(func.count())
+                .select_from(DataLoadHistory)
+                .where(
+                    DataLoadHistory.table_name == table,
+                    DataLoadHistory.data_version == manifest.data_version,
+                )
+            )
+            if history_rows:
+                continue
+            session.add(
+                DataLoadHistory(
+                    id=uuid4(),
+                    run_id=run_id,
+                    table_name=table,
+                    s3_key=manifest.tables[table],
+                    etag="",
+                    data_version=manifest.data_version,
+                    status="reconciled",
+                )
+            )
+            session.commit()
+            backfilled.append(table)
+        except Exception:  # noqa: BLE001
+            session.rollback()
+            logger.warning(
+                "history reconciliation failed for table %s", table, exc_info=True
+            )
+    return backfilled
 
 
 def _cleanup_old_versions(session: Session, tables: list[str]) -> None:
@@ -241,6 +383,13 @@ def _do_run(
         s3 = _build_s3_client(cfg, aws)
         run.data_version = manifest.data_version
         session.commit()
+
+        reconciled = _reconcile_load_history(session, run_id, manifest)
+        if reconciled:
+            logger.warning(
+                "reconciled missing DataLoadHistory rows for: %s",
+                ", ".join(reconciled),
+            )
 
         if not needs_reload(manifest, _last_applied_version(session), force):
             logger.info("data_version %s already applied; no-op", manifest.data_version)

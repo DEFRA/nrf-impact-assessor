@@ -12,6 +12,36 @@ from app.data_sync.restore import (
 )
 
 
+@pytest.fixture
+def psql_stdin(monkeypatch):
+    """Replace subprocess.Popen with a fake psql whose stdin captures every byte
+    restore_all_atomic writes. Yields the capture buffer so tests can assert on
+    the generated SQL without spawning a real psql process.
+    """
+    written = bytearray()
+
+    class _FakeStdin:
+        def write(self, data):
+            written.extend(data)
+
+        def close(self):
+            # No-op: the fake has no real OS pipe to flush or close; we only
+            # capture the bytes written. restore_all_atomic calls stdin.close()
+            # to signal EOF to psql, so the method must exist but do nothing.
+            pass
+
+    class _FakeProc:
+        def __init__(self):
+            self.stdin = _FakeStdin()
+            self.returncode = 0
+
+        def communicate(self):
+            return b"", b""
+
+    monkeypatch.setattr(restore_mod.subprocess, "Popen", lambda *a, **k: _FakeProc())  # noqa: ARG005
+    return written
+
+
 def test_restore_all_atomic_rejects_unsafe_table_before_psql(tmp_path, monkeypatch):
     """An unsafe name anywhere in the batch aborts before psql is spawned."""
     dump = tmp_path / "x.sql.gz"
@@ -107,16 +137,18 @@ def test_post_sql_bumps_version_inserts_and_drops_staging():
     assert "COMMIT;" not in sql
 
 
-def test_old_version_cleanup_sql_keeps_only_latest():
+def test_old_version_cleanup_sql_keeps_latest_two_versions():
     from app.data_sync.restore import old_version_cleanup_sql
 
     sql = old_version_cleanup_sql("nn_catchments")
-    assert sql == (
-        "DELETE FROM public.nn_catchments "
-        "WHERE version < (SELECT MAX(version) FROM public.nn_catchments);"
-    )
+    assert "WHERE version < (SELECT MAX(version) FROM public.nn_catchments) - 1" in sql
+
+
+def test_old_version_cleanup_sql_rejects_unsafe_identifier():
+    from app.data_sync.restore import old_version_cleanup_sql
+
     with pytest.raises(ValueError, match="identifier"):
-        old_version_cleanup_sql("nn; DROP TABLE users; --")
+        old_version_cleanup_sql("nn_catchments; DROP TABLE users; --")
 
 
 def test_rewrite_copy_line_redirects_only_the_header():
@@ -165,3 +197,79 @@ def test_stream_dump_to_staging_raises_without_copy_header(tmp_path):
     out = io.BytesIO()
     with pytest.raises(ValueError, match="COPY header"):
         _stream_dump_to_staging(out, dump, "nn_catchments", "_ds_stage_nn_catchments")
+
+
+def test_restore_all_atomic_writes_qc_block_between_stage_and_promote(
+    tmp_path, psql_stdin
+):
+    from app.data_sync.qc_rules import load_qc_rules
+
+    dump = tmp_path / "nn.sql.gz"
+    dump.write_bytes(
+        gzip.compress(b"COPY public.nn_catchments (id) FROM stdin;\nabc\n\\.\n")
+    )
+    settings = restore_mod.DatabaseSettings(iam_authentication=False)
+
+    rules = load_qc_rules()
+    restore_mod.restore_all_atomic(
+        settings=settings,
+        region="eu-west-2",
+        items=[("nn_catchments", dump)],
+        qc_rules=rules,
+    )
+
+    text = psql_stdin.decode()
+    stage_idx = text.index("CREATE TEMP TABLE _ds_stage_nn_catchments")
+    qc_idx = text.index("DO $qc$")
+    promote_idx = text.index("INSERT INTO public.nn_catchments")
+    assert stage_idx < qc_idx < promote_idx
+
+
+def test_restore_all_atomic_omits_qc_block_when_rules_not_supplied(
+    tmp_path, psql_stdin
+):
+    dump = tmp_path / "nn.sql.gz"
+    dump.write_bytes(
+        gzip.compress(b"COPY public.nn_catchments (id) FROM stdin;\nabc\n\\.\n")
+    )
+    settings = restore_mod.DatabaseSettings(iam_authentication=False)
+
+    restore_mod.restore_all_atomic(
+        settings=settings, region="eu-west-2", items=[("nn_catchments", dump)]
+    )
+    assert "DO $qc$" not in psql_stdin.decode()
+
+
+def test_restore_all_atomic_stages_all_tables_before_promoting_any(
+    tmp_path, psql_stdin
+):
+    """With 2+ tables and no qc_rules, both STAGE passes must complete before
+    either PROMOTE pass runs (pre1, stream1, pre2, stream2, post1, post2) —
+    this is the reordering introduced by the STAGE/QC/PROMOTE restructure,
+    and it applies even when qc_rules is None (today's default call shape).
+    """
+    dump1 = tmp_path / "nn.sql.gz"
+    dump1.write_bytes(
+        gzip.compress(b"COPY public.nn_catchments (id) FROM stdin;\nabc\n\\.\n")
+    )
+    dump2 = tmp_path / "lpa.sql.gz"
+    dump2.write_bytes(
+        gzip.compress(b"COPY public.lpa_boundaries (id) FROM stdin;\ndef\n\\.\n")
+    )
+    settings = restore_mod.DatabaseSettings(iam_authentication=False)
+
+    restore_mod.restore_all_atomic(
+        settings=settings,
+        region="eu-west-2",
+        items=[("nn_catchments", dump1), ("lpa_boundaries", dump2)],
+    )
+
+    text = psql_stdin.decode()
+    stage1_idx = text.index("CREATE TEMP TABLE _ds_stage_nn_catchments")
+    copy1_idx = text.index("COPY pg_temp._ds_stage_nn_catchments")
+    stage2_idx = text.index("CREATE TEMP TABLE _ds_stage_lpa_boundaries")
+    copy2_idx = text.index("COPY pg_temp._ds_stage_lpa_boundaries")
+    promote1_idx = text.index("INSERT INTO public.nn_catchments")
+    promote2_idx = text.index("INSERT INTO public.lpa_boundaries")
+
+    assert stage1_idx < copy1_idx < stage2_idx < copy2_idx < promote1_idx < promote2_idx
