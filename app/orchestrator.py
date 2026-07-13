@@ -171,7 +171,33 @@ class JobOrchestrator:
             errors.append(
                 f"Non-polygon geometries: {gdf.geometry.geom_type[bad_types].tolist()}"
             )
+        if not gdf.geometry.isna().any():
+            errors.extend(self._validate_bng_bounds(gdf))
         return errors
+
+    @staticmethod
+    def _validate_bng_bounds(gdf: gpd.GeoDataFrame) -> list[str]:
+        """Sanity-check that coordinates plausibly are EPSG:27700 metres.
+
+        A lon/lat polygon is geometrically valid but sits at the wrong scale,
+        so it intersects no reference data and the assessment fails silently.
+        Lon/lat is checked first because degree values also fall inside the
+        BNG easting/northing range.
+        """
+        minx, miny, maxx, maxy = gdf.total_bounds
+        if minx >= -180 and maxx <= 180 and miny >= -90 and maxy <= 90:
+            return [
+                f"Coordinates look like lon/lat degrees "
+                f"(bounds {minx:.6g}, {miny:.6g}, {maxx:.6g}, {maxy:.6g}); "
+                "expected EPSG:27700 (British National Grid) metres"
+            ]
+        if not (minx >= 0 and maxx <= 700_000 and miny >= 0 and maxy <= 1_300_000):
+            return [
+                f"Coordinates outside EPSG:27700 bounds "
+                f"(bounds {minx:.6g}, {miny:.6g}, {maxx:.6g}, {maxy:.6g}); "
+                "expected easting 0-700000, northing 0-1300000"
+            ]
+        return []
 
     def _inject_job_data(
         self, gdf: gpd.GeoDataFrame, job: ImpactAssessmentJob

@@ -54,8 +54,8 @@ class SQSClient:
                 VisibilityTimeout=self.visibility_timeout,
                 MessageAttributeNames=["All"],
             )
-        except ClientError as e:
-            logger.error(f"SQS receive_message failed: {e}")
+        except ClientError:
+            logger.exception("SQS receive_message failed")
             raise
 
         messages = response.get("Messages", [])
@@ -73,20 +73,36 @@ class SQSClient:
                     extra={"message_id": raw_message.get("MessageId")},
                 )
                 continue
-            body = json.loads(raw_body)
+            try:
+                body = json.loads(raw_body)
+            except json.JSONDecodeError:
+                logger.exception(
+                    "Message body is not valid JSON",
+                    extra={"message_id": raw_message.get("MessageId")},
+                )
+                # Don't delete - let visibility timeout expire
+                # Message will retry and eventually move to DLQ after maxReceiveCount
+                continue
 
             # Unwrap SNS envelope if present
             if body.get("Type") == "Notification" and "Message" in body:
                 logger.debug("Unwrapping SNS envelope from SQS message")
-                body = json.loads(body["Message"])
+                try:
+                    body = json.loads(body["Message"])
+                except json.JSONDecodeError:
+                    logger.exception(
+                        "SNS inner Message is not valid JSON",
+                        extra={"message_id": raw_message.get("MessageId")},
+                    )
+                    continue
 
             try:
                 job_message = ImpactAssessmentJob.model_validate(body)
                 logger.info(f"Received job message: {job_message.reference}")
                 results.append((job_message, receipt_handle))
-            except ValidationError as e:
-                logger.error(
-                    f"Invalid job message format: {e}",
+            except ValidationError:
+                logger.exception(
+                    "Invalid job message format",
                     extra={"message_id": raw_message.get("MessageId")},
                 )
                 # Don't delete - let visibility timeout expire
@@ -101,6 +117,11 @@ class SQSClient:
 
         Call periodically during long-running jobs to prevent SQS from
         re-delivering the message before processing completes.
+
+        Never raises: the heartbeat daemon thread calls this, and a raise would
+        kill the thread and silently stop visibility extensions (risking
+        duplicate delivery mid-job). Failures are ERROR level so they are
+        searchable in OpenSearch.
         """
         try:
             self.sqs.change_message_visibility(
@@ -108,8 +129,8 @@ class SQSClient:
                 ReceiptHandle=receipt_handle,
                 VisibilityTimeout=visibility_timeout,
             )
-        except ClientError as e:
-            logger.warning(f"Failed to extend message visibility timeout: {e}")
+        except Exception:
+            logger.exception("Failed to extend message visibility timeout")
 
     def delete_message(self, receipt_handle: str) -> None:
         """Delete message from queue after successful processing.
@@ -122,6 +143,6 @@ class SQSClient:
                 QueueUrl=self.queue_url, ReceiptHandle=receipt_handle
             )
             logger.info("Message deleted from queue")
-        except ClientError as e:
-            logger.error(f"Failed to delete message: {e}")
+        except ClientError:
+            logger.exception("Failed to delete message")
             raise

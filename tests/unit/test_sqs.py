@@ -79,6 +79,62 @@ def _receive_one(client: SQSClient, body: dict):
     return job
 
 
+class TestChangeMessageVisibility:
+    """The visibility heartbeat thread calls this method; it must never raise
+    (a raise would kill the daemon thread and stop visibility extensions) and
+    failures must be ERROR level so they are searchable in OpenSearch."""
+
+    def test_client_error_is_logged_as_error_and_not_raised(self, sqs_client, caplog):
+        from botocore.exceptions import ClientError
+
+        sqs_client.sqs.change_message_visibility.side_effect = ClientError(
+            {"Error": {"Code": "InternalError", "Message": "boom"}},
+            "ChangeMessageVisibility",
+        )
+        with caplog.at_level("ERROR", logger="app.aws.sqs"):
+            sqs_client.change_message_visibility("rh-1", 300)
+        assert any(r.levelname == "ERROR" for r in caplog.records)
+
+    def test_unexpected_error_is_logged_as_error_and_not_raised(
+        self, sqs_client, caplog
+    ):
+        from botocore.exceptions import EndpointConnectionError
+
+        sqs_client.sqs.change_message_visibility.side_effect = EndpointConnectionError(
+            endpoint_url="http://localhost:4566"
+        )
+        with caplog.at_level("ERROR", logger="app.aws.sqs"):
+            sqs_client.change_message_visibility("rh-1", 300)
+        assert any(r.levelname == "ERROR" for r in caplog.records)
+
+
+class TestInvalidJson:
+    def test_non_json_body_is_skipped_without_raising(self, sqs_client):
+        """A body that isn't JSON is logged and left on the queue, not raised."""
+        sqs_client.sqs.receive_message.return_value = {
+            "Messages": [
+                {"ReceiptHandle": "rh-1", "Body": "{not json", "MessageId": "m-1"}
+            ]
+        }
+        assert sqs_client.receive_messages() == []
+        sqs_client.sqs.delete_message.assert_not_called()
+
+    def test_broken_sns_inner_message_is_skipped_without_raising(self, sqs_client):
+        """An SNS envelope whose inner Message isn't JSON is logged and skipped."""
+        envelope = {"Type": "Notification", "Message": "{broken"}
+        sqs_client.sqs.receive_message.return_value = {
+            "Messages": [
+                {
+                    "ReceiptHandle": "rh-1",
+                    "Body": json.dumps(envelope),
+                    "MessageId": "m-1",
+                }
+            ]
+        }
+        assert sqs_client.receive_messages() == []
+        sqs_client.sqs.delete_message.assert_not_called()
+
+
 class TestTracePropagation:
     def test_trace_id_extracted_from_sns_message_body(self, sqs_client):
         """SNS-wrapped message: body traceId survives unwrap -> job.trace_id."""
