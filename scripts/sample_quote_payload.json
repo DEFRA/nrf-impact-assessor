@@ -20,6 +20,5 @@
       }
     ]
   },
-  "developmentTypes": ["housing"],
-  "residentialBuildingCount": 25
+  "housingUnits": 25
 }

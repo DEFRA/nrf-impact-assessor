@@ -33,7 +33,7 @@ class ImpactAssessmentJob(BaseModel):
     )
     development_types: list[str] | None = Field(default=None, alias="developmentTypes")
     residential_building_count: int | None = Field(
-        default=None, ge=1, alias="residentialBuildingCount"
+        default=None, ge=1, alias="housingUnits"
     )
     people_count: int | None = Field(default=None, ge=1, alias="peopleCount")
     waste_water_treatment_works_id: str | None = Field(
@@ -67,7 +67,7 @@ class ImpactAssessmentJob(BaseModel):
                     ],
                 },
                 "developmentTypes": ["housing"],
-                "residentialBuildingCount": 25,
+                "housingUnits": 25,
             }
         },
     }
