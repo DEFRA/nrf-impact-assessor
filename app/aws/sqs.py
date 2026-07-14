@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 
 import boto3
 from botocore.exceptions import ClientError
@@ -12,6 +13,38 @@ from app.models.job import ImpactAssessmentJob
 logger = logging.getLogger(__name__)
 
 _max_body_bytes = 262_144  # SQS hard limit is 256 KiB
+
+# EPSG codes the assessment pipeline can handle. Mirrors
+# app.boundary.validation.SUPPORTED_CRS (kept local so the poll loop does not
+# pull in geopandas). A geometry that declares any other CRS is rejected here
+# rather than surviving into the outbound PATCH, which the backend rejects.
+_supported_crs_epsg = {27700, 4326}
+_epsg_pattern = re.compile(r"EPSG:{1,2}(\d+)$", re.IGNORECASE)
+
+
+def _unsupported_declared_crs(job: ImpactAssessmentJob) -> str | None:
+    """Return the offending CRS name if the boundary geometry declares an
+    unsupported CRS, else None.
+
+    GeoJSON geometries may carry a (deprecated) `crs` member of the form
+    ``{"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::27700"}}``.
+    A missing `crs` is valid (the normal case). A declared CRS must resolve to a
+    supported EPSG code.
+    """
+    if job.boundary_geojson is None:
+        return None
+    geom = job.boundary_geojson.boundary_geometry_original
+    crs = geom.get("crs") if isinstance(geom, dict) else None
+    if not crs:
+        return None
+    props = crs.get("properties") if isinstance(crs, dict) else None
+    name = props.get("name") if isinstance(props, dict) else None
+    if not isinstance(name, str):
+        return repr(name)
+    match = _epsg_pattern.search(name)
+    if match and int(match.group(1)) in _supported_crs_epsg:
+        return None
+    return name
 
 
 class SQSClient:
@@ -98,8 +131,6 @@ class SQSClient:
 
             try:
                 job_message = ImpactAssessmentJob.model_validate(body)
-                logger.info(f"Received job message: {job_message.reference}")
-                results.append((job_message, receipt_handle))
             except ValidationError:
                 logger.exception(
                     "Invalid job message format",
@@ -107,6 +138,21 @@ class SQSClient:
                 )
                 # Don't delete - let visibility timeout expire
                 # Message will retry and eventually move to DLQ after maxReceiveCount
+                continue
+
+            unsupported_crs = _unsupported_declared_crs(job_message)
+            if unsupported_crs is not None:
+                logger.error(
+                    "Boundary geometry declares unsupported CRS %r, skipping",
+                    unsupported_crs,
+                    extra={"message_id": raw_message.get("MessageId")},
+                )
+                # Don't delete - let visibility timeout expire
+                # Message will retry and eventually move to DLQ after maxReceiveCount
+                continue
+
+            logger.info(f"Received job message: {job_message.reference}")
+            results.append((job_message, receipt_handle))
 
         return results
 

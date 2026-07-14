@@ -135,6 +135,39 @@ class TestInvalidJson:
         sqs_client.sqs.delete_message.assert_not_called()
 
 
+class TestUnsupportedCrs:
+    """A boundary geometry may declare a GeoJSON `crs` member. If it names an
+    unsupported/non-existent CRS the message passes schema validation but the
+    downstream PATCH to the backend rejects it, so it must be caught here and
+    left on the queue (retry -> DLQ) like other invalid messages."""
+
+    @staticmethod
+    def _job_with_crs(crs: dict) -> dict:
+        job = json.loads(json.dumps(_INNER_JOB))  # deep copy
+        job["boundaryGeojson"]["boundaryGeometryOriginal"]["crs"] = crs
+        return job
+
+    def test_nonexistent_epsg_crs_is_skipped_without_raising(self, sqs_client):
+        body = self._job_with_crs(
+            {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::123"}}
+        )
+        sqs_client.sqs.receive_message.return_value = {"Messages": [_sqs_message(body)]}
+        assert sqs_client.receive_messages() == []
+        sqs_client.sqs.delete_message.assert_not_called()
+
+    def test_supported_epsg_crs_is_accepted(self, sqs_client):
+        body = self._job_with_crs(
+            {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::27700"}}
+        )
+        job = _receive_one(sqs_client, body)
+        assert job.reference == "NRF-000001"
+
+    def test_no_declared_crs_is_accepted(self, sqs_client):
+        """The normal case: geometry omits `crs`. Must remain valid."""
+        job = _receive_one(sqs_client, _INNER_JOB)
+        assert job.reference == "NRF-000001"
+
+
 class TestTracePropagation:
     def test_trace_id_extracted_from_sns_message_body(self, sqs_client):
         """SNS-wrapped message: body traceId survives unwrap -> job.trace_id."""
