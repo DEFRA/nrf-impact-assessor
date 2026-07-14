@@ -92,69 +92,70 @@ class SQSClient:
             raise
 
         messages = response.get("Messages", [])
-        if not messages:
-            return []
-
         results = []
         for raw_message in messages:
-            receipt_handle = raw_message["ReceiptHandle"]
-            raw_body = raw_message["Body"]
-            if len(raw_body) > _max_body_bytes:
-                logger.error(
-                    "SQS message body exceeds size limit (%d bytes), skipping",
-                    len(raw_body),
-                    extra={"message_id": raw_message.get("MessageId")},
-                )
-                continue
-            try:
-                body = json.loads(raw_body)
-            except json.JSONDecodeError:
-                logger.exception(
-                    "Message body is not valid JSON",
-                    extra={"message_id": raw_message.get("MessageId")},
-                )
-                # Don't delete - let visibility timeout expire
-                # Message will retry and eventually move to DLQ after maxReceiveCount
-                continue
-
-            # Unwrap SNS envelope if present
-            if body.get("Type") == "Notification" and "Message" in body:
-                logger.debug("Unwrapping SNS envelope from SQS message")
-                try:
-                    body = json.loads(body["Message"])
-                except json.JSONDecodeError:
-                    logger.exception(
-                        "SNS inner Message is not valid JSON",
-                        extra={"message_id": raw_message.get("MessageId")},
-                    )
-                    continue
-
-            try:
-                job_message = ImpactAssessmentJob.model_validate(body)
-            except ValidationError:
-                logger.exception(
-                    "Invalid job message format",
-                    extra={"message_id": raw_message.get("MessageId")},
-                )
-                # Don't delete - let visibility timeout expire
-                # Message will retry and eventually move to DLQ after maxReceiveCount
-                continue
-
-            unsupported_crs = _unsupported_declared_crs(job_message)
-            if unsupported_crs is not None:
-                logger.error(
-                    "Boundary geometry declares unsupported CRS %r, skipping",
-                    unsupported_crs,
-                    extra={"message_id": raw_message.get("MessageId")},
-                )
-                # Don't delete - let visibility timeout expire
-                # Message will retry and eventually move to DLQ after maxReceiveCount
-                continue
-
-            logger.info(f"Received job message: {job_message.reference}")
-            results.append((job_message, receipt_handle))
+            job_message = self._parse_message(raw_message)
+            if job_message is not None:
+                results.append((job_message, raw_message["ReceiptHandle"]))
 
         return results
+
+    def _parse_message(self, raw_message: dict) -> ImpactAssessmentJob | None:
+        """Parse a single raw SQS message into a job, or None if invalid.
+
+        Invalid messages (oversized, non-JSON, wrong schema, unsupported CRS)
+        are logged and skipped. They are never deleted - the visibility timeout
+        expires, the message retries and eventually moves to the DLQ after
+        maxReceiveCount.
+        """
+        message_id = raw_message.get("MessageId")
+        raw_body = raw_message["Body"]
+        if len(raw_body) > _max_body_bytes:
+            logger.error(
+                "SQS message body exceeds size limit (%d bytes), skipping",
+                len(raw_body),
+                extra={"message_id": message_id},
+            )
+            return None
+        try:
+            body = json.loads(raw_body)
+        except json.JSONDecodeError:
+            logger.exception(
+                "Message body is not valid JSON", extra={"message_id": message_id}
+            )
+            return None
+
+        # Unwrap SNS envelope if present
+        if body.get("Type") == "Notification" and "Message" in body:
+            logger.debug("Unwrapping SNS envelope from SQS message")
+            try:
+                body = json.loads(body["Message"])
+            except json.JSONDecodeError:
+                logger.exception(
+                    "SNS inner Message is not valid JSON",
+                    extra={"message_id": message_id},
+                )
+                return None
+
+        try:
+            job_message = ImpactAssessmentJob.model_validate(body)
+        except ValidationError:
+            logger.exception(
+                "Invalid job message format", extra={"message_id": message_id}
+            )
+            return None
+
+        unsupported_crs = _unsupported_declared_crs(job_message)
+        if unsupported_crs is not None:
+            logger.error(
+                "Boundary geometry declares unsupported CRS %r, skipping",
+                unsupported_crs,
+                extra={"message_id": message_id},
+            )
+            return None
+
+        logger.info(f"Received job message: {job_message.reference}")
+        return job_message
 
     def change_message_visibility(
         self, receipt_handle: str, visibility_timeout: int
