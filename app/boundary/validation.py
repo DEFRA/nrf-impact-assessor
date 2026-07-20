@@ -29,55 +29,34 @@ def _has_holes(geom) -> bool:
 
 
 def validate_geometry(gdf: gpd.GeoDataFrame) -> str | None:
-    """Validate geometry data, returning an error message on invalid input.
+    """Validate geometry data, returning a failure code on invalid input.
 
     Checks for unsupported geometry types, null geometries,
     invalid geometries (e.g. self-intersections), interior holes,
     and duplicate consecutive vertices.
 
     Returns:
-        Error message string if validation fails, or None if valid.
+        Failure code string if validation fails, or None if valid.
     """
     null_count = gdf.geometry.isna().sum()
     if null_count > 0:
-        return (
-            "The uploaded boundary geometry could not be processed. "
-            "The file contains incomplete or malformed coordinates."
-        )
+        return "invalid_geometry"
 
     geom_types = set(gdf.geometry.geom_type.unique())
     invalid_types = geom_types - _VALID_GEOM_TYPES
     if invalid_types:
-        return (
-            f"Invalid geometry types found: {', '.join(invalid_types)}. "
-            "Only Polygon geometry is supported. "
-            "Please ensure the boundary forms a complete closed polygon shape."
-        )
+        return "unsupported_geometry_type"
 
     invalid_count = (~gdf.geometry.is_valid).sum()
     if invalid_count > 0:
-        return (
-            "The uploaded boundary contains invalid geometry "
-            "(self-intersecting or crossing line segments). "
-            "Please correct the boundary so that edges do not cross each other "
-            "and try again."
-        )
+        return "self_intersecting_geometry"
 
     for geom in gdf.geometry:
         if _has_holes(geom):
-            return (
-                "The uploaded boundary contains interior holes or gaps. "
-                "The boundary must be a single continuous area without holes. "
-                "Please remove any interior rings and upload a simple polygon."
-            )
+            return "geometry_has_holes"
 
     for geom in gdf.geometry:
         if _has_duplicate_consecutive_vertices(geom):
-            return (
-                "The uploaded boundary contains duplicated or overlapping geometry "
-                "(duplicate consecutive vertices). "
-                "Please clean up the boundary to remove "
-                "duplicate points and try again."
-            )
+            return "duplicate_vertices"
 
     return None
