@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 
 import boto3
 from botocore.exceptions import ClientError
@@ -12,6 +13,38 @@ from app.models.job import ImpactAssessmentJob
 logger = logging.getLogger(__name__)
 
 _max_body_bytes = 262_144  # SQS hard limit is 256 KiB
+
+# EPSG codes the assessment pipeline can handle. Mirrors
+# app.boundary.validation.SUPPORTED_CRS (kept local so the poll loop does not
+# pull in geopandas). A geometry that declares any other CRS is rejected here
+# rather than surviving into the outbound PATCH, which the backend rejects.
+_supported_crs_epsg = {27700, 4326}
+_epsg_pattern = re.compile(r"EPSG:{1,2}(\d+)$", re.IGNORECASE)
+
+
+def _unsupported_declared_crs(job: ImpactAssessmentJob) -> str | None:
+    """Return the offending CRS name if the boundary geometry declares an
+    unsupported CRS, else None.
+
+    GeoJSON geometries may carry a (deprecated) `crs` member of the form
+    ``{"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::27700"}}``.
+    A missing `crs` is valid (the normal case). A declared CRS must resolve to a
+    supported EPSG code.
+    """
+    if job.boundary_geojson is None:
+        return None
+    geom = job.boundary_geojson.boundary_geometry_original
+    crs = geom.get("crs") if isinstance(geom, dict) else None
+    if not crs:
+        return None
+    props = crs.get("properties") if isinstance(crs, dict) else None
+    name = props.get("name") if isinstance(props, dict) else None
+    if not isinstance(name, str):
+        return repr(name)
+    match = _epsg_pattern.search(name)
+    if match and int(match.group(1)) in _supported_crs_epsg:
+        return None
+    return name
 
 
 class SQSClient:
@@ -59,56 +92,70 @@ class SQSClient:
             raise
 
         messages = response.get("Messages", [])
-        if not messages:
-            return []
-
         results = []
         for raw_message in messages:
-            receipt_handle = raw_message["ReceiptHandle"]
-            raw_body = raw_message["Body"]
-            if len(raw_body) > _max_body_bytes:
-                logger.error(
-                    "SQS message body exceeds size limit (%d bytes), skipping",
-                    len(raw_body),
-                    extra={"message_id": raw_message.get("MessageId")},
-                )
-                continue
-            try:
-                body = json.loads(raw_body)
-            except json.JSONDecodeError:
-                logger.exception(
-                    "Message body is not valid JSON",
-                    extra={"message_id": raw_message.get("MessageId")},
-                )
-                # Don't delete - let visibility timeout expire
-                # Message will retry and eventually move to DLQ after maxReceiveCount
-                continue
-
-            # Unwrap SNS envelope if present
-            if body.get("Type") == "Notification" and "Message" in body:
-                logger.debug("Unwrapping SNS envelope from SQS message")
-                try:
-                    body = json.loads(body["Message"])
-                except json.JSONDecodeError:
-                    logger.exception(
-                        "SNS inner Message is not valid JSON",
-                        extra={"message_id": raw_message.get("MessageId")},
-                    )
-                    continue
-
-            try:
-                job_message = ImpactAssessmentJob.model_validate(body)
-                logger.info(f"Received job message: {job_message.reference}")
-                results.append((job_message, receipt_handle))
-            except ValidationError:
-                logger.exception(
-                    "Invalid job message format",
-                    extra={"message_id": raw_message.get("MessageId")},
-                )
-                # Don't delete - let visibility timeout expire
-                # Message will retry and eventually move to DLQ after maxReceiveCount
+            job_message = self._parse_message(raw_message)
+            if job_message is not None:
+                results.append((job_message, raw_message["ReceiptHandle"]))
 
         return results
+
+    def _parse_message(self, raw_message: dict) -> ImpactAssessmentJob | None:
+        """Parse a single raw SQS message into a job, or None if invalid.
+
+        Invalid messages (oversized, non-JSON, wrong schema, unsupported CRS)
+        are logged and skipped. They are never deleted - the visibility timeout
+        expires, the message retries and eventually moves to the DLQ after
+        maxReceiveCount.
+        """
+        message_id = raw_message.get("MessageId")
+        raw_body = raw_message["Body"]
+        if len(raw_body) > _max_body_bytes:
+            logger.error(
+                "SQS message body exceeds size limit (%d bytes), skipping",
+                len(raw_body),
+                extra={"message_id": message_id},
+            )
+            return None
+        try:
+            body = json.loads(raw_body)
+        except json.JSONDecodeError:
+            logger.exception(
+                "Message body is not valid JSON", extra={"message_id": message_id}
+            )
+            return None
+
+        # Unwrap SNS envelope if present
+        if body.get("Type") == "Notification" and "Message" in body:
+            logger.debug("Unwrapping SNS envelope from SQS message")
+            try:
+                body = json.loads(body["Message"])
+            except json.JSONDecodeError:
+                logger.exception(
+                    "SNS inner Message is not valid JSON",
+                    extra={"message_id": message_id},
+                )
+                return None
+
+        try:
+            job_message = ImpactAssessmentJob.model_validate(body)
+        except ValidationError:
+            logger.exception(
+                "Invalid job message format", extra={"message_id": message_id}
+            )
+            return None
+
+        unsupported_crs = _unsupported_declared_crs(job_message)
+        if unsupported_crs is not None:
+            logger.error(
+                "Boundary geometry declares unsupported CRS %r, skipping",
+                unsupported_crs,
+                extra={"message_id": message_id},
+            )
+            return None
+
+        logger.info(f"Received job message: {job_message.reference}")
+        return job_message
 
     def change_message_visibility(
         self, receipt_handle: str, visibility_timeout: int
