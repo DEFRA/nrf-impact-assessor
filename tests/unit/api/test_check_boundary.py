@@ -248,7 +248,7 @@ class TestCheckBoundaryGeoJSON:
         response = _post_boundary(client, "bad.geojson", b"not valid json")
 
         assert response.status_code == 400
-        assert "Failed to read geometry file" in response.json()["error"]
+        assert response.json()["error"] == "unreadable_geometry_file"
 
     def test_corrupt_geometry_returns_400(self, client):
         """Valid JSON with malformed/incomplete coordinates must return 400, not 500."""
@@ -267,7 +267,7 @@ class TestCheckBoundaryGeoJSON:
         response = _post_boundary(client, "corrupt.geojson", corrupt)
 
         assert response.status_code == 400
-        assert "incomplete or malformed coordinates" in response.json()["error"]
+        assert response.json()["error"] == "invalid_geometry"
 
     def test_unsupported_format_returns_400(self, client):
         response = _post_boundary(
@@ -275,7 +275,7 @@ class TestCheckBoundaryGeoJSON:
         )
 
         assert response.status_code == 400
-        assert "Unsupported file format" in response.json()["error"]
+        assert response.json()["error"] == "unsupported_file_type"
 
     def test_file_too_large_returns_413(self, client):
         from app.boundary.router import _max_upload_bytes
@@ -284,18 +284,15 @@ class TestCheckBoundaryGeoJSON:
         response = _post_boundary(client, "huge.geojson", content)
 
         assert response.status_code == 413
-        assert "File too large" in response.json()["error"]
+        assert response.json()["error"] == "file_size_too_large"
 
     def test_shapefile_without_crs_returns_422(self, client):
-        """A .shp without a .prj has no CRS — should return 422 with helpful message."""
+        """A .shp without a .prj has no CRS — should return 422."""
         zip_buf = _make_shapefile_zip_without_crs()
         response = _post_boundary_file(client, "no_crs.zip", zip_buf, "application/zip")
 
         assert response.status_code == 422
-        error = response.json()["error"]
-        assert "coordinate reference system" in error.lower()
-        assert ".prj" in error
-        assert "Please ensure your boundary file" in error
+        assert response.json()["error"] == "missing_crs"
 
     def test_shapefile_zip_missing_companion_files_returns_400(self, client):
         """A zip with only .shp (no .dbf/.shx) should return 400."""
@@ -309,10 +306,7 @@ class TestCheckBoundaryGeoJSON:
         )
 
         assert response.status_code == 400
-        error = response.json()["error"]
-        assert "missing required companion files" in error
-        assert ".dbf" in error
-        assert ".shx" in error
+        assert response.json()["error"] == "zip_missing_shapefile_parts"
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_multi_shapefile_zip_uses_explicit_boundary_filename(self, client):
@@ -348,7 +342,7 @@ class TestCheckBoundaryGeoJSON:
         )
 
         assert response.status_code == 400
-        assert "not found" in response.json()["error"].lower()
+        assert response.json()["error"] == "boundary_file_not_found_in_zip"
 
 
 class TestCheckBoundaryGeometryValidation:
@@ -363,7 +357,7 @@ class TestCheckBoundaryGeometryValidation:
 
         assert response.status_code == 400
         body = response.json()
-        assert "invalid geometry" in body["error"].lower()
+        assert body["error"] == "self_intersecting_geometry"
         assert body["boundaryGeometryWgs84"]["type"] == "FeatureCollection"
         assert len(body["boundaryGeometryWgs84"]["features"]) == 1
 
@@ -389,8 +383,7 @@ class TestCheckBoundaryGeometryValidation:
 
         assert response.status_code == 400
         body = response.json()
-        assert "holes" in body["error"].lower() or "gaps" in body["error"].lower()
-        assert "single continuous area" in body["error"].lower()
+        assert body["error"] == "geometry_has_holes"
 
     def test_duplicate_consecutive_vertices_returns_400(self, client):
         """A polygon with duplicate consecutive vertices should be rejected."""
@@ -401,28 +394,15 @@ class TestCheckBoundaryGeometryValidation:
 
         assert response.status_code == 400
         body = response.json()
-        assert "duplicate" in body["error"].lower()
+        assert body["error"] == "duplicate_vertices"
 
-    def test_missing_crs_error_lists_supported_systems(self, client):
-        """CRS error should list supported coordinate reference systems."""
+    def test_missing_crs_returns_422(self, client):
+        """A shapefile with no CRS defined should return a missing_crs code."""
         zip_buf = _make_shapefile_zip_without_crs()
         response = _post_boundary_file(client, "no_crs.zip", zip_buf, "application/zip")
 
         assert response.status_code == 422
-        error = response.json()["error"]
-        assert "EPSG:27700" in error
-        assert "EPSG:4326" in error
-
-    def test_error_response_includes_retry_guidance(self, client):
-        """Error messages should include guidance for correction."""
-        content = _make_geojson_bytes(
-            coordinates=[[[0, 0], [1, 1], [1, 0], [0, 1], [0, 0]]]
-        )
-        response = _post_boundary(client, "invalid.geojson", content)
-
-        assert response.status_code == 400
-        body = response.json()
-        assert "try again" in body["error"].lower() or "please" in body["error"].lower()
+        assert response.json()["error"] == "missing_crs"
 
 
 class TestCheckBoundaryUnsupportedCRS:
@@ -445,10 +425,7 @@ class TestCheckBoundaryUnsupportedCRS:
         response = _post_boundary(client, "mercator.geojson", content)
 
         assert response.status_code == 422
-        error = response.json()["error"]
-        assert "unsupported" in error.lower()
-        assert "EPSG:27700" in error
-        assert "EPSG:4326" in error
+        assert response.json()["error"] == "unsupported_crs"
 
     def test_unsupported_crs_in_shapefile_returns_422(self, client):
         """Shapefile with an unsupported CRS should be rejected."""
@@ -458,10 +435,7 @@ class TestCheckBoundaryUnsupportedCRS:
         )
 
         assert response.status_code == 422
-        error = response.json()["error"]
-        assert "unsupported" in error.lower()
-        assert "EPSG:27700" in error
-        assert "EPSG:4326" in error
+        assert response.json()["error"] == "unsupported_crs"
 
     def test_unrecognised_crs_in_shapefile_returns_422(self, client):
         """Shapefile with a corrupted/unrecognised .prj should return 422."""

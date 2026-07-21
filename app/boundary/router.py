@@ -27,7 +27,7 @@ from geoalchemy2.functions import (
 )
 from sqlalchemy import select
 
-from app.boundary.validation import SUPPORTED_CRS, validate_geometry
+from app.boundary.validation import validate_geometry
 from app.config import ApiServerConfig
 from app.models.db import EdpBoundaryLayer
 from app.repositories.engine import get_shared_repository
@@ -116,8 +116,8 @@ def _validate_extension(filename: str) -> str:
     """
     suffix = Path(filename).suffix.lower()
     if suffix not in _SUPPORTED_EXTENSIONS:
-        msg = f"Unsupported file format: {suffix}. Use .zip, .geojson, .json, or .kml"
-        raise ValueError(msg)
+        code = "unsupported_file_type"
+        raise ValueError(code)
     return suffix
 
 
@@ -173,8 +173,8 @@ def _read_geometry(
     except ValueError:
         raise
     except Exception as e:
-        msg = f"Failed to read geometry file: {e}"
-        raise ValueError(msg) from e
+        code = "unreadable_geometry_file"
+        raise ValueError(code) from e
 
 
 def _extract_zip(
@@ -194,8 +194,8 @@ def _extract_zip(
         for member in zf.infolist():
             member_path = (extract_dir / member.filename).resolve()
             if not member_path.is_relative_to(extract_dir.resolve()):
-                msg = "Malicious zip entry detected"
-                raise ValueError(msg)
+                code = "zip_unsafe_path"
+                raise ValueError(code)
         zf.extractall(extract_dir)
 
     if boundary_filename:
@@ -212,8 +212,8 @@ def _extract_zip(
     if kml_files:
         return kml_files[0]
 
-    msg = "Zip file must contain a .shp, .geojson, or .kml file"
-    raise ValueError(msg)
+    code = "zip_missing_shapefile"
+    raise ValueError(code)
 
 
 def _locate_named_entry(extract_dir: Path, boundary_filename: str) -> Path:
@@ -229,16 +229,13 @@ def _locate_named_entry(extract_dir: Path, boundary_filename: str) -> Path:
         p for p in extract_dir.glob("**/*") if p.name.lower() == lowered and p.is_file()
     ]
     if not candidates:
-        msg = f"Boundary file {boundary_filename!r} not found inside uploaded zip."
-        raise ValueError(msg)
+        code = "boundary_file_not_found_in_zip"
+        raise ValueError(code)
     # Multiple matches would mean the same filename appears in two different
     # subdirectories — ambiguous, so refuse rather than guess.
     if len(candidates) > 1:
-        msg = (
-            f"Boundary file {boundary_filename!r} appears more than once in the "
-            "uploaded zip; cannot determine which one to use."
-        )
-        raise ValueError(msg)
+        code = "zip_ambiguous_filename"
+        raise ValueError(code)
     entry = candidates[0]
     # Shapefiles still need their sibling .dbf / .shx in the same directory.
     if entry.suffix.lower() == ".shp":
@@ -254,12 +251,8 @@ def _check_shapefile_companions(shp_path: Path) -> Path:
         ext for ext in (".dbf", ".shx") if not (shp_dir / f"{stem}{ext}").exists()
     ]
     if missing:
-        msg = (
-            f"Shapefile is missing required companion files: "
-            f"{', '.join(missing)}. "
-            "A zip must contain .shp, .dbf, and .shx files."
-        )
-        raise ValueError(msg)
+        code = "zip_missing_shapefile_parts"
+        raise ValueError(code)
     return shp_path
 
 
@@ -344,11 +337,7 @@ async def check_boundary(
     """
     content = await geometry_file.read(_max_upload_bytes + 1)
     if len(content) > _max_upload_bytes:
-        max_mb = _max_upload_bytes / (1024 * 1024)
-        return _make_response(
-            413,
-            error=f"File too large. Maximum upload size is {max_mb:.0f} MB.",
-        )
+        return _make_response(413, error="file_size_too_large")
 
     filename = geometry_file.filename or "input.geojson"
 
@@ -367,33 +356,9 @@ async def check_boundary(
         try:
             gdf = ensure_crs(gdf)
         except UnsupportedCRSError:
-            supported = ", ".join(
-                f"EPSG:{code} ({label})" for code, label in SUPPORTED_CRS.items()
-            )
-            detail = (
-                "The uploaded boundary file uses an unsupported"
-                " coordinate reference system (CRS)."
-                f" Supported coordinate systems are: {supported}."
-                " Please ensure your boundary file uses one of these"
-                " Coordinate Reference Systems and try again."
-            )
-            return _make_response(422, error=detail)
+            return _make_response(422, error="unsupported_crs")
         except ValueError:
-            supported = ", ".join(
-                f"EPSG:{code} ({label})" for code, label in SUPPORTED_CRS.items()
-            )
-            detail = (
-                "The uploaded boundary file has no coordinate reference system (CRS) "
-                "defined."
-            )
-            if ext == _EXT_ZIP:
-                detail += " Shapefiles require a .prj file to specify the CRS."
-            detail += (
-                f" Supported coordinate systems are: {supported}."
-                " Please ensure your boundary file has one of these"
-                " Coordinate Reference Systems defined and try again."
-            )
-            return _make_response(422, error=detail)
+            return _make_response(422, error="missing_crs")
 
         validation_error = validate_geometry(gdf)
 
@@ -415,10 +380,7 @@ async def check_boundary(
         # properties to avoid processing Personal Identifiable Information (PII).
         polygons = gdf[gdf.geometry.geom_type.isin(_VALID_GEOM_TYPES)]
         if polygons.empty:
-            return _make_response(
-                400,
-                error="No polygon geometry found in the uploaded file",
-            )
+            return _make_response(400, error="no_polygon_found")
         first_geom = polygons.geometry.iloc[0]
         authority, code = gdf.crs.to_authority()
         crs_urn = f"urn:ogc:def:crs:{authority}::{code}"
