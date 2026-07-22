@@ -360,6 +360,21 @@ class TestCheckBoundaryGeometryValidation:
         assert body["error"] == "self_intersecting_geometry"
         assert body["boundaryGeometryWgs84"]["type"] == "FeatureCollection"
         assert len(body["boundaryGeometryWgs84"]["features"]) == 1
+        # Metadata (bounds/centre) is included so the frontend can still zoom
+        # the map to the invalid boundary.
+        metadata = body["boundaryMetadata"]
+        assert metadata["bounds"] is not None
+        # The centre must sit within the bounds. A self-intersecting polygon's
+        # centroid can fall outside the shape, which centred the map on the
+        # wrong area; the bounding-box midpoint always sits inside the bounds.
+        bounds = metadata["bounds"]
+        min_lng = bounds["bottomLeft"][0]
+        max_lng = bounds["topRight"][0]
+        min_lat = bounds["bottomLeft"][1]
+        max_lat = bounds["topRight"][1]
+        centre_lng, centre_lat = metadata["centre"]
+        assert min_lng <= centre_lng <= max_lng
+        assert min_lat <= centre_lat <= max_lat
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_valid_polygon_passes_validation(self, client):
