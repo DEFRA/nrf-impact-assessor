@@ -483,6 +483,7 @@ class DataSyncConfig(BaseSettings):
             "coefficient_layer",
             "edp_boundary_layer",
             "edp_edges",
+            "edp_excluded_areas",
             "gcn_ponds",
             "gcn_risk_zones",
             "lookup_table",

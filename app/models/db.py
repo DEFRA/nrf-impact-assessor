@@ -166,6 +166,16 @@ class EdpBoundaryLayer(SpatialLayerMixin, Base):
         return f"<EdpBoundaryLayer(id={self.id}, name={self.name})>"
 
 
+class EdpExcludedAreas(SpatialLayerMixin, Base):
+    """Buffered SSSI exclusion-area polygons (nutrient EDP)."""
+
+    __tablename__ = "edp_excluded_areas"
+    __table_args__ = {"schema": "public"}
+
+    def __repr__(self) -> str:
+        return f"<EdpExcludedAreas(id={self.id}, name={self.name})>"
+
+
 class LookupTable(Base):
     """JSONB-based storage for lookup tables (WwTW, rates)."""
 

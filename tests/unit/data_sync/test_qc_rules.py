@@ -21,6 +21,7 @@ def test_load_qc_rules_reads_checked_in_yaml():
         "gcn_ponds",
         "edp_edges",
         "edp_boundary_layer",
+        "edp_excluded_areas",
     }
 
 
@@ -65,6 +66,16 @@ def test_spatial_table_rules_have_json_key_and_geometry():
     gcn_ponds = rules.tables["gcn_ponds"]
     assert gcn_ponds.key is None  # no reliable business key (DM-2)
     assert gcn_ponds.geometry.expected_type == "MultiPolygon"
+
+    # Both EDP layers ship as MultiPolygon: edp_boundary_extents.gpkg and
+    # edp_excluded_areas.gpkg are MultiPolygon at source, and the geometry_type
+    # rule is an exact match, so declaring Polygon fails every row.
+    edp = rules.tables["edp_boundary_layer"]
+    assert edp.non_null_json_columns == ["attributes.EDP_Name"]
+    assert edp.geometry.expected_type == "MultiPolygon"
+
+    excluded = rules.tables["edp_excluded_areas"]
+    assert excluded.geometry.expected_type == "MultiPolygon"
 
 
 def test_gcn_risk_zones_has_allowed_values():

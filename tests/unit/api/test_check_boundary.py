@@ -5,13 +5,15 @@ import tempfile
 import zipfile
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
 import pytest
 from fastapi.testclient import TestClient
 from shapely.geometry import Polygon
 
+from app.boundary.router import _find_intersecting_edps
 from app.main import app
 from tests.unit.api.conftest import _make_geojson_bytes
 
@@ -565,3 +567,55 @@ class TestCheckBoundaryEdpIntersection:
             "centre",
             "bounds",
         }
+
+
+class TestFindIntersectingEdpsMapping:
+    """Regression tests for the row -> dict mapping in _find_intersecting_edps.
+
+    The other tests mock the whole function, so they cannot catch a schema
+    drift in the EDP boundary attribute keys. These exercise the real mapping
+    against a stubbed repository session.
+    """
+
+    def _make_row(self, attributes):
+        return SimpleNamespace(
+            attributes=attributes,
+            edp_geojson=json.dumps({"type": "Polygon", "coordinates": []}),
+            intersection_geojson=json.dumps({"type": "Polygon", "coordinates": []}),
+            intersection_area_sqm=5000.0,
+        )
+
+    def _run(self, rows):
+        session = MagicMock()
+        session.execute.return_value.fetchall.return_value = rows
+        repository = MagicMock()
+        repository.session.return_value.__enter__.return_value = session
+
+        gdf = gpd.GeoDataFrame(
+            geometry=[Polygon([(0, 0), (0, 100), (100, 100), (100, 0)])],
+            crs="EPSG:27700",
+        )
+        return _find_intersecting_edps(gdf, repository)
+
+    def test_label_and_n2k_site_name_come_from_edp_name(self):
+        rows = [
+            self._make_row(
+                {
+                    "OBJECTID": 2,
+                    "EDP_Area": "Norfolk",
+                    "EDP_Name": "Broads SAC (Yare & Bure) & Wensum SAC",
+                }
+            )
+        ]
+
+        results = self._run(rows)
+
+        assert len(results) == 1
+        assert results[0]["label"] == "Broads SAC (Yare & Bure) & Wensum SAC"
+        assert results[0]["n2k_site_name"] == "Broads SAC (Yare & Bure) & Wensum SAC"
+
+    def test_missing_attributes_map_to_none(self):
+        results = self._run([self._make_row(None)])
+
+        assert results[0]["label"] is None
+        assert results[0]["n2k_site_name"] is None

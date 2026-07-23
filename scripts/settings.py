@@ -58,6 +58,12 @@ class ScriptSettings(BaseSettings):
     edp_boundary_layer: str = Field(
         description="Layer name within EDP boundary GeoPackage"
     )
+    edp_excluded_areas_gpkg: str = Field(
+        description="EDP excluded areas GeoPackage path (relative)"
+    )
+    edp_excluded_areas_layer: str = Field(
+        description="Layer name within EDP excluded areas GeoPackage"
+    )
 
     # Lookup database (relative to base_path)
     lookup_database: str = Field(description="SQLite lookup database path (relative)")
@@ -122,3 +128,8 @@ class ScriptSettings(BaseSettings):
     def edp_boundary_gpkg_path(self) -> Path:
         """Full path to EDP boundary GeoPackage."""
         return self.base_path / self.edp_boundary_gpkg
+
+    @property
+    def edp_excluded_areas_gpkg_path(self) -> Path:
+        """Full path to EDP excluded areas GeoPackage."""
+        return self.base_path / self.edp_excluded_areas_gpkg

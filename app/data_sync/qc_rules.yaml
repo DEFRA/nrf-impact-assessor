@@ -69,7 +69,11 @@ tables:
     geometry: {expected_type: MultiPolygon, expected_srid: 27700}
 
   edp_boundary_layer:
-    geometry: {expected_type: Polygon, expected_srid: 27700}
+    non_null_json_columns: ["attributes.EDP_Name"]
+    geometry: {expected_type: MultiPolygon, expected_srid: 27700}
+
+  edp_excluded_areas:
+    geometry: {expected_type: MultiPolygon, expected_srid: 27700}
 
 referential_checks:
   - name: rates_lookup_nn_catchment
