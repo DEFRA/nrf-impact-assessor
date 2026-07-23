@@ -66,8 +66,11 @@ def _compute_boundary_metadata(
 ) -> dict:
     area_sqm = geom_projected.area
     perimeter_m = geom_projected.length
-    centroid = geom_wgs84.centroid
     minx, miny, maxx, maxy = geom_wgs84.bounds
+    # Use the bounding-box midpoint rather than the polygon centroid: for
+    # self-intersecting/invalid geometries the centroid can fall outside the
+    # shape, which centres the map on the wrong area. The bbox midpoint is
+    # always consistent with the bounds the map zooms to.
     return {
         "area": {
             "hectares": round(area_sqm / 10_000, 4),
@@ -77,7 +80,7 @@ def _compute_boundary_metadata(
             "kilometres": round(perimeter_m / 1_000, 4),
             "miles": round(perimeter_m / 1_609.344, 4),
         },
-        "centre": [round(centroid.x, 6), round(centroid.y, 6)],
+        "centre": [round((minx + maxx) / 2, 6), round((miny + maxy) / 2, 6)],
         "bounds": {
             "topLeft": [round(minx, 6), round(maxy, 6)],
             "topRight": [round(maxx, 6), round(maxy, 6)],
@@ -363,14 +366,27 @@ async def check_boundary(
         validation_error = validate_geometry(gdf)
 
         if validation_error:
+            # Keep the projected geometry to compute metadata bounds/centre so
+            # the frontend can still zoom the map to the (invalid) boundary.
+            geom_projected = gdf.geometry.iloc[0]
             gdf = gdf.to_crs(_WGS84)
             gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
             geojson = json.loads(gdf.to_json())
+
+            # Some rejected geometries (e.g. empty/corrupt) have no computable
+            # bounds; skip metadata in that case rather than fail the response.
+            boundary_metadata = None
+            geom_wgs84 = gdf.geometry.iloc[0]
+            if geom_projected is not None and not geom_projected.is_empty:
+                boundary_metadata = _compute_boundary_metadata(
+                    geom_projected, geom_wgs84
+                )
 
             return _make_response(
                 400,
                 error=validation_error,
                 boundary_geometry_wgs84=geojson,
+                boundary_metadata=boundary_metadata,
             )
 
         repository = _get_repository()
