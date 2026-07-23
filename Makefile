@@ -48,6 +48,7 @@ BACKUP_PART_SIZE ?= 100m
 DB_TABLES = \
 	public.coefficient_layer \
 	public.edp_boundary_layer \
+	public.edp_excluded_areas \
 	public.lookup_table \
 	public.wwtw_catchments \
 	public.lpa_boundaries \
@@ -100,9 +101,9 @@ db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table 
 db-restore: ## Restore from backup: make db-restore BACKUP_FILE=./backups/foo.sql.gz (whole file or .part-* splits)
 	@test -n "$(BACKUP_FILE)" || (echo "ERROR: set BACKUP_FILE=<path>"; exit 1)
 	@if [ -f "$(BACKUP_FILE)" ]; then \
-		zcat "$(BACKUP_FILE)" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME); \
+		gzip -dc "$(BACKUP_FILE)" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME); \
 	elif ls $(BACKUP_FILE).part-* >/dev/null 2>&1; then \
-		cat $(BACKUP_FILE).part-* | zcat | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME); \
+		cat $(BACKUP_FILE).part-* | gzip -dc | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME); \
 	else \
 		echo "ERROR: no backup found at $(BACKUP_FILE) or $(BACKUP_FILE).part-*"; exit 1; \
 	fi
@@ -115,7 +116,7 @@ db-restore-tables: ## Restore per-table backup: apply schema grants then table d
 		echo "ERROR: no public_schema_*.sql.gz found in $(BACKUP_DIR)"; exit 1; \
 	fi; \
 	echo "Restoring schema grants from $$schema_file"; \
-	zcat "$$schema_file" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME)
+	gzip -dc "$$schema_file" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME)
 	@for table in $(DB_TABLES); do \
 		name=$$(echo $$table | tr '.' '_'); \
 		f=$$(ls -t $(BACKUP_DIR)/$${name}_*.sql.gz $(BACKUP_DIR)/$${name}_*.sql.gz.part-aa 2>/dev/null | head -1); \
@@ -123,9 +124,9 @@ db-restore-tables: ## Restore per-table backup: apply schema grants then table d
 		case "$$f" in \
 		*.part-aa) base=$${f%.part-aa}; \
 			echo "  $$table ← $$base.part-*"; \
-			cat "$$base".part-* | zcat | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME);; \
+			cat "$$base".part-* | gzip -dc | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME);; \
 		*) echo "  $$table ← $$f"; \
-			zcat "$$f" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME);; \
+			gzip -dc "$$f" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME);; \
 		esac; \
 	done
 	@echo "Per-table restore complete from $(BACKUP_DIR)"
