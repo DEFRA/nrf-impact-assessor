@@ -33,7 +33,7 @@ _ALL_TABLES = [
 ]
 
 # The same 10m x 10m square in EPSG:27700, as EWKB hex, in each shape the QC
-# rules can declare. Keyed by GeometryRule.expected_type.
+# rules can declare. Keyed by the names used in GeometryRule.expected_types.
 _GOOD_GEOM_BY_TYPE = {
     "Polygon": (
         "0103000020346C0000"  # SRID 27700 Polygon
@@ -60,7 +60,7 @@ _QC_TABLE_RULES = load_qc_rules().tables
 
 
 def _good_geom(table: str) -> str:
-    """EWKB hex of the geometry type `table`'s QC rules declare.
+    """EWKB hex of a geometry type `table`'s QC rules accept.
 
     Derived from qc_rules.yaml rather than hardcoded: a dump built with the
     wrong shape silently trips the geometry_type rule, so pinning one literal
@@ -70,7 +70,7 @@ def _good_geom(table: str) -> str:
     rules = _QC_TABLE_RULES.get(table)
     if rules is None or rules.geometry is None:
         return _GOOD_GEOM_BY_TYPE["Polygon"]
-    return _GOOD_GEOM_BY_TYPE[rules.geometry.expected_type]
+    return _GOOD_GEOM_BY_TYPE[rules.geometry.expected_types[0]]
 
 
 def _dump(table: str, columns: str, rows: list[str]) -> bytes:

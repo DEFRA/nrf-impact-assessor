@@ -37,9 +37,15 @@ class LookupRowRule(BaseModel):
 
 
 class GeometryRule(BaseModel):
-    """Expected geometry shape for rules 4-6, grounded in the production dumps."""
+    """Expected geometry shape for rules 4-6, grounded in the production dumps.
 
-    expected_type: str
+    `expected_types` is a set of acceptable types, not one: shapefile-derived
+    layers routinely hold a mix of Polygon and MultiPolygon (a single-part
+    feature is stored as Polygon), so pinning one type fails every row of the
+    other kind while still catching a genuinely wrong shape such as Point.
+    """
+
+    expected_types: list[str] = Field(min_length=1)
     expected_srid: int = 27700
 
 

@@ -198,7 +198,8 @@ def _geometry_sql(table: str, rules: TableRules) -> str:
     """
     stage = staging_name(table)
     geom = rules.geometry
-    expected_type = geom.expected_type.upper()
+    expected_types = ", ".join(f"'{t.upper()}'" for t in geom.expected_types)
+    expected_label = "/".join(geom.expected_types)
     return (
         f"SELECT COUNT(*) INTO detail_count FROM pg_temp.{stage} "  # noqa: S608
         "WHERE NOT ST_IsValid(geometry) AND NOT ST_IsValid(ST_MakeValid(geometry));\n"
@@ -215,11 +216,11 @@ def _geometry_sql(table: str, rules: TableRules) -> str:
         f"than {geom.expected_srid}', detail_count));\n"
         "END IF;\n"
         f"SELECT COUNT(*) INTO detail_count FROM pg_temp.{stage} "
-        f"WHERE GeometryType(geometry) <> '{expected_type}';\n"
+        f"WHERE GeometryType(geometry) NOT IN ({expected_types});\n"
         "IF detail_count > 0 THEN\n"
         "  failures := array_append(failures, format("
         f"'table={table} rule=geometry_type detail=%s row(s) with geometry "
-        f"type other than {geom.expected_type}', detail_count));\n"
+        f"type other than {expected_label}', detail_count));\n"
         "END IF;\n"
     )
 

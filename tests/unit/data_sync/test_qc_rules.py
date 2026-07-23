@@ -57,25 +57,38 @@ def test_spatial_table_rules_have_json_key_and_geometry():
     assert nn.key.columns == ["attributes.OID"]
     assert nn.key.unique is True
     assert nn.non_null_json_columns == ["attributes.N2K_Site_N"]
-    assert nn.geometry.expected_type == "Polygon"
     assert nn.geometry.expected_srid == 27700
-
-    lpa = rules.tables["lpa_boundaries"]
-    assert lpa.geometry.expected_type == "MultiPolygon"
 
     gcn_ponds = rules.tables["gcn_ponds"]
     assert gcn_ponds.key is None  # no reliable business key (DM-2)
-    assert gcn_ponds.geometry.expected_type == "MultiPolygon"
 
-    # Both EDP layers ship as MultiPolygon: edp_boundary_extents.gpkg and
-    # edp_excluded_areas.gpkg are MultiPolygon at source, and the geometry_type
-    # rule is an exact match, so declaring Polygon fails every row.
     edp = rules.tables["edp_boundary_layer"]
     assert edp.non_null_json_columns == ["attributes.EDP_Name"]
-    assert edp.geometry.expected_type == "MultiPolygon"
 
-    excluded = rules.tables["edp_excluded_areas"]
-    assert excluded.geometry.expected_type == "MultiPolygon"
+
+def test_geometry_types_match_the_source_layers():
+    """Declared types come from a full per-feature census of each source layer.
+
+    The four shapefile-derived layers genuinely hold both Polygon and
+    MultiPolygon (a single-part feature is stored as Polygon), so pinning one
+    type fails every row of the other kind. The rest are single-type across
+    every feature and stay strict, so a wrong shape is still caught.
+    """
+    rules = load_qc_rules(_YAML_PATH)
+    both = ["Polygon", "MultiPolygon"]
+    assert rules.tables["wwtw_catchments"].geometry.expected_types == both
+    assert rules.tables["lpa_boundaries"].geometry.expected_types == both
+    assert rules.tables["nn_catchments"].geometry.expected_types == both
+    assert rules.tables["subcatchments"].geometry.expected_types == both
+
+    for table in ("gcn_risk_zones", "gcn_ponds", "edp_edges"):
+        assert rules.tables[table].geometry.expected_types == ["MultiPolygon"], table
+    assert rules.tables["edp_boundary_layer"].geometry.expected_types == [
+        "MultiPolygon"
+    ]
+    assert rules.tables["edp_excluded_areas"].geometry.expected_types == [
+        "MultiPolygon"
+    ]
 
 
 def test_gcn_risk_zones_has_allowed_values():
