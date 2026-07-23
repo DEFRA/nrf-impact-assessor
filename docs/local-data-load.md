@@ -8,16 +8,15 @@ This guide explains how to load spatial reference data into a local PostGIS data
 
 ## Overview
 
-`scripts/load_data.py` reads spatial files and lookup databases from a local directory and writes them into the `nrf_reference` schema in PostgreSQL/PostGIS. It is the only supported mechanism for seeding a local database with reference data.
+`scripts/load_data.py` reads spatial files and lookup databases from a local directory and writes them into the `public` schema in PostgreSQL/PostGIS. It is the only supported mechanism for seeding a local database with reference data.
 
 The script handles three categories of data:
 
 | Category | DB Table | Source Format |
 |---|---|---|
-| Spatial layers (catchments, boundaries, GCN) | `nrf_reference.spatial_layer` | Shapefile / GeoDatabase (GDB) |
-| Coefficient polygons | `nrf_reference.coefficient_layer` | GeoPackage (GPKG) |
-| EDP boundaries | `nrf_reference.edp_boundary_layer` | GeoPackage (GPKG) |
-| Lookup tables | `nrf_reference.lookup_table` | SQLite |
+| Spatial layers (catchments, boundaries, GCN, EDP) | One table per layer — see [Spatial layer tables](#spatial-layer-tables) | Shapefile / GeoDatabase / GeoPackage |
+| Coefficient polygons | `public.coefficient_layer` | GeoPackage (GPKG) |
+| Lookup tables | `public.lookup_table` | SQLite |
 
 ---
 
@@ -63,8 +62,10 @@ All file paths are read from `scripts/.env.local`. This file is gitignored and m
 | `NN_CATCHMENT_SHAPEFILE` | NN catchments shapefile (relative to `BASE_PATH`) | `nutrients/Catchments/NN_Catchments_03_2024.shp` |
 | `SUBCATCHMENT_SHAPEFILE` | WFD subcatchments shapefile (relative to `BASE_PATH`) | `nutrients/Catchments/WFD_Surface_Water_Operational_Catchments_Cycle_2.shp` |
 | `LOOKUP_DATABASE` | SQLite database with WwTW and rates lookups (relative to `BASE_PATH`) | `nutrients/SQL_Lookups/Interim_coeffs.sqlite` |
-| `EDP_BOUNDARY_GPKG` | EDP boundary GeoPackage (relative to `BASE_PATH`) | `nutrients/EDP/norfolk_edp.gpkg` |
-| `EDP_BOUNDARY_LAYER` | Layer name inside the EDP GeoPackage | `nn_boundaries_norfolk_edp` |
+| `EDP_BOUNDARY_GPKG` | EDP boundary GeoPackage (relative to `BASE_PATH`) | `nutrients/EDP/edp_boundary_extents.gpkg` |
+| `EDP_BOUNDARY_LAYER` | Layer name inside the EDP GeoPackage | `edp_boundary_extents` |
+| `EDP_EXCLUDED_AREAS_GPKG` | EDP excluded areas GeoPackage (relative to `BASE_PATH`) | `nutrients/EDP/edp_excluded_areas.gpkg` |
+| `EDP_EXCLUDED_AREAS_LAYER` | Layer name inside the excluded areas GeoPackage | `edp_excluded_areas` |
 | `GCN_RISK_ZONES_GDB` | GCN Risk Zones GeoDatabase (relative to `BASE_PATH`) | `gcn/RZ.gdb` |
 | `GCN_RISK_ZONES_LAYER` | Layer name inside the GCN Risk Zones GDB | `GCN_RZ_NRF_Final` |
 | `GCN_PONDS_GDB` | GCN Ponds GeoDatabase (relative to `BASE_PATH`) | `gcn/IIAT_Layers.gdb` |
@@ -107,15 +108,19 @@ Valid `--layer` / `LAYER` values:
 
 | Value | Description | DB Table |
 |---|---|---|
-| `wwtw_catchments` | Wastewater treatment works catchment polygons | `spatial_layer` |
-| `lpa_boundaries` | Local planning authority boundary polygons | `spatial_layer` |
-| `nn_catchments` | Nutrient neutrality catchment polygons | `spatial_layer` |
-| `subcatchments` | WFD surface water operational catchments | `spatial_layer` |
-| `gcn_risk_zones` | Great crested newt habitat risk zones | `spatial_layer` |
-| `gcn_ponds` | GCN pond locations | `spatial_layer` |
-| `edp_edges` | EDP edge geometries | `spatial_layer` |
+| `wwtw_catchments` | Wastewater treatment works catchment polygons | `wwtw_catchments` |
+| `lpa_boundaries` | Local planning authority boundary polygons | `lpa_boundaries` |
+| `nn_catchments` | Nutrient neutrality catchment polygons | `nn_catchments` |
+| `subcatchments` | WFD surface water operational catchments | `subcatchments` |
+| `gcn_risk_zones` | Great crested newt habitat risk zones | `gcn_risk_zones` |
+| `gcn_ponds` | GCN pond locations | `gcn_ponds` |
+| `edp_edges` | EDP edge geometries | `edp_edges` |
 | `coefficients` | Nutrient mitigation coefficient polygons (~5.4M features) | `coefficient_layer` |
-| `edp_boundaries` | EDP boundary polygons | `edp_boundary_layer` |
+| `edp_boundaries` | EDP boundary extent polygon | `edp_boundary_layer` |
+| `edp_excluded_areas` | Buffered SSSI areas excluded from EDP mitigation | `edp_excluded_areas` |
+
+Each layer loads into its own table in the `public` schema. The legacy shared
+`spatial_layer` table is no longer written to.
 
 ### Load specific lookup tables
 
@@ -153,14 +158,15 @@ The table below lists every source file consumed by the script and what it maps 
 | Source file (relative to `BASE_PATH`) | Layer / table | Format |
 |---|---|---|
 | `nutrients/NMSCoefficientLayerTEST.gpkg` | `coefficient_layer` | GeoPackage |
-| `nutrients/wwtw files/WwTW_all_features.shp` | `spatial_layer` — `WWTW_CATCHMENTS` | Shapefile |
-| `nutrients/LPA/LPA_National.shp` | `spatial_layer` — `LPA_BOUNDARIES` | Shapefile |
-| `nutrients/Catchments/NN_Catchments_03_2024.shp` | `spatial_layer` — `NN_CATCHMENTS` | Shapefile |
-| `nutrients/Catchments/WFD_Surface_Water_Operational_Catchments_Cycle_2.shp` | `spatial_layer` — `SUBCATCHMENTS` | Shapefile |
-| `nutrients/EDP/norfolk_edp.gpkg` | `edp_boundary_layer` | GeoPackage |
+| `nutrients/wwtw files/WwTW_all_features.shp` | `wwtw_catchments` | Shapefile |
+| `nutrients/LPA/LPA_National.shp` | `lpa_boundaries` | Shapefile |
+| `nutrients/Catchments/NN_Catchments_03_2024.shp` | `nn_catchments` | Shapefile |
+| `nutrients/Catchments/WFD_Surface_Water_Operational_Catchments_Cycle_2.shp` | `subcatchments` | Shapefile |
+| `nutrients/EDP/edp_boundary_extents.gpkg` | `edp_boundary_layer` | GeoPackage |
+| `nutrients/EDP/edp_excluded_areas.gpkg` | `edp_excluded_areas` | GeoPackage |
 | `nutrients/SQL_Lookups/Interim_coeffs.sqlite` | `lookup_table` | SQLite |
-| `gcn/RZ.gdb` | `spatial_layer` — `GCN_RISK_ZONES` | GeoDatabase |
-| `gcn/IIAT_Layers.gdb` | `spatial_layer` — `GCN_PONDS` and `EDP_EDGES` | GeoDatabase |
+| `gcn/RZ.gdb` | `gcn_risk_zones` | GeoDatabase |
+| `gcn/IIAT_Layers.gdb` | `gcn_ponds` and `edp_edges` | GeoDatabase |
 
 If a source file is missing the script prints a warning and **skips that layer** rather than aborting. This allows partial loads when only a subset of files is available.
 
@@ -189,23 +195,41 @@ For each layer the script follows this sequence:
 
 ## Database Schema
 
-All tables live in the `nrf_reference` PostgreSQL schema.
+All tables live in the `public` PostgreSQL schema.
 
-### `nrf_reference.spatial_layer`
+### Spatial layer tables
 
-Stores catchment and boundary polygons for all layer types except coefficients and EDP boundaries.
+Each spatial layer has its own table. There is no shared table and no
+`layer_type` discriminator column — the table you query *is* the layer.
+
+| Table | Holds |
+|---|---|
+| `wwtw_catchments` | Wastewater treatment works catchment polygons |
+| `lpa_boundaries` | Local planning authority boundaries |
+| `nn_catchments` | Nutrient neutrality catchment boundaries |
+| `subcatchments` | WFD surface water operational catchments |
+| `gcn_risk_zones` | Great crested newt habitat risk zones |
+| `gcn_ponds` | GCN pond locations |
+| `edp_edges` | EDP edge geometries |
+| `edp_boundary_layer` | EDP boundary extent polygon |
+| `edp_excluded_areas` | Buffered SSSI areas excluded from EDP mitigation |
+
+All nine share an identical column set:
 
 | Column | Type | Description |
 |---|---|---|
 | `id` | `UUID` | Primary key (generated by script) |
-| `version` | `INTEGER` | Data version (always `1` for script-loaded data) |
-| `layer_type` | `spatial_layer_type` (enum) | Identifies which layer this row belongs to |
-| `geometry` | `GEOMETRY (EPSG:27700)` | Polygon geometry with spatial index |
-| `name` | `VARCHAR` | Feature name if present in source |
+| `version` | `INTEGER` | Data version, indexed (always `1` for script-loaded data) |
+| `geometry` | `GEOMETRY (EPSG:27700)` | Geometry with a GiST spatial index. Declared as generic `GEOMETRY`, so a layer may hold a mix of `POLYGON` and `MULTIPOLYGON` |
+| `name` | `VARCHAR` | Feature name if present in source, indexed |
 | `attributes` | `JSONB` | All original attributes from source file |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 
-### `nrf_reference.coefficient_layer`
+> A legacy `public.spatial_layer` table still exists but is empty and no longer
+> written to or read from. It is retained only so old migrations remain
+> replayable.
+
+### `public.coefficient_layer`
 
 Dedicated table for the nutrient mitigation coefficient polygons (~5.4M rows).
 
@@ -224,20 +248,7 @@ Dedicated table for the nutrient mitigation coefficient polygons (~5.4M rows).
 | `p_resi_coeff` | `FLOAT` | Residential phosphorus coefficient |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 
-### `nrf_reference.edp_boundary_layer`
-
-EDP boundary polygons.
-
-| Column | Type | Description |
-|---|---|---|
-| `id` | `UUID` | Primary key |
-| `version` | `INTEGER` | Data version |
-| `geometry` | `GEOMETRY (EPSG:27700)` | Polygon geometry with spatial index |
-| `name` | `VARCHAR` | Boundary name |
-| `attributes` | `JSONB` | All original attributes |
-| `created_at` | `TIMESTAMPTZ` | Row creation time |
-
-### `nrf_reference.lookup_table`
+### `public.lookup_table`
 
 JSONB-based lookup tables.
 
@@ -247,7 +258,10 @@ JSONB-based lookup tables.
 | `name` | `VARCHAR` | Lookup identifier (e.g. `wwtw_lookup`) |
 | `version` | `INTEGER` | Data version |
 | `data` | `JSONB` | Array of row objects from source SQLite table |
+| `schema` | `JSONB` | Optional schema descriptor for the rows in `data` |
 | `description` | `VARCHAR` | Human-readable description |
+| `source` | `VARCHAR` | Provenance of the lookup data |
+| `license` | `VARCHAR` | Licence attached to the source data |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 
 ---
@@ -260,17 +274,26 @@ All backup targets write compressed `.sql.gz` files to `./backups/` by default. 
 
 ### Per-table backup (recommended before a load)
 
-Produces a schema file (DDL + grants) and one data-only `.sql.gz` file per `nrf_reference` table, all timestamped together so they can be restored as a set.
+Produces a schema file (DDL + grants) and one data-only `.sql.gz` file per table
+listed in the Makefile's `DB_TABLES`, all timestamped together so they can be
+restored as a set. Files larger than `BACKUP_PART_SIZE` (default 100 MB, to stay
+under GitHub's limit) are split into `.part-*` pieces.
 
 ```bash
 make db-backup-tables
 # output:
-#   backups/nrf_reference_schema_20260316_120000.sql.gz        ← schema DDL + grants
-#   backups/nrf_reference_spatial_layer_20260316_120000.sql.gz
-#   backups/nrf_reference_coefficient_layer_20260316_120000.sql.gz
-#   backups/nrf_reference_edp_boundary_layer_20260316_120000.sql.gz
-#   backups/nrf_reference_lookup_table_20260316_120000.sql.gz
+#   backups/public_schema_20260316_120000.sql.gz            ← schema DDL + grants
+#   backups/public_coefficient_layer_20260316_120000.sql.gz
+#   backups/public_edp_boundary_layer_20260316_120000.sql.gz
+#   backups/public_lookup_table_20260316_120000.sql.gz
+#   backups/public_wwtw_catchments_20260316_120000.sql.gz
+#   ...one per DB_TABLES entry
 ```
+
+`DB_TABLES` is the single list driving both `db-backup-tables` and
+`db-restore-tables`, so a new reference table must be added there to be included
+in either. On restore, a table with no matching backup file logs a warning and
+is skipped rather than failing the run.
 
 ### Full database backup
 
@@ -301,13 +324,13 @@ make db-backup-globals
 
 ### Restore
 
-**Per-table restore** — use `db-restore-tables` (not `db-restore`). It applies the schema file first (ensuring the `nrf_reference` schema, custom types, and grants exist) and then restores each table's data:
+**Per-table restore** — use `db-restore-tables` (not `db-restore`). It applies the schema file first (ensuring the `public` schema, custom types, and grants exist) and then restores each table's data:
 
 ```bash
 make db-restore-tables BACKUP_DIR=./backups
 ```
 
-It picks the most recent `nrf_reference_schema_*.sql.gz` and `nrf_reference_<table>_*.sql.gz` files found in `BACKUP_DIR`. All files in the dir can coexist from multiple backup runs — the latest per name is used.
+It picks the most recent `public_schema_*.sql.gz` and `public_<table>_*.sql.gz` files found in `BACKUP_DIR`. All files in the dir can coexist from multiple backup runs — the latest per name is used.
 
 **Full database restore** — for backups produced by `db-backup`:
 
@@ -321,8 +344,8 @@ Both targets pipe the decompressed SQL through `psql` into the running container
 
 | Target | File pattern |
 |---|---|
-| `db-backup-tables` | `backups/nrf_reference_schema_<YYYYMMDD_HHMMSS>.sql.gz` (schema + grants) |
-| `db-backup-tables` | `backups/nrf_reference_<table>_<YYYYMMDD_HHMMSS>.sql.gz` (data, one per table) |
+| `db-backup-tables` | `backups/public_schema_<YYYYMMDD_HHMMSS>.sql.gz` (schema + grants) |
+| `db-backup-tables` | `backups/public_<table>_<YYYYMMDD_HHMMSS>.sql.gz` (data, one per table) |
 | `db-backup` | `backups/nrf_impact_<YYYYMMDD_HHMMSS>.sql.gz` |
 | `db-backup-schema` | `backups/nrf_impact_schema_<YYYYMMDD_HHMMSS>.sql.gz` |
 | `db-backup-globals` | `backups/nrf_impact_globals_<YYYYMMDD_HHMMSS>.sql.gz` |
@@ -339,13 +362,13 @@ All files within a single `make` invocation share the same timestamp, making it 
 | `File not found` warning, layer skipped | Source file path is wrong in `.env.local` | Check `BASE_PATH` and the relative paths match your local directory layout |
 | `Missing expected columns` error | Coefficient GeoPackage has unexpected column names | Verify the `COEFFICIENT_LAYER` variable matches the layer name in the GPKG and that source column names match those documented above |
 | `Connection refused` / DB error | PostGIS is not running | Run `docker compose up db` and re-run the script |
-| `relation "nrf_reference.spatial_layer" does not exist` | Migrations have not been applied | Run `uv run alembic upgrade head` |
+| `relation "public.nn_catchments" does not exist` | Migrations have not been applied | Run `uv run alembic upgrade head` |
 | Load completes but row count is 0 | Source file is empty or CRS mismatch caused all geometries to be dropped | Open the source file in QGIS to verify it contains data; check CRS |
 | Coefficient load is very slow | ~5.4M polygons is expected to take several minutes | This is normal; use `--sample` for quick tests |
 | `db-backup-tables` produces empty files | Container not running or DB name wrong | Confirm `docker compose up db` is running and `nrf-postgis` is the container name |
 | `zcat: can't stat` on restore | Wrong path passed to `BACKUP_FILE` | Use the full or relative path, e.g. `make db-restore BACKUP_FILE=./backups/foo.sql.gz` |
 | GRANT errors after per-table restore | Used `db-restore` instead of `db-restore-tables` | Use `make db-restore-tables BACKUP_DIR=./backups` — it applies schema grants before data |
-| `no nrf_reference_schema_*.sql.gz found` | Backup was taken before the schema file was added | Re-take the backup with the current `db-backup-tables`, or manually restore globals + schema first |
+| `no public_schema_*.sql.gz found` | Backup was taken before the schema file was added | Re-take the backup with the current `db-backup-tables`, or manually restore globals + schema first |
 
 ---
 
