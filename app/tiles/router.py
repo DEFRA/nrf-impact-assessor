@@ -25,22 +25,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Validated whitelist: URL slug → qualified table name in public schema.
-# The slug (not raw user input) is used as the MVT layer label in SQL.
+# The slug (not raw user input) is used as the MVT layer label in SQL, and the
+# table name is a value from this map, never anything the caller supplied.
+#
+# Only the EDP layers are served. The national reference layers (nn_catchments,
+# lpa_boundaries, wwtw_catchments, subcatchments) were withdrawn and now 404;
+# their tables are still populated, so restoring one is a single entry here.
 TILE_LAYERS: dict[str, str] = {
-    "nn_catchments": "public.nn_catchments",
-    "lpa_boundaries": "public.lpa_boundaries",
-    "wwtw_catchments": "public.wwtw_catchments",
-    "subcatchments": "public.subcatchments",
+    "edp_boundaries": "public.edp_boundary_layer",
+    "edp_excluded_areas": "public.edp_excluded_areas",
 }
-
-EDP_TILE_LAYERS: frozenset[str] = frozenset({"edp_boundaries"})
 
 # Allow-list mapping for logging: known slug → canonical constant label. Looking
 # the request value up here (rather than logging it) guarantees only a source
 # literal is logged, never user-controlled data (CWE-117).
-_LOG_LAYER_LABELS: dict[str, str] = {
-    slug: slug for slug in (*TILE_LAYERS, *EDP_TILE_LAYERS)
-}
+_LOG_LAYER_LABELS: dict[str, str] = {slug: slug for slug in TILE_LAYERS}
 
 _tile_config = TileServerConfig()
 
@@ -51,9 +50,6 @@ _tile_config = TileServerConfig()
 # Per-layer resolved version cache: slug → (version, expiry)
 _version_cache: dict[str, tuple[int, float]] = {}
 _version_cache_lock = threading.Lock()
-
-# Version cache for edp_boundary_layer (single table, no layer_type key)
-_edp_version_cache: tuple[int, float] | None = None
 
 # In-process LRU tile cache: (layer_slug, z, x, y, version) → (bytes, expiry)
 _tile_cache: OrderedDict[tuple, tuple[bytes, float]] = OrderedDict()
@@ -88,30 +84,6 @@ _TILE_SQL_TEMPLATE = """
     ) q
     WHERE q.geom IS NOT NULL
 """
-
-_EDP_TILE_SQL = text("""
-    SELECT ST_AsMVT(q, :layer_name, 4096, 'geom') AS mvt
-    FROM (
-        SELECT
-            ST_AsMVTGeom(
-                ST_Transform(edp.geometry, 3857),
-                ST_TileEnvelope(:z, :x, :y),
-                4096,
-                64,
-                true
-            ) AS geom,
-            edp.name,
-            edp.attributes
-        FROM public.edp_boundary_layer edp
-        WHERE edp.version = :version
-          AND ST_Intersects(
-                edp.geometry,
-                ST_Transform(ST_TileEnvelope(:z, :x, :y), 27700)
-              )
-    ) q
-    WHERE q.geom IS NOT NULL
-""")
-
 
 # ---------------------------------------------------------------------------
 # Timing
@@ -185,29 +157,6 @@ def _resolve_layer_version(slug: str) -> int:
     return version
 
 
-def _resolve_edp_version() -> int:
-    """Return the current max version for edp_boundary_layer, cached with TTL."""
-    global _edp_version_cache
-    now = time.monotonic()
-
-    with _version_cache_lock:
-        if _edp_version_cache is not None:
-            version, expiry = _edp_version_cache
-            if now < expiry:
-                return version
-
-    repo = _get_repository()
-    with repo.engine.connect() as conn:
-        row = conn.execute(
-            text("SELECT MAX(version) FROM public.edp_boundary_layer")
-        ).fetchone()
-
-    version = row[0] if row and row[0] is not None else 1
-    with _version_cache_lock:
-        _edp_version_cache = (version, now + _tile_config.version_ttl_seconds)
-    return version
-
-
 def _query_tile(
     z: int,
     x: int,
@@ -233,33 +182,13 @@ def _query_tile(
     return bytes(row[0]) if row and row[0] else b""
 
 
-def _query_edp_tile(
-    z: int, x: int, y: int, layer_name: str, version: int, timings: TileTimings
-) -> bytes:
-    """Execute the MVT SQL query against edp_boundary_layer and return raw tile bytes."""
-    repo = _get_repository()
-    t0 = time.perf_counter()
-    with repo.engine.connect() as conn:
-        timings.connect_ms += (time.perf_counter() - t0) * 1000
-        t1 = time.perf_counter()
-        row = conn.execute(
-            _EDP_TILE_SQL,
-            {"layer_name": layer_name, "z": z, "x": x, "y": y, "version": version},
-        ).fetchone()
-        timings.query_ms += (time.perf_counter() - t1) * 1000
-    return bytes(row[0]) if row and row[0] else b""
-
-
 def _get_tile(layer_slug: str, z: int, x: int, y: int) -> tuple[bytes, TileTimings]:
     """Return tile bytes (with phase timings) from cache, or query PostGIS on a miss."""
     timings = TileTimings()
     t_start = time.perf_counter()
 
     t_version = time.perf_counter()
-    if layer_slug in EDP_TILE_LAYERS:
-        version = _resolve_edp_version()
-    else:
-        version = _resolve_layer_version(layer_slug)
+    version = _resolve_layer_version(layer_slug)
     timings.version_ms = (time.perf_counter() - t_version) * 1000
 
     cache_key = (layer_slug, z, x, y, version)
@@ -279,10 +208,7 @@ def _get_tile(layer_slug: str, z: int, x: int, y: int) -> tuple[bytes, TileTimin
             del _tile_cache[cache_key]
     timings.cache_ms = (time.perf_counter() - t_cache) * 1000
 
-    if layer_slug in EDP_TILE_LAYERS:
-        tile_bytes = _query_edp_tile(z, x, y, layer_slug, version, timings)
-    else:
-        tile_bytes = _query_tile(z, x, y, layer_slug, layer_slug, version, timings)
+    tile_bytes = _query_tile(z, x, y, layer_slug, layer_slug, version, timings)
 
     with _tile_cache_lock:
         # Evict oldest entries when at capacity
@@ -342,7 +268,7 @@ def get_tile(request: Request, layer: str, z: int, x: int, y: int) -> Response:
     Returns binary MVT data. An empty tile (no intersecting features) is returned
     as 200 with an empty body — tile clients handle this more reliably than 204.
     """
-    if layer not in TILE_LAYERS and layer not in EDP_TILE_LAYERS:
+    if layer not in TILE_LAYERS:
         raise HTTPException(status_code=404, detail="Unknown layer")
 
     if z < _tile_config.min_zoom or z > _tile_config.max_zoom:
@@ -357,10 +283,7 @@ def get_tile(request: Request, layer: str, z: int, x: int, y: int) -> Response:
     tile_bytes, timings = _get_tile(layer, z, x, y)
     _log_tile_timing(layer, z, x, y, timings)
 
-    if layer in EDP_TILE_LAYERS:
-        version = _edp_version_cache[0] if _edp_version_cache else 1
-    else:
-        version = _version_cache.get(layer, (1, 0.0))[0]
+    version = _version_cache.get(layer, (1, 0.0))[0]
     etag = hashlib.sha256(f"{layer}:{z}:{x}:{y}:{version}".encode()).hexdigest()
     quoted_etag = f'"{etag}"'
 
