@@ -146,14 +146,14 @@ def test_geometry_sql_checks_validity_srid_and_type():
     from app.data_sync.qc_rules import GeometryRule, TableRules
 
     rules = TableRules(
-        geometry=GeometryRule(expected_type="Polygon", expected_srid=27700)
+        geometry=GeometryRule(expected_types=["Polygon"], expected_srid=27700)
     )
     sql = _geometry_sql("nn_catchments", rules)
     assert "NOT ST_IsValid(geometry) AND NOT ST_IsValid(ST_MakeValid(geometry))" in sql
     assert "rule=geometry_valid" in sql
     assert "ST_SRID(geometry) NOT IN (0, 27700)" in sql
     assert "rule=geometry_srid" in sql
-    assert "GeometryType(geometry) <> 'POLYGON'" in sql
+    assert "GeometryType(geometry) NOT IN ('POLYGON')" in sql
     assert "rule=geometry_type" in sql
 
 
@@ -162,10 +162,10 @@ def test_geometry_sql_uses_multipolygon_expectation():
     from app.data_sync.qc_rules import GeometryRule, TableRules
 
     rules = TableRules(
-        geometry=GeometryRule(expected_type="MultiPolygon", expected_srid=27700)
+        geometry=GeometryRule(expected_types=["MultiPolygon"], expected_srid=27700)
     )
     sql = _geometry_sql("lpa_boundaries", rules)
-    assert "GeometryType(geometry) <> 'MULTIPOLYGON'" in sql
+    assert "GeometryType(geometry) NOT IN ('MULTIPOLYGON')" in sql
 
 
 def test_coefficient_range_sql_checks_bounds_and_finiteness():

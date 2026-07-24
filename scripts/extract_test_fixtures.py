@@ -187,6 +187,11 @@ def main(
             settings.edp_boundary_layer,
         ),
         (
+            "edp_excluded_areas",
+            settings.edp_excluded_areas_gpkg_path,
+            settings.edp_excluded_areas_layer,
+        ),
+        (
             "coefficient_layer",
             settings.coefficient_gpkg_path,
             settings.coefficient_layer,

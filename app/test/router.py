@@ -37,18 +37,7 @@ from app.clients.backend_client import BackendClient
 from app.clients.payload_mapper import build_quote_patch_payload
 from app.common.tracing import ctx_trace_id
 from app.config import AWSConfig, BackendConfig
-from app.models.db import (
-    CoefficientLayer,
-    EdpBoundaryLayer,
-    EdpEdges,
-    GcnPonds,
-    GcnRiskZones,
-    LookupTable,
-    LpaBoundaries,
-    NnCatchments,
-    Subcatchments,
-    WwtwCatchments,
-)
+from app.data_sync.service import REFERENCE_TABLES
 from app.models.domain import (
     CatchmentImpact,
     Development,
@@ -216,18 +205,7 @@ def check_db() -> DbCheckResponse:
         except Exception as e:
             return None, "error", str(e)
 
-    for model, label in [
-        (CoefficientLayer, "coefficient_layer"),
-        (EdpBoundaryLayer, "edp_boundary_layer"),
-        (LookupTable, "lookup_table"),
-        (WwtwCatchments, "wwtw_catchments"),
-        (LpaBoundaries, "lpa_boundaries"),
-        (NnCatchments, "nn_catchments"),
-        (Subcatchments, "subcatchments"),
-        (GcnRiskZones, "gcn_risk_zones"),
-        (GcnPonds, "gcn_ponds"),
-        (EdpEdges, "edp_edges"),
-    ]:
+    for model, label in REFERENCE_TABLES:
         n, status, err = _count(model)
         tables.append(DbTableStatus(table=label, row_count=n, status=status, error=err))
 

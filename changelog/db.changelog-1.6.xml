@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- Alembic revision: b2e5f0a1c9d4 -->
+
+    <changeSet id="06-edp-excluded-areas" author="nrf">
+        <createTable tableName="edp_excluded_areas" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="geometry" type="geometry(GEOMETRY,27700)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="name" type="varchar"/>
+            <column name="attributes" type="jsonb"/>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex indexName="ix_public_edp_excluded_areas_version"
+                     tableName="edp_excluded_areas" schemaName="public">
+            <column name="version"/>
+        </createIndex>
+        <createIndex indexName="ix_public_edp_excluded_areas_name"
+                     tableName="edp_excluded_areas" schemaName="public">
+            <column name="name"/>
+        </createIndex>
+        <sql>
+            CREATE INDEX ix_public_edp_excluded_areas_geometry
+            ON public.edp_excluded_areas USING GIST (geometry)
+        </sql>
+        <rollback>
+            <dropTable tableName="edp_excluded_areas" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

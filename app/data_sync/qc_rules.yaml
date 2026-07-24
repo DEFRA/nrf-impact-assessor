@@ -29,14 +29,14 @@ tables:
       columns: ["attributes.WwTw_ID"]
       source: json
       unique: true
-    geometry: {expected_type: Polygon, expected_srid: 27700}
+    geometry: {expected_types: [Polygon, MultiPolygon], expected_srid: 27700}
 
   lpa_boundaries:
     key:
       columns: ["attributes.NAME"]
       source: json
       unique: false
-    geometry: {expected_type: MultiPolygon, expected_srid: 27700}
+    geometry: {expected_types: [Polygon, MultiPolygon], expected_srid: 27700}
 
   nn_catchments:
     key:
@@ -44,14 +44,14 @@ tables:
       source: json
       unique: true
     non_null_json_columns: ["attributes.N2K_Site_N"]
-    geometry: {expected_type: Polygon, expected_srid: 27700}
+    geometry: {expected_types: [Polygon, MultiPolygon], expected_srid: 27700}
 
   subcatchments:
     key:
       columns: ["attributes.OPCAT_NAME"]
       source: json
       unique: false
-    geometry: {expected_type: Polygon, expected_srid: 27700}
+    geometry: {expected_types: [Polygon, MultiPolygon], expected_srid: 27700}
 
   gcn_risk_zones:
     key:
@@ -60,16 +60,20 @@ tables:
       unique: false
     allowed_values:
       "attributes.RZ": ["Red", "Amber", "Green"]
-    geometry: {expected_type: MultiPolygon, expected_srid: 27700}
+    geometry: {expected_types: [MultiPolygon], expected_srid: 27700}
 
   gcn_ponds:
-    geometry: {expected_type: MultiPolygon, expected_srid: 27700}
+    geometry: {expected_types: [MultiPolygon], expected_srid: 27700}
 
   edp_edges:
-    geometry: {expected_type: MultiPolygon, expected_srid: 27700}
+    geometry: {expected_types: [MultiPolygon], expected_srid: 27700}
 
   edp_boundary_layer:
-    geometry: {expected_type: Polygon, expected_srid: 27700}
+    non_null_json_columns: ["attributes.EDP_Name"]
+    geometry: {expected_types: [MultiPolygon], expected_srid: 27700}
+
+  edp_excluded_areas:
+    geometry: {expected_types: [MultiPolygon], expected_srid: 27700}
 
 referential_checks:
   - name: rates_lookup_nn_catchment

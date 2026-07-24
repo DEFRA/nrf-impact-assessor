@@ -47,6 +47,7 @@ from app.models.db import (
     CoefficientLayer,
     EdpBoundaryLayer,
     EdpEdges,
+    EdpExcludedAreas,
     GcnPonds,
     GcnRiskZones,
     LookupTable,
@@ -99,6 +100,21 @@ def clean_nan_values(obj: Any) -> Any:
         return None
     return obj
 
+
+# Layers handled by SpatialDataLoader.load_spatial_layers (keys of its
+# layers_config registry), plus "coefficients" which has a dedicated loader.
+SPATIAL_LAYER_CHOICES = (
+    "wwtw_catchments",
+    "lpa_boundaries",
+    "nn_catchments",
+    "subcatchments",
+    "gcn_risk_zones",
+    "gcn_ponds",
+    "edp_edges",
+    "edp_boundaries",
+    "edp_excluded_areas",
+)
+ALL_LAYER_CHOICES = (*SPATIAL_LAYER_CHOICES, "coefficients")
 
 _NAME_COLUMN_CANDIDATES = ("name", "Name", "NAME", "label", "id")
 
@@ -153,6 +169,8 @@ class SpatialDataLoader:
             self.edp_edges_layer = "edp_edges"
             self.edp_boundary_gpkg = fixtures_dir / "edp_boundaries.gpkg"
             self.edp_boundary_layer = "edp_boundaries"
+            self.edp_excluded_areas_gpkg = fixtures_dir / "edp_excluded_areas.gpkg"
+            self.edp_excluded_areas_layer = "edp_excluded_areas"
         else:
             if settings is None:
                 msg = "Either settings or fixtures_dir must be provided"
@@ -176,13 +194,14 @@ class SpatialDataLoader:
             self.edp_edges_layer = settings.edp_edges_layer
             self.edp_boundary_gpkg = settings.edp_boundary_gpkg_path
             self.edp_boundary_layer = settings.edp_boundary_layer
+            self.edp_excluded_areas_gpkg = settings.edp_excluded_areas_gpkg_path
+            self.edp_excluded_areas_layer = settings.edp_excluded_areas_layer
 
     def load_all(self) -> None:
         """Load all reference data layers and lookups."""
         print("Loading all data...")
         self.load_spatial_layers()
         self.load_coefficient_layer()
-        self.load_edp_boundaries()
         self.load_lookup_tables()
         print("All data loaded successfully!")
 
@@ -219,6 +238,18 @@ class SpatialDataLoader:
                 "path": self.edp_edges_gdb,
                 "layer": self.edp_edges_layer,
             },
+            "edp_boundaries": {
+                "model": EdpBoundaryLayer,
+                "path": self.edp_boundary_gpkg,
+                "layer": self.edp_boundary_layer,
+                "name_column": "EDP_Name",
+            },
+            "edp_excluded_areas": {
+                "model": EdpExcludedAreas,
+                "path": self.edp_excluded_areas_gpkg,
+                "layer": self.edp_excluded_areas_layer,
+                "name_column": "site_name",
+            },
         }
 
         if layer_types:
@@ -230,6 +261,7 @@ class SpatialDataLoader:
                 model=config["model"],
                 file_path=config["path"],
                 layer=config.get("layer"),
+                name_column=config.get("name_column"),
             )
 
     @staticmethod
@@ -266,9 +298,18 @@ class SpatialDataLoader:
         return gdf, total_features
 
     @staticmethod
-    def _build_base_clean_gdf(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-        """Build a clean GeoDataFrame with id, version, name and JSONB attributes."""
-        name_col = _find_name_column(gdf)
+    def _build_base_clean_gdf(
+        gdf: gpd.GeoDataFrame, name_column: str | None = None
+    ) -> gpd.GeoDataFrame:
+        """Build a clean GeoDataFrame with id, version, name and JSONB attributes.
+
+        When name_column is given and present in gdf, it is used for the ``name``
+        column; otherwise the recognised-name-column heuristic is used.
+        """
+        if name_column is not None and name_column in gdf.columns:
+            name_col: str | None = name_column
+        else:
+            name_col = _find_name_column(gdf)
         attribute_columns = [col for col in gdf.columns if col != "geometry"]
 
         clean_gdf = gpd.GeoDataFrame(geometry=gdf.geometry, crs=gdf.crs)
@@ -423,6 +464,7 @@ class SpatialDataLoader:
         model: type,
         file_path: Path,
         layer: str | None = None,
+        name_column: str | None = None,
     ) -> None:
         """Load a single spatial layer into its dedicated PostGIS table.
 
@@ -431,6 +473,8 @@ class SpatialDataLoader:
             model: SQLAlchemy model class for the target table
             file_path: Path to shapefile or geopackage
             layer: Layer name for geopackage (None for shapefile)
+            name_column: Source column to map to the ``name`` column (overrides
+                the recognised-name-column heuristic)
         """
         if not file_path.exists():
             print(f"Skipping {layer_name}: File not found at {file_path}")
@@ -444,7 +488,7 @@ class SpatialDataLoader:
         gdf = self._normalise_gdf(gdf)
         gdf, total_features = self._apply_sample_mode(gdf)
 
-        clean_gdf = self._build_base_clean_gdf(gdf)
+        clean_gdf = self._build_base_clean_gdf(gdf, name_column=name_column)
 
         self._clear_load_verify(
             clean_gdf,
@@ -452,29 +496,6 @@ class SpatialDataLoader:
             total_features,
             delete(model),
             select(func.count()).select_from(model),
-        )
-
-    def load_edp_boundaries(self) -> None:
-        """Load EDP boundary polygons into dedicated edp_boundary_layer table."""
-        if not self.edp_boundary_gpkg.exists():
-            print(
-                f"Skipping edp_boundaries: File not found at {self.edp_boundary_gpkg}"
-            )
-            return
-
-        print(f"Loading edp_boundaries from {self.edp_boundary_gpkg.name}...")
-
-        gdf = gpd.read_file(self.edp_boundary_gpkg, layer=self.edp_boundary_layer)
-        gdf = self._normalise_gdf(gdf)
-        gdf, total_features = self._apply_sample_mode(gdf)
-        clean_gdf = self._build_base_clean_gdf(gdf)
-
-        self._clear_load_verify(
-            clean_gdf,
-            "edp_boundary_layer",
-            total_features,
-            delete(EdpBoundaryLayer),
-            select(func.count()).select_from(EdpBoundaryLayer),
         )
 
     def load_lookup_tables(self) -> None:
@@ -581,15 +602,11 @@ class SpatialDataLoader:
 
 def _load_selected_layers(loader: "SpatialDataLoader", layer: list[str]) -> None:
     """Load the specific layers requested, routing each to its dedicated loader."""
-    regular_layers = [
-        name for name in layer if name not in ("coefficients", "edp_boundaries")
-    ]
+    regular_layers = [name for name in layer if name != "coefficients"]
     if regular_layers:
         loader.load_spatial_layers(layer_types=regular_layers)
     if "coefficients" in layer:
         loader.load_coefficient_layer()
-    if "edp_boundaries" in layer:
-        loader.load_edp_boundaries()
 
 
 def _validate_names(names: list[str] | None, valid: list[str], kind: str) -> None:
@@ -641,8 +658,7 @@ def main(
         list[str] | None,
         typer.Option(
             help="Specific spatial layer(s) to load. Can be specified multiple times. "
-            "Choices: wwtw_catchments, lpa_boundaries, nn_catchments, subcatchments, coefficients, "
-            "gcn_risk_zones, gcn_ponds, edp_edges, edp_boundaries"
+            f"Choices: {', '.join(ALL_LAYER_CHOICES)}"
         ),
     ] = None,
     lookup: Annotated[
@@ -677,19 +693,8 @@ def main(
     (no .env.local required, confirmation prompt is skipped automatically).
     """
     # Validate layer and lookup names
-    valid_layers = [
-        "wwtw_catchments",
-        "lpa_boundaries",
-        "nn_catchments",
-        "subcatchments",
-        "coefficients",
-        "gcn_risk_zones",
-        "gcn_ponds",
-        "edp_edges",
-        "edp_boundaries",
-    ]
     valid_lookups = ["wwtw_lookup", "rates_lookup"]
-    _validate_names(layer, valid_layers, "layer")
+    _validate_names(layer, list(ALL_LAYER_CHOICES), "layer")
     _validate_names(lookup, valid_lookups, "lookup")
 
     # Create repository

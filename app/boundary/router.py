@@ -295,10 +295,11 @@ def _find_intersecting_edps(
     results = []
     for row in rows:
         area_sqm = row.intersection_area_sqm or 0.0
+        edp_name = (row.attributes or {}).get("EDP_Name")
         results.append(
             {
-                "label": (row.attributes or {}).get("Label"),
-                "n2k_site_name": (row.attributes or {}).get("N2K_Site_N"),
+                "label": edp_name,
+                "n2k_site_name": edp_name,
                 "edp_geometry": json.loads(row.edp_geojson),
                 "intersection_geometry": json.loads(row.intersection_geojson),
                 "overlap_area_ha": round(area_sqm / 10000.0, 4),

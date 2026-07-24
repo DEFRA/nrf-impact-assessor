@@ -25,6 +25,7 @@ from app.models.db import (
     DataSyncRun,
     EdpBoundaryLayer,
     EdpEdges,
+    EdpExcludedAreas,
     GcnPonds,
     GcnRiskZones,
     LookupTable,
@@ -39,8 +40,8 @@ from app.repositories.repository import clear_spatial_caches
 
 logger = logging.getLogger(__name__)
 
-# Same reference tables the /test/db check endpoint reports on.
-_REFERENCE_TABLES = [
+# Canonical reference-table registry; the /test/db check endpoint iterates it too.
+REFERENCE_TABLES = [
     (CoefficientLayer, "coefficient_layer"),
     (EdpBoundaryLayer, "edp_boundary_layer"),
     (LookupTable, "lookup_table"),
@@ -51,9 +52,10 @@ _REFERENCE_TABLES = [
     (GcnRiskZones, "gcn_risk_zones"),
     (GcnPonds, "gcn_ponds"),
     (EdpEdges, "edp_edges"),
+    (EdpExcludedAreas, "edp_excluded_areas"),
 ]
 
-_MODEL_BY_TABLE_NAME = {label: model for model, label in _REFERENCE_TABLES}
+_MODEL_BY_TABLE_NAME = {label: model for model, label in REFERENCE_TABLES}
 
 
 def _log_table_status(session: Session, *, context: str = "Post-sync") -> None:
@@ -66,7 +68,7 @@ def _log_table_status(session: Session, *, context: str = "Post-sync") -> None:
         parts: list[str] = []
         empty: list[str] = []
         errors: list[str] = []
-        for model, label in _REFERENCE_TABLES:
+        for model, label in REFERENCE_TABLES:
             try:
                 n = session.scalar(select(func.count()).select_from(model))
             except Exception as exc:  # noqa: BLE001

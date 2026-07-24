@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 from app.data_sync import service
-from app.data_sync.service import _log_table_status
+from app.data_sync.service import REFERENCE_TABLES, _log_table_status
 
-N_TABLES = 10
+N_TABLES = len(REFERENCE_TABLES)
 
 
 def test_logs_single_info_line_when_all_tables_have_rows(caplog):

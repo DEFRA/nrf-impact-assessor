@@ -49,7 +49,7 @@ def test_geometry_rule_passes_on_valid_geometry(test_engine):
             )
         )
         rules = TableRules(
-            geometry=GeometryRule(expected_type="Polygon", expected_srid=27700)
+            geometry=GeometryRule(expected_types=["Polygon"], expected_srid=27700)
         )
         _run_qc(conn, "wwtw_catchments", rules)  # must not raise
 
@@ -75,7 +75,7 @@ def test_geometry_rule_tolerates_repairable_invalid_geometry(test_engine):
             )
         )
         rules = TableRules(
-            geometry=GeometryRule(expected_type="Polygon", expected_srid=27700)
+            geometry=GeometryRule(expected_types=["Polygon"], expected_srid=27700)
         )
         _run_qc(
             conn, "wwtw_catchments", rules
@@ -97,7 +97,7 @@ def test_geometry_rule_fails_on_wrong_srid(test_engine):
             )
         )
         rules = TableRules(
-            geometry=GeometryRule(expected_type="Polygon", expected_srid=27700)
+            geometry=GeometryRule(expected_types=["Polygon"], expected_srid=27700)
         )
         with pytest.raises(Exception, match="geometry_srid"):
             _run_qc(conn, "wwtw_catchments", rules)
