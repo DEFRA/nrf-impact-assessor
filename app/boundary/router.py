@@ -159,7 +159,7 @@ def _check_declared_geojson_crs(content: bytes, ext: str) -> None:
 
     try:
         crs_name = json.loads(content)["crs"]["properties"]["name"]
-    except (json.JSONDecodeError, KeyError, TypeError):
+    except (json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError):
         return
 
     try:
@@ -168,7 +168,10 @@ def _check_declared_geojson_crs(content: bytes, ext: str) -> None:
         msg = f"Unrecognised coordinate reference system: {e}"
         raise UnsupportedCRSError(msg) from e
 
-    if epsg not in SUPPORTED_CRS:
+    # A resolvable CRS with no EPSG mapping (e.g. OGC:CRS84, the RFC 7946
+    # canonical GeoJSON CRS) is left for GDAL/ensure_crs to normalise —
+    # only a name that fails to resolve at all is rejected here.
+    if epsg is not None and epsg not in SUPPORTED_CRS:
         msg = f"Unsupported coordinate reference system: EPSG:{epsg}"
         raise UnsupportedCRSError(msg)
 
