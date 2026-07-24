@@ -3,18 +3,18 @@ name = "nrf-impact-assessor"
 version = "0.2.0"
 description = "nrf-impact-assessor"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.18.5",
     "alembic-postgresql-enum>=1.10.0",
     "asgi-logger==0.1.0",
     "aws-embedded-metrics==3.5.0",
-    "boto3==1.43.45",
+    "boto3==1.43.55",
     "cachetools>=5.3.0",
     "dnspython==2.8.0",
     "ecs-logging==2.3.0",
     "email-validator>=2.3.0",
-    "fastapi==0.139.0",
+    "fastapi==0.139.2",
     "geoalchemy2>=0.20.0",
     "geopandas>=1.1.4",
     "moto>=5.2.2",
@@ -33,14 +33,14 @@ dependencies = [
 dev = [
     "moto[s3,sqs]>=5.2.2",
     "httpx==0.28.1",
-    "pre-commit==4.6.0",
+    "pre-commit==4.6.1",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
     "pytest-mock>=3.15.1",
-    "ruff==0.15.21",
+    "ruff==0.16.0",
     "taskipy==1.14.1",
-    "boto3-stubs==1.43.45"
+    "boto3-stubs==1.43.55"
 ]
 
 
