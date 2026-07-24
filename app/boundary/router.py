@@ -25,9 +25,11 @@ from geoalchemy2.functions import (
     ST_SetSRID,
     ST_Transform,
 )
+from pyproj import CRS
+from pyproj.exceptions import CRSError
 from sqlalchemy import select
 
-from app.boundary.validation import validate_geometry
+from app.boundary.validation import SUPPORTED_CRS, validate_geometry
 from app.config import ApiServerConfig
 from app.models.db import EdpBoundaryLayer
 from app.repositories.engine import get_shared_repository
@@ -133,6 +135,42 @@ def _write_to_temp(content: bytes, tmpdir: Path, suffix: str) -> Path:
     with tempfile.NamedTemporaryFile(dir=tmpdir, suffix=suffix, delete=False) as tmp:
         tmp.write(content)
         return Path(tmp.name)
+
+
+def _check_declared_geojson_crs(content: bytes, ext: str) -> None:
+    """Reject a GeoJSON/JSON file that declares an unresolvable CRS.
+
+    GDAL honours a valid, resolvable "crs" member on read, but when the
+    declared CRS name can't be resolved at all (e.g. an EPSG code that
+    doesn't exist) it silently falls back to assuming WGS84 — as GeoJSON
+    (RFC 7946) deprecated the "crs" member and mandates WGS84 by default —
+    rather than surfacing an error. That leaves the file's real coordinates
+    misread as WGS84, so it fails a later, unrelated validation check
+    instead of a CRS one. We check the declared CRS ourselves before
+    handing the file to geopandas, so an unresolvable CRS is rejected with
+    the correct CRS error instead.
+
+    Raises:
+        UnsupportedCRSError: If a declared CRS is present but unrecognised
+            or not in SUPPORTED_CRS.
+    """
+    if ext not in _GEOJSON_EXTENSIONS:
+        return
+
+    try:
+        crs_name = json.loads(content)["crs"]["properties"]["name"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return
+
+    try:
+        epsg = CRS(crs_name).to_epsg()
+    except CRSError as e:
+        msg = f"Unrecognised coordinate reference system: {e}"
+        raise UnsupportedCRSError(msg) from e
+
+    if epsg not in SUPPORTED_CRS:
+        msg = f"Unsupported coordinate reference system: EPSG:{epsg}"
+        raise UnsupportedCRSError(msg)
 
 
 def _read_geometry(
@@ -344,6 +382,12 @@ async def check_boundary(
         return _make_response(413, error="file_size_too_large")
 
     filename = geometry_file.filename or "input.geojson"
+    ext = Path(filename).suffix.lower()
+
+    try:
+        _check_declared_geojson_crs(content, ext)
+    except UnsupportedCRSError:
+        return _make_response(422, error="unsupported_crs")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
@@ -353,7 +397,6 @@ async def check_boundary(
 
         # GeoJSON (RFC 7946) and KML (OGC spec) mandate WGS84 —
         # safe to assume EPSG:4326 when no CRS is present.
-        ext = Path(filename).suffix.lower()
         if gdf.crs is None and ext in _WGS84_EXTENSIONS:
             gdf = gdf.set_crs(_WGS84)
 

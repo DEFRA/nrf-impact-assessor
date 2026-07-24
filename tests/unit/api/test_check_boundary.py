@@ -444,6 +444,16 @@ class TestCheckBoundaryUnsupportedCRS:
         assert response.status_code == 422
         assert response.json()["error"] == "unsupported_crs"
 
+    def test_unresolvable_crs_in_geojson_returns_422(self, client):
+        """GeoJSON declaring a CRS that doesn't exist (e.g. a made-up EPSG
+        code) should be rejected as unsupported, not silently treated as
+        WGS84 and rejected by an unrelated geometry check."""
+        content = _make_geojson_bytes(crs="urn:ogc:def:crs:EPSG::99999")
+        response = _post_boundary(client, "unknown_crs.geojson", content)
+
+        assert response.status_code == 422
+        assert response.json()["error"] == "unsupported_crs"
+
     def test_unsupported_crs_in_shapefile_returns_422(self, client):
         """Shapefile with an unsupported CRS should be rejected."""
         zip_buf = _make_shapefile_zip_with_crs("EPSG:3857")
