@@ -97,8 +97,10 @@ def _good_dumps() -> dict[str, bytes]:
             table,
             "id, version, geometry, name, attributes, created_at",
             [
-                f"{uuid4()}\t1\t{_good_geom(table)}\tName\t{attrs}"
-                "\t2026-01-01 00:00:00+00\n"
+                (
+                    f"{uuid4()}\t1\t{_good_geom(table)}\tName\t{attrs}"
+                    "\t2026-01-01 00:00:00+00\n"
+                )
             ],
         )
     dumps["coefficient_layer"] = _dump(
@@ -107,21 +109,27 @@ def _good_dumps() -> dict[str, bytes]:
         "subcatchment, lu_curr_n_coeff, lu_curr_p_coeff, n_resi_coeff, "
         "p_resi_coeff, created_at",
         [
-            f"{uuid4()}\t1\t{_good_geom('coefficient_layer')}\tCROME1\tARABLE"
-            "\tSite A\tCatchment A"
-            "\t10\t0.5\t12\t1.2\t2026-01-01 00:00:00+00\n"
+            (
+                f"{uuid4()}\t1\t{_good_geom('coefficient_layer')}\tCROME1\tARABLE"
+                "\tSite A\tCatchment A"
+                "\t10\t0.5\t12\t1.2\t2026-01-01 00:00:00+00\n"
+            )
         ],
     )
     dumps["lookup_table"] = _dump(
         "lookup_table",
         "id, name, version, data, schema, description, source, license, created_at",
         [
-            f"{uuid4()}\twwtw_lookup\t1\t"
-            '[{"wwtw_code": "1", "wwtw_subcatchment": "Catchment A"}]'
-            "\t\\N\t\\N\t\\N\t\\N\t2026-01-01 00:00:00+00\n",
-            f"{uuid4()}\trates_lookup\t1\t"
-            '[{"nn_catchment": "Site A", "occupancy_rate": 2.4}]'
-            "\t\\N\t\\N\t\\N\t\\N\t2026-01-01 00:00:00+00\n",
+            (
+                f"{uuid4()}\twwtw_lookup\t1\t"
+                '[{"wwtw_code": "1", "wwtw_subcatchment": "Catchment A"}]'
+                "\t\\N\t\\N\t\\N\t\\N\t2026-01-01 00:00:00+00\n"
+            ),
+            (
+                f"{uuid4()}\trates_lookup\t1\t"
+                '[{"nn_catchment": "Site A", "occupancy_rate": 2.4}]'
+                "\t\\N\t\\N\t\\N\t\\N\t2026-01-01 00:00:00+00\n"
+            ),
         ],
     )
     return dumps
@@ -173,8 +181,10 @@ def test_bad_manifest_rolls_back_every_table_and_records_per_table_detail(
         "nn_catchments",
         "id, version, geometry, name, attributes, created_at",
         [
-            f"{uuid4()}\t1\t{_good_geom('nn_catchments')}\tBad\t\\N"
-            "\t2026-01-01 00:00:00+00\n"
+            (
+                f"{uuid4()}\t1\t{_good_geom('nn_catchments')}\tBad\t\\N"
+                "\t2026-01-01 00:00:00+00\n"
+            )
         ],
     )
     # Break coefficient_layer: coefficient out of range.
@@ -184,9 +194,11 @@ def test_bad_manifest_rolls_back_every_table_and_records_per_table_detail(
         "subcatchment, lu_curr_n_coeff, lu_curr_p_coeff, n_resi_coeff, "
         "p_resi_coeff, created_at",
         [
-            f"{uuid4()}\t1\t{_good_geom('coefficient_layer')}\tCROME1\tARABLE"
-            "\tSite A\tCatchment A"
-            "\t9999\t0.5\t12\t1.2\t2026-01-01 00:00:00+00\n"
+            (
+                f"{uuid4()}\t1\t{_good_geom('coefficient_layer')}\tCROME1\tARABLE"
+                "\tSite A\tCatchment A"
+                "\t9999\t0.5\t12\t1.2\t2026-01-01 00:00:00+00\n"
+            )
         ],
     )
 

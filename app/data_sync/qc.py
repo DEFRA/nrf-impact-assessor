@@ -332,13 +332,15 @@ def build_qc_sql(items: list[tuple[str, Path]], rules: QcRules) -> str:
     """
     staged_tables = {table for table, _ in items}
     parts = [
-        "DO $qc$\n"
-        "DECLARE\n"
-        "  failures text[] := ARRAY[]::text[];\n"
-        "  detail_count bigint;\n"
-        "  staged_count bigint;\n"
-        "  prev_count bigint;\n"
-        "BEGIN\n"
+        (
+            "DO $qc$\n"
+            "DECLARE\n"
+            "  failures text[] := ARRAY[]::text[];\n"
+            "  detail_count bigint;\n"
+            "  staged_count bigint;\n"
+            "  prev_count bigint;\n"
+            "BEGIN\n"
+        )
     ]
     for table in staged_tables:
         table_rules = rules.tables.get(table)

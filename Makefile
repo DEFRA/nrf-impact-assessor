@@ -43,6 +43,9 @@ TS             = $(shell date +%Y%m%d_%H%M%S)
 BACKUP_FILE  ?= $(BACKUP_DIR)/$(DB_NAME)_$(TS).sql.gz
 # Part size for split backups (GitHub rejects files over 100MB)
 BACKUP_PART_SIZE ?= 100m
+# Target used in the generated restore_commands.txt (remote/prod restore)
+RESTORE_USER ?= nrf_impact_assessor_ddl
+RESTORE_DB   ?= nrf_impact_assessor
 
 # Tables to include in per-table backup (schema-qualified)
 DB_TABLES = \
@@ -58,11 +61,27 @@ DB_TABLES = \
 	public.gcn_ponds \
 	public.edp_edges
 
-db-backup: ## Full backup — schema, data, custom types and grants, split into <100MB parts (.sql.gz.part-*)
+db-tables: ## List public tables with their exact row counts
+	@docker exec $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -tA -c \
+		"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename" \
+	| while read t; do \
+		[ -z "$$t" ] && continue; \
+		c=$$(docker exec $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -tAc \
+			"SELECT count(*) FROM public.\"$$t\""); \
+		printf '  %-30s %12s\n' "$$t" "$$c"; \
+	done
+
+db-backup: ## Full backup — schema, data, custom types and grants, split into <100MB parts (.sql.gz.part-*); set SPLIT=0 for a single .sql.gz
 	@mkdir -p $(BACKUP_DIR)
-	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
-		--no-password $(DB_NAME) | gzip | split -b $(BACKUP_PART_SIZE) - $(BACKUP_FILE).part-
-	@echo "Backup written to $(BACKUP_FILE).part-*"
+	@if [ "$(SPLIT)" = "0" ]; then \
+		docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
+			--no-password $(DB_NAME) | gzip > $(BACKUP_FILE); \
+		echo "Backup written to $(BACKUP_FILE)"; \
+	else \
+		docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
+			--no-password $(DB_NAME) | gzip | split -b $(BACKUP_PART_SIZE) - $(BACKUP_FILE).part-; \
+		echo "Backup written to $(BACKUP_FILE).part-*"; \
+	fi
 
 db-backup-schema: ## Schema-only backup — tables, enums, indexes, grants (.sql.gz, no data)
 	@mkdir -p $(BACKUP_DIR)
@@ -77,26 +96,41 @@ db-backup-globals: ## Cluster-level roles and grants (.sql.gz via pg_dumpall)
 		| gzip > $(BACKUP_DIR)/$(DB_NAME)_globals_$(TS).sql.gz
 	@echo "Globals backup written to $(BACKUP_DIR)"
 
-db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table in public (large tables split into .part-*)
+db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table in public (large tables split into .part-*); set SPLIT=0 to never split
 	@mkdir -p $(BACKUP_DIR)
 	@schema_out="$(BACKUP_DIR)/public_schema_$(TS).sql.gz"; \
 	echo "  public schema → $$schema_out"; \
 	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
-		--no-password --schema-only -n public $(DB_NAME) | gzip > "$$schema_out"
-	@for table in $(DB_TABLES); do \
+		--no-password --schema-only -n public $(DB_NAME) | gzip > "$$schema_out"; \
+	restore="$(BACKUP_DIR)/restore_commands.txt"; \
+	printf 'gunzip -c %s | psql -U $(RESTORE_USER) -d $(RESTORE_DB) -v ON_ERROR_STOP=1\n\n' \
+		"$$(basename "$$schema_out")" > "$$restore"
+	@restore="$(BACKUP_DIR)/restore_commands.txt"; \
+	for table in $(DB_TABLES); do \
 		name=$$(echo $$table | tr '.' '_'); \
 		out="$(BACKUP_DIR)/$${name}_$(TS).sql.gz"; \
 		echo "  $$table → $$out"; \
-		docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
-			--no-password --data-only -t $$table $(DB_NAME) | gzip \
-			| split -b $(BACKUP_PART_SIZE) - "$$out.part-"; \
-		if [ ! -e "$$out.part-ab" ]; then \
-			mv "$$out.part-aa" "$$out"; \
+		if [ "$(SPLIT)" = "0" ]; then \
+			docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
+				--no-password --data-only -t $$table $(DB_NAME) | gzip > "$$out"; \
 		else \
-			echo "    split into $$(ls "$$out".part-* | wc -l | tr -d ' ') parts"; \
+			docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
+				--no-password --data-only -t $$table $(DB_NAME) | gzip \
+				| split -b $(BACKUP_PART_SIZE) - "$$out.part-"; \
+			if [ ! -e "$$out.part-ab" ]; then \
+				mv "$$out.part-aa" "$$out"; \
+			else \
+				echo "    split into $$(ls "$$out".part-* | wc -l | tr -d ' ') parts"; \
+			fi; \
 		fi; \
+		base=$$(basename "$$out"); \
+		if [ -e "$$out" ]; then decompress="gunzip -c $$base"; \
+		else decompress="cat $$base.part-* | gunzip -c"; fi; \
+		printf 'psql -U $(RESTORE_USER) -d $(RESTORE_DB) -c "TRUNCATE TABLE %s;" && %s | psql -U $(RESTORE_USER) -d $(RESTORE_DB) -v ON_ERROR_STOP=1\n' \
+			"$$table" "$$decompress" >> "$$restore"; \
 	done
 	@echo "Per-table backups written to $(BACKUP_DIR)"
+	@echo "Restore commands written to $(BACKUP_DIR)/restore_commands.txt"
 
 db-restore: ## Restore from backup: make db-restore BACKUP_FILE=./backups/foo.sql.gz (whole file or .part-* splits)
 	@test -n "$(BACKUP_FILE)" || (echo "ERROR: set BACKUP_FILE=<path>"; exit 1)

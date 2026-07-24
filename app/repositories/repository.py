@@ -611,7 +611,7 @@ class Repository:
         """Close the repository and dispose of the engine."""
         self.engine.dispose()
 
-    def __enter__(self) -> "Repository":
+    def __enter__(self) -> Repository:
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
