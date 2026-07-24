@@ -444,6 +444,37 @@ class TestCheckBoundaryUnsupportedCRS:
         assert response.status_code == 422
         assert response.json()["error"] == "unsupported_crs"
 
+    def test_unresolvable_crs_in_geojson_returns_422(self, client):
+        """GeoJSON declaring a CRS that doesn't exist (e.g. a made-up EPSG
+        code) should be rejected as unsupported, not silently treated as
+        WGS84 and rejected by an unrelated geometry check."""
+        content = _make_geojson_bytes(crs="urn:ogc:def:crs:EPSG::99999")
+        response = _post_boundary(client, "unknown_crs.geojson", content)
+
+        assert response.status_code == 422
+        assert response.json()["error"] == "unsupported_crs"
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_crs84_geojson_is_accepted(self, client):
+        """OGC:CRS84 — the RFC 7946 canonical GeoJSON CRS — resolves fine
+        via pyproj but has no EPSG mapping, so it must not be rejected by
+        the declared-CRS pre-check; it should fall through to GDAL/
+        ensure_crs, which normalises it to WGS84 as before."""
+        content = _make_geojson_bytes(crs="urn:ogc:def:crs:OGC:1.3:CRS84")
+        response = _post_boundary(client, "crs84.geojson", content)
+
+        assert response.status_code == 200
+        assert response.json()["error"] is None
+
+    def test_undecodable_geojson_content_returns_400(self, client):
+        """Content that isn't valid UTF-8 must fall through to the existing
+        unreadable_geometry_file handling rather than raising an unhandled
+        UnicodeDecodeError out of the declared-CRS pre-check."""
+        response = _post_boundary(client, "bad_encoding.geojson", b"\xff")
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "unreadable_geometry_file"
+
     def test_unsupported_crs_in_shapefile_returns_422(self, client):
         """Shapefile with an unsupported CRS should be rejected."""
         zip_buf = _make_shapefile_zip_with_crs("EPSG:3857")
