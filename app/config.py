@@ -30,7 +30,7 @@ class AppConfig(BaseSettings):
     )
 
     @model_validator(mode="after")
-    def _require_api_key_in_production(self) -> "AppConfig":
+    def _require_api_key_in_production(self) -> AppConfig:
         # Fail closed at startup if the api key is unset in production. Allows
         # empty values in dev/test so local stacks without auth wired still boot.
         if self.python_env == "production" and not self.impact_assessor_api_key:
@@ -348,7 +348,7 @@ class BackendConfig(BaseSettings):
     )
 
     @model_validator(mode="after")
-    def _require_api_key_in_production(self) -> "BackendConfig":
+    def _require_api_key_in_production(self) -> BackendConfig:
         # Fail closed at startup if the api key is unset in production. Allows
         # empty values in dev/test so local stacks without auth wired still boot.
         if os.environ.get("PYTHON_ENV") == "production" and not self.api_key:
@@ -511,7 +511,7 @@ class DebugConfig:
         self.output_dir = output_dir
 
     @classmethod
-    def from_env(cls) -> "DebugConfig":
+    def from_env(cls) -> DebugConfig:
         return cls(
             enabled=os.environ.get("DEBUG_OUTPUT", "false").lower() == "true",
             output_dir=Path(

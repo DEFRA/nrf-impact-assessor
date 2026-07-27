@@ -101,7 +101,7 @@ def _difference_chunk(
 
 def _partition_axis(
     gdf: gpd.GeoDataFrame,
-    coords: "pd.Series",
+    coords: pd.Series,
     axis_min: float,
     axis_max: float,
     n_chunks: int,

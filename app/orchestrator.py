@@ -187,15 +187,19 @@ class JobOrchestrator:
         minx, miny, maxx, maxy = gdf.total_bounds
         if minx >= -180 and maxx <= 180 and miny >= -90 and maxy <= 90:
             return [
-                f"Coordinates look like lon/lat degrees "
-                f"(bounds {minx:.6g}, {miny:.6g}, {maxx:.6g}, {maxy:.6g}); "
-                "expected EPSG:27700 (British National Grid) metres"
+                (
+                    f"Coordinates look like lon/lat degrees "
+                    f"(bounds {minx:.6g}, {miny:.6g}, {maxx:.6g}, {maxy:.6g}); "
+                    "expected EPSG:27700 (British National Grid) metres"
+                )
             ]
         if not (minx >= 0 and maxx <= 700_000 and miny >= 0 and maxy <= 1_300_000):
             return [
-                f"Coordinates outside EPSG:27700 bounds "
-                f"(bounds {minx:.6g}, {miny:.6g}, {maxx:.6g}, {maxy:.6g}); "
-                "expected easting 0-700000, northing 0-1300000"
+                (
+                    f"Coordinates outside EPSG:27700 bounds "
+                    f"(bounds {minx:.6g}, {miny:.6g}, {maxx:.6g}, {maxy:.6g}); "
+                    "expected easting 0-700000, northing 0-1300000"
+                )
             ]
         return []
 
