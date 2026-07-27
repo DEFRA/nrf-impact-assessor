@@ -70,6 +70,20 @@ def pre_sql(table: str) -> str:
     return f"CREATE TEMP TABLE {stage} (LIKE public.{table});\n"
 
 
+def search_path_sql() -> str:
+    """SQL that restores a usable search_path after a dump has been streamed.
+
+    A data-only `pg_dump` opens with `SELECT pg_catalog.set_config('search_path',
+    '', false)` and the restore streams that preamble straight into psql, so from
+    the first dump onwards the session resolves *nothing* unqualified. Our own
+    statements are schema-qualified, but the QC block calls PostGIS functions
+    (`ST_IsValid`, `ST_SRID`, `GeometryType`, ...) by bare name and they live in
+    `public` alongside the `geometry` type — without this reset they fail with
+    "function st_isvalid(public.geometry) does not exist".
+    """
+    return "SET search_path TO public, pg_temp;\n"
+
+
 def sql_str(value: str) -> str:
     """Return `value` as a single-quoted SQL string literal, quotes escaped."""
     return "'" + value.replace("'", "''") + "'"
@@ -350,6 +364,11 @@ def restore_all_atomic(
             start = time.perf_counter()
             proc.stdin.write(pre.encode())
             _stream_dump_to_staging(proc.stdin, dumps, table, stage)
+            # Undo the dump preamble's search_path blanking (see search_path_sql).
+            # Emitted after every dump, not once before QC, so any statement that
+            # follows a dump — this loop's next CREATE TEMP included — runs with a
+            # sane search_path.
+            proc.stdin.write(search_path_sql().encode())
             logger.info(
                 "Streamed table %s in %.2fs", table, time.perf_counter() - start
             )

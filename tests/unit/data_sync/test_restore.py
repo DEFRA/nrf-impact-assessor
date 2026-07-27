@@ -275,6 +275,47 @@ def test_restore_all_atomic_writes_qc_block_between_stage_and_promote(
     assert stage_idx < qc_idx < promote_idx
 
 
+def test_restore_all_atomic_resets_search_path_after_every_dump(tmp_path, psql_stdin):
+    """Every streamed dump must be followed by a search_path reset.
+
+    A real `pg_dump` preamble runs `set_config('search_path', '', false)`, which
+    the restore streams verbatim into psql; the QC block that follows calls
+    PostGIS functions (ST_IsValid and friends) by bare name and would fail with
+    "function st_isvalid(public.geometry) does not exist". The reset goes after
+    each dump — one before the QC block would leave the next table's staging
+    statements running with a blank search_path.
+    """
+    dump1 = tmp_path / "nn.sql.gz"
+    dump1.write_bytes(
+        gzip.compress(
+            b"SELECT pg_catalog.set_config('search_path', '', false);\n"
+            b"COPY public.nn_catchments (id) FROM stdin;\nabc\n\\.\n"
+        )
+    )
+    dump2 = tmp_path / "lpa.sql.gz"
+    dump2.write_bytes(
+        gzip.compress(
+            b"SELECT pg_catalog.set_config('search_path', '', false);\n"
+            b"COPY public.lpa_boundaries (id) FROM stdin;\ndef\n\\.\n"
+        )
+    )
+    settings = restore_mod.DatabaseSettings(iam_authentication=False)
+
+    restore_mod.restore_all_atomic(
+        settings=settings,
+        region="eu-west-2",
+        items=[_item("nn_catchments", dump1), _item("lpa_boundaries", dump2)],
+        run_id=_RUN_ID,
+    )
+
+    text = psql_stdin.decode()
+    reset = restore_mod.search_path_sql()
+    assert text.count(reset) == 2
+    # Each reset lands after its own dump's COPY body, before the next statement.
+    copy2_idx = text.index("COPY pg_temp._ds_stage_lpa_boundaries")
+    assert text.index(reset) < copy2_idx < text.rindex(reset)
+
+
 def test_restore_all_atomic_omits_qc_block_when_rules_not_supplied(
     tmp_path, psql_stdin
 ):

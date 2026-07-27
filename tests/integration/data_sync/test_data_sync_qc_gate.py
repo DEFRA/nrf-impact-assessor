@@ -13,6 +13,7 @@ from app.config import AWSConfig
 from app.data_sync.manifest import Manifest
 from app.data_sync.qc_rules import load_qc_rules
 from app.data_sync.service import run_data_sync
+from tests.integration.data_sync.dumps import PG_DUMP_PREAMBLE
 
 pytestmark = pytest.mark.integration
 
@@ -74,7 +75,12 @@ def _good_geom(table: str) -> str:
 
 
 def _dump(table: str, columns: str, rows: list[str]) -> bytes:
-    body = f"COPY public.{table} ({columns}) FROM stdin;\n" + "".join(rows) + "\\.\n"
+    body = (
+        PG_DUMP_PREAMBLE
+        + f"COPY public.{table} ({columns}) FROM stdin;\n"
+        + "".join(rows)
+        + "\\.\n"
+    )
     return gzip.compress(body.encode())
 
 

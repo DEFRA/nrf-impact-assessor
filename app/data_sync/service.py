@@ -372,7 +372,19 @@ def _record_failed_history(
         )
         if table in details_by_table:
             logger.warning("QC failure on table %s: %s", table, detail)
-    session.commit()
+    try:
+        session.commit()
+    except Exception:  # noqa: BLE001
+        # Best-effort, exactly like _cleanup_old_versions: the restore has
+        # already failed and rolled back, and the caller is about to re-raise
+        # the RuntimeError that says why. Letting a write failure here escape
+        # would replace that diagnosis with an unrelated one (e.g. a missing
+        # column when the app runs ahead of its Liquibase changelog) and leave
+        # the session poisoned, so the run row could never be marked failed.
+        session.rollback()
+        logger.warning(
+            "failed to record failure history for run %s", run_id, exc_info=True
+        )
 
 
 def _cleanup_old_versions(session: Session, tables: list[str]) -> None:
@@ -457,6 +469,11 @@ def _do_run(
         _finish(session, run, status="success")
     except Exception as exc:
         logger.exception("data sync run %s failed", run_id)
+        # The failure may have left the session mid-transaction (or with a
+        # pending rollback after a flush error); clear it so the status update
+        # below can commit. Without this, marking the run failed itself raises
+        # and the run row stays "running" forever.
+        session.rollback()
         _finish(session, run, status="failed", error=str(exc))
     finally:
         session.close()

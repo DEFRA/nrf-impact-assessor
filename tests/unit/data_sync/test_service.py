@@ -110,6 +110,42 @@ def test_restore_all_aggregates_multiple_qc_failures_for_same_table(monkeypatch)
     assert "non_null" in nn_row.status_detail
 
 
+def test_restore_all_reraises_restore_error_when_failure_history_write_fails(
+    monkeypatch,
+):
+    """A broken audit write must not replace the real diagnosis.
+
+    Seen in production: the app ran ahead of its Liquibase changelog, so writing
+    the failure rows raised UndefinedColumn — which masked the QC/psql error
+    that actually stopped the restore and poisoned the session, leaving the run
+    row stuck in "running".
+    """
+    cfg = MagicMock()
+    cfg.tables = ["nn_catchments"]
+    manifest = Manifest(tables={"nn_catchments": {"key": "k1.gz", "version": "v1"}})
+    session = MagicMock()
+    session.commit.side_effect = RuntimeError("column row_version does not exist")
+    s3 = MagicMock()
+    s3.object_etag.return_value = "etag"
+
+    def _fake_download(key, dest):
+        dest.write_bytes(b"")
+
+    s3.download_object.side_effect = _fake_download
+
+    def _raise(*_args, **_kwargs):
+        msg = "psql atomic restore failed: table=nn_catchments rule=row_count detail=0"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(service, "restore_all_atomic", _raise)
+
+    with pytest.raises(RuntimeError, match="psql atomic restore failed"):
+        service._restore_all(
+            session, s3, cfg, MagicMock(), "eu-west-2", uuid4(), manifest, force=True
+        )
+    session.rollback.assert_called()
+
+
 def test_recorded_key_single_is_unchanged():
     from app.data_sync.manifest import TableEntry
     from app.data_sync.service import recorded_key

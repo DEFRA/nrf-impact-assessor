@@ -12,6 +12,7 @@ from sqlalchemy import text
 from app.config import AWSConfig
 from app.data_sync.manifest import Manifest
 from app.data_sync.service import run_data_sync
+from tests.integration.data_sync.dumps import PG_DUMP_PREAMBLE
 
 pytestmark = pytest.mark.integration
 
@@ -20,7 +21,8 @@ BUCKET = "nrf-ref-data-test"
 # the table and replays this COPY data; indexes are left untouched (Liquibase
 # owns them).
 DUMP_SQL = (
-    "COPY public.nn_catchments (id, version, geometry, name, attributes, created_at) "
+    PG_DUMP_PREAMBLE
+    + "COPY public.nn_catchments (id, version, geometry, name, attributes, created_at) "
     "FROM stdin;\n"
     f"{uuid4()}\t1\t"
     "0103000020346C00000100000005000000"
