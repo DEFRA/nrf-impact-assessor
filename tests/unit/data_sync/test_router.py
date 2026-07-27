@@ -32,7 +32,7 @@ def test_trigger_requires_auth(client):
     assert resp.status_code == 401
 
 
-_BODY = {"data_version": "v1", "tables": {"nn_catchments": "nn.sql.gz"}}
+_BODY = {"tables": {"nn_catchments": {"key": "nn.sql.gz", "version": "v1"}}}
 
 
 def test_trigger_returns_202_and_run_id(client):
@@ -101,6 +101,6 @@ def test_trigger_rejects_empty_tables(client):
         resp = client.post(
             "/admin/data-sync",
             headers={"X-Data-Sync-Token": "secret"},
-            json={"data_version": "v1", "tables": {}},
+            json={"tables": {}},
         )
     assert resp.status_code == 422

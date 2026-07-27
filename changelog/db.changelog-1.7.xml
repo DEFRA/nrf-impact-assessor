@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- Alembic revision: c3d7e1f2a4b6 -->
+
+    <!-- Per-table subset sync: the integer row version promoted for a table in
+         a run, recorded atomically with the data load so "currently applied"
+         can be correlated to the active-version pointer. -->
+
+    <changeSet id="07-data-load-history-row-version" author="nrf">
+        <addColumn tableName="data_load_history" schemaName="public">
+            <column name="row_version" type="integer"/>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="data_load_history" schemaName="public"
+                        columnName="row_version"/>
+        </rollback>
+    </changeSet>
+
+    <!-- Backfill pre-existing history rows. The lookups that resolve "which
+         manifest version is live" join on row_version exactly, so without this
+         they match nothing and provenance reads empty until every table is
+         re-synced. Retention keeps MAX(version) and MAX(version)-1 and each
+         load increments the version, so counting down from MAX(version) over
+         the success/reconciled rows newest-first reproduces what post_sql
+         would have stamped. Rows landing below version 1 stay NULL. -->
+
+    <changeSet id="07-data-load-history-row-version-backfill" author="nrf">
+        <sql splitStatements="false">
+            DO $backfill$
+            DECLARE
+                t text;
+                maxv integer;
+            BEGIN
+                FOR t IN
+                    SELECT DISTINCT table_name
+                    FROM public.data_load_history
+                    WHERE status IN ('success', 'reconciled')
+                LOOP
+                    CONTINUE WHEN to_regclass('public.' || quote_ident(t)) IS NULL;
+                    CONTINUE WHEN NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = t
+                          AND column_name = 'version'
+                    );
+                    EXECUTE format('SELECT MAX(version) FROM public.%I', t) INTO maxv;
+                    CONTINUE WHEN maxv IS NULL;
+                    UPDATE public.data_load_history h
+                    SET row_version = maxv - (r.rn - 1)
+                    FROM (
+                        SELECT id,
+                               row_number() OVER (ORDER BY loaded_at DESC, id DESC) AS rn
+                        FROM public.data_load_history
+                        WHERE table_name = t
+                          AND status IN ('success', 'reconciled')
+                    ) r
+                    WHERE h.id = r.id
+                      AND h.row_version IS NULL
+                      AND maxv - (r.rn - 1) >= 1;
+                END LOOP;
+            END $backfill$;
+        </sql>
+        <rollback>
+            <sql splitStatements="false">
+                UPDATE public.data_load_history SET row_version = NULL;
+            </sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

@@ -21,8 +21,10 @@ import logging
 import os
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
+from uuid import UUID
 
 from app.config import DatabaseSettings
 from app.data_sync.qc_rules import QcRules
@@ -32,6 +34,23 @@ logger = logging.getLogger(__name__)
 
 
 _STAGE_PREFIX = "_ds_stage_"
+
+
+@dataclass(frozen=True)
+class RestoreItem:
+    """One table's contribution to a restore batch.
+
+    `dumps` holds the table's dump parts in concatenation order — a single
+    entry for an unsplit dump. `s3_key` and `etag` are the values recorded in
+    `data_load_history` (for a split dump, a base key plus a composite ETag;
+    see app/data_sync/service.py).
+    """
+
+    table: str
+    dumps: list[Path]
+    s3_key: str
+    etag: str
+    data_version: str
 
 
 def staging_name(table: str) -> str:
@@ -51,21 +70,47 @@ def pre_sql(table: str) -> str:
     return f"CREATE TEMP TABLE {stage} (LIKE public.{table});\n"
 
 
-def post_sql(table: str) -> str:
+def sql_str(value: str) -> str:
+    """Return `value` as a single-quoted SQL string literal, quotes escaped."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def post_sql(table: str, run_id: str, key: str, etag: str, data_version: str) -> str:
     """SQL emitted after a table's COPY data: stamp a fresh id + new version,
-    load the live table from staging, then drop staging.
+    load the live table from staging, drop staging, then — in the same
+    transaction — record the DataLoadHistory row and promote the active-version
+    pointer.
 
     `id` is regenerated (no FK references these ids) to avoid PK collisions with
     the rows already present; `version` is MAX(version)+1 computed once against
     the pre-insert snapshot. `LIKE` preserves column order, so `SELECT *` aligns.
+
+    History + pointer are written here (not on a separate ORM commit) so that the
+    data, its audit row, and the active-version cutover commit or roll back as
+    one unit: `MAX(version)` after the INSERT is exactly the version just
+    promoted (retention keeps MAX and MAX-1), so both statements reference it
+    directly. Callers pass already-known values (`run_id`, `key`, `etag`,
+    `data_version`); they are emitted as escaped SQL literals via `sql_str`.
     """
     stage = staging_name(table)
-    # noqa justified: identifiers validated by staging_name/_assert_safe_identifier
+    # noqa justified: identifiers validated by staging_name; values via sql_str.
+    max_v = f"(SELECT MAX(version) FROM public.{table})"  # noqa: S608
     sql = (
         f"UPDATE pg_temp.{stage} SET id = gen_random_uuid(), "  # noqa: S608
         f"version = (SELECT COALESCE(MAX(version),0)+1 FROM public.{table});\n"
         f"INSERT INTO public.{table} SELECT * FROM pg_temp.{stage};\n"
         f"DROP TABLE pg_temp.{stage};\n"
+        f"INSERT INTO public.data_load_history "
+        f"(id, run_id, table_name, s3_key, etag, data_version, status, "
+        f"row_version, loaded_at) "
+        f"VALUES (gen_random_uuid(), {sql_str(run_id)}, {sql_str(table)}, "
+        f"{sql_str(key)}, {sql_str(etag)}, {sql_str(data_version)}, 'success', "
+        f"{max_v}, now());\n"
+        f"INSERT INTO public.data_active_version "
+        f"(table_name, active_version, updated_at) "
+        f"VALUES ({sql_str(table)}, {max_v}, now()) "
+        f"ON CONFLICT (table_name) DO UPDATE SET "
+        f"active_version = EXCLUDED.active_version, updated_at = now();\n"
     )
     return sql
 
@@ -108,18 +153,88 @@ def build_psql_env(settings: DatabaseSettings, region: str) -> dict[str, str]:
 _GZIP_MAGIC = b"\x1f\x8b"
 
 
-def assert_gzip(table: str, dump_path: Path) -> None:
+class _ChainedReader:
+    """Read-only binary stream presenting `paths` read end-to-end as one file.
+
+    `split -b` slices a single gzip member across files, so the parts are only
+    decompressable as one concatenated stream — no part except the first even
+    carries the gzip magic bytes. Chaining at read time (rather than `cat`-ing
+    the parts into a second file) keeps the restore's disk footprint at one copy
+    of the dump: a 3 GB dump needs 3 GB of container disk, not 6 GB.
+
+    Only `read`/`close` are implemented — that is the whole surface
+    `gzip.GzipFile(fileobj=...)` uses for reading.
+    """
+
+    def __init__(self, paths: list[Path]) -> None:
+        if not paths:
+            msg = "_ChainedReader requires at least one part path"
+            raise ValueError(msg)
+        self._paths = list(paths)
+        self._index = 0
+        self._fh: IO[bytes] | None = paths[0].open("rb")
+
+    def _advance(self) -> bool:
+        """Close the current part and open the next. False when none remain."""
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
+        self._index += 1
+        if self._index >= len(self._paths):
+            return False
+        self._fh = self._paths[self._index].open("rb")
+        return True
+
+    def read(self, size: int = -1) -> bytes:
+        """Return `size` bytes, crossing part boundaries as needed.
+
+        Returns fewer bytes only at true end-of-stream. A short read at a part
+        boundary would look like EOF to GzipFile and truncate the dump, so the
+        loop keeps pulling from subsequent parts until the count is satisfied.
+        """
+        if size == 0:
+            # Guard: without this the loop below reads b"" from the current part
+            # and treats it as EOF, silently skipping to the next one.
+            return b""
+        chunks: list[bytes] = []
+        remaining = size
+        while self._fh is not None:
+            data = self._fh.read() if remaining < 0 else self._fh.read(remaining)
+            if data:
+                chunks.append(data)
+                if remaining >= 0:
+                    remaining -= len(data)
+                    if remaining == 0:
+                        break
+            elif not self._advance():
+                break
+        return b"".join(chunks)
+
+    def close(self) -> None:
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
+        self._index = len(self._paths)
+
+
+def assert_gzip(table: str, dumps: list[Path]) -> None:
     """Fail fast with a clear error if a dump is not gzip-compressed.
 
-    The dumps are streamed through `gzip.open` during restore; checking the
-    magic bytes up front turns an opaque mid-transaction decompression error
-    into an actionable message naming the offending table.
+    Only the FIRST part is checked. `split -b` slices one gzip member, so parts
+    2..N legitimately begin mid-stream with no magic bytes; checking them would
+    reject every valid split dump. Checking the first part up front still turns
+    an opaque mid-transaction decompression error into an actionable message
+    naming the offending table.
     """
-    with dump_path.open("rb") as f:
+    first = dumps[0]
+    with first.open("rb") as f:
         magic = f.read(2)
     if magic != _GZIP_MAGIC:
+        where = (
+            f" (first part {first.name!r} of {len(dumps)})" if len(dumps) > 1 else ""
+        )
         msg = (
-            f"dump for table {table!r} is not gzip-compressed "
+            f"dump for table {table!r} is not gzip-compressed{where} "
             f"(expected gzip magic {_GZIP_MAGIC!r}, got {magic!r}); the S3 object "
             "must be a gzipped data-only pg_dump"
         )
@@ -138,14 +253,19 @@ def _rewrite_copy_line(line: bytes, table: str, stage: str) -> bytes:
 
 
 def _stream_dump_to_staging(
-    stdin: IO[bytes], dump_path: Path, table: str, stage: str
+    stdin: IO[bytes], dumps: list[Path], table: str, stage: str
 ) -> None:
     """Stream a gzipped data-only dump into psql, redirecting its single COPY
     header to `pg_temp.<stage>`. The (small) preamble is read line-by-line until
     the header; the (large) data body is then streamed in 1 MiB chunks.
+
+    `dumps` is the table's parts in order; they are joined into one byte stream
+    before decompression (see `_ChainedReader`), so a split dump is
+    indistinguishable from an unsplit one from here down — including a COPY
+    header that straddles a part boundary.
     """
     prefix = f"COPY public.{table} ".encode()
-    with gzip.open(dump_path, "rb") as gz:
+    with gzip.GzipFile(fileobj=_ChainedReader(dumps)) as gz:
         found = False
         for line in gz:
             if line.startswith(prefix):
@@ -154,7 +274,7 @@ def _stream_dump_to_staging(
                 break
             stdin.write(line)
         if not found:
-            msg = f"no COPY header for table {table!r} found in dump {dump_path}"
+            msg = f"no COPY header for table {table!r} found in dump {dumps[0]}"
             raise ValueError(msg)
         for chunk in iter(lambda: gz.read(1024 * 1024), b""):
             stdin.write(chunk)
@@ -163,10 +283,17 @@ def _stream_dump_to_staging(
 def restore_all_atomic(
     settings: DatabaseSettings,
     region: str,
-    items: list[tuple[str, Path]],
+    items: list[RestoreItem],
+    run_id: UUID,
     qc_rules: QcRules | None = None,
+    active_versions: dict[str, int] | None = None,
 ) -> None:
-    """Load every (table, dump) in a single psql transaction. All-or-nothing.
+    """Load every table in a single psql transaction. All-or-nothing.
+
+    `items` are `RestoreItem`s (see the dataclass above). Within
+    the same transaction each table's data load also writes its DataLoadHistory
+    row and promotes the active-version pointer (see `post_sql`), so data,
+    audit, and cutover commit or roll back together.
 
     Validation for all tables happens up front (via staging_name), before psql
     is spawned, so an unsafe name aborts the whole batch before any subprocess
@@ -178,17 +305,29 @@ def restore_all_atomic(
     before any table promotes, so a QC failure rolls back the whole batch
     exactly like any other error.
     """
-    for table, dump in items:
-        assert_gzip(table, dump)
+    for item in items:
+        assert_gzip(item.table, item.dumps)
     # staging_name validates each identifier before psql is spawned.
     plans = [
-        (table, dump, staging_name(table), pre_sql(table), post_sql(table))
-        for table, dump in items
+        (
+            item.table,
+            item.dumps,
+            staging_name(item.table),
+            pre_sql(item.table),
+            post_sql(
+                item.table,
+                str(run_id),
+                item.s3_key,
+                item.etag,
+                item.data_version,
+            ),
+        )
+        for item in items
     ]
 
     env = build_psql_env(settings, region)
     cmd = ["psql", "-v", "ON_ERROR_STOP=1", "--single-transaction", "--quiet"]
-    tables = [table for table, _ in items]
+    tables = [item.table for item in items]
     logger.info("Restoring %d table(s) atomically: %s", len(tables), ", ".join(tables))
 
     # stdout is discarded: the dump preamble's `SELECT pg_catalog.set_config(...)`
@@ -206,11 +345,11 @@ def restore_all_atomic(
         raise RuntimeError(msg)
     try:
         # STAGE: every table's staging table + COPY data, in order.
-        for table, dump, stage, pre, _post in plans:
-            logger.info("Loading table %s from %s", table, dump)
+        for table, dumps, stage, pre, _post in plans:
+            logger.info("Loading table %s from %d part(s)", table, len(dumps))
             start = time.perf_counter()
             proc.stdin.write(pre.encode())
-            _stream_dump_to_staging(proc.stdin, dump, table, stage)
+            _stream_dump_to_staging(proc.stdin, dumps, table, stage)
             logger.info(
                 "Streamed table %s in %.2fs", table, time.perf_counter() - start
             )
@@ -224,7 +363,9 @@ def restore_all_atomic(
             # module a caller imports first.
             from app.data_sync.qc import build_qc_sql
 
-            proc.stdin.write(build_qc_sql(items, qc_rules).encode())
+            proc.stdin.write(
+                build_qc_sql(items, qc_rules, active_versions or {}).encode()
+            )
         # PROMOTE: reached only if QC didn't raise. Not individually timed per table:
         # post_sql's writes are too small to be backpressure-limited by the pipe (unlike
         # STAGE's bulk COPY data), so a per-table timer here would report near-zero
@@ -232,7 +373,7 @@ def restore_all_atomic(
         # implying promotion is cheap. The INSERT/index-maintenance cost (the NRF2-694
         # tripwire) is only visible in aggregate via the "Committed" log below, which
         # also includes QC evaluation time and the final COMMIT.
-        for _table, _dump, _stage, _pre, post in plans:
+        for _table, _dumps, _stage, _pre, post in plans:
             proc.stdin.write(post.encode())
         proc.stdin.close()
     except BrokenPipeError:  # psql already exited with an error

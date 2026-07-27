@@ -179,13 +179,21 @@ db-rollback: ## Rollback the last Alembic migration
 db-migrate-liquibase: ## Apply Liquibase changesets against local postgres (requires compose postgres running)
 	docker compose run --rm liquibase
 
-db-rollback-liquibase: ## Rollback last Liquibase changeset against local postgres
+# Number of Liquibase changesets db-rollback-liquibase reverses. One Alembic
+# revision is often represented by SEVERAL changesets (1.1 uses 7, 1.5 uses 3,
+# 1.2 and 1.7 use 2), so the default of 1 does NOT undo a whole revision for
+# those. Pass the changeset count of the changelog you are reversing, e.g.
+# `make db-rollback-liquibase COUNT=2` for db.changelog-1.7.xml. Check with:
+#   grep -c '<changeSet ' changelog/db.changelog-<version>.xml
+COUNT ?= 1
+
+db-rollback-liquibase: ## Rollback last N Liquibase changesets (COUNT=N, default 1 — see note above; one Alembic revision may span several)
 	docker compose run --rm liquibase \
 		--url=jdbc:postgresql://postgres:5432/nrf_impact \
 		--username=postgres \
 		--changelog-file=changelog/db.changelog.xml \
 		--defaultSchemaName=public \
-		rollbackCount 1
+		rollbackCount $(COUNT)
 
 # ---------------------------------------------------------------------------
 # Data loading

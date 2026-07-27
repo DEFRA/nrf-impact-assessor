@@ -5,7 +5,7 @@ from uuid import uuid4
 import pandas as pd
 
 from app.assessments.adapters import nutrient_adapter
-from app.models.domain import DataProvenance
+from app.models.domain import DataProvenance, TableProvenance
 
 
 def _impact_summary():
@@ -42,7 +42,13 @@ def _impact_summary():
 
 
 def test_provenance_attached_to_results():
-    prov = DataProvenance(data_version="2026.07.01", data_sync_run_id=uuid4())
+    prov = DataProvenance(
+        tables={
+            "nn_catchments": TableProvenance(
+                data_version="2026.07.01", data_sync_run_id=uuid4()
+            )
+        }
+    )
     out = nutrient_adapter.to_domain_models(
         {"impact_summary": _impact_summary()}, provenance=prov
     )

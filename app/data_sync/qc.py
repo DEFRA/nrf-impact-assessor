@@ -8,7 +8,6 @@ rolling back the whole manifest so bad data never reaches the live tables.
 """
 
 import re
-from pathlib import Path
 from typing import NamedTuple
 
 from app.data_sync.qc_rules import (
@@ -17,13 +16,22 @@ from app.data_sync.qc_rules import (
     ReferentialSide,
     TableRules,
 )
-from app.data_sync.restore import staging_name
+from app.data_sync.restore import RestoreItem, staging_name
 
 
-def _row_count_sql(table: str, rules: TableRules, floor_pct: float) -> str:
+def _row_count_sql(
+    table: str, rules: TableRules, floor_pct: float, active_version: int | None
+) -> str:
     """Rule 2: staged row count is non-zero and >= floor_pct% of the live
     table's current (pre-promotion) row count. `floor_pct` is the table's
     override if set, else the global default.
+
+    The comparison is pinned to `active_version` — the same pin the referential
+    checks use — not to MAX(version). After a rollback the two differ: MAX is
+    the version rolled back FROM, which is no longer live and is typically the
+    bad load that prompted the rollback. Measuring the floor against it would
+    let an equally-bad reload pass. `None` (a table with no pointer row yet,
+    e.g. its first load) keeps the MAX(version) behaviour.
 
     The `staged_count = 0` hard fail below is unconditional per the DM-2
     sign-off, which applies it to all 10 reference tables; there is no
@@ -36,10 +44,17 @@ def _row_count_sql(table: str, rules: TableRules, floor_pct: float) -> str:
         else floor_pct
     )
     ratio = pct / 100
+    # noqa justified: `table` is validated by staging_name above; the version is
+    # coerced with int().
+    live_version = (
+        int(active_version)
+        if active_version is not None
+        else f"(SELECT MAX(version) FROM public.{table})"  # noqa: S608
+    )
     return (
         f"SELECT COUNT(*) INTO staged_count FROM pg_temp.{stage};\n"  # noqa: S608
         f"SELECT COUNT(*) INTO prev_count FROM public.{table} "
-        f"WHERE version = (SELECT MAX(version) FROM public.{table});\n"
+        f"WHERE version = {live_version};\n"
         "IF staged_count = 0 THEN\n"
         f"  failures := array_append(failures, "
         f"'table={table} rule=row_count detail=staged row count is 0');\n"
@@ -246,10 +261,16 @@ def _coefficient_range_sql(table: str, rules: TableRules) -> str:
     return sql
 
 
-def _referential_source(side: ReferentialSide, staged_tables: set[str]) -> str:
+def _referential_source(
+    side: ReferentialSide, staged_tables: set[str], active_versions: dict[str, int]
+) -> str:
     if side.table in staged_tables:
         return f"pg_temp.{staging_name(side.table)}"
-    return f"public.{side.table}"
+    # An unstaged referenced table keeps two retained versions in public.<table>
+    # (and may have inactive rolled-back rows); pin the read to its active
+    # version so a subset sync validates against the live data, not stale rows.
+    version = active_versions[side.table]
+    return f"(SELECT * FROM public.{side.table} WHERE version = {int(version)})"  # noqa: S608, E501
 
 
 def _referential_side_select(side: ReferentialSide, source: str, alias: str) -> str:
@@ -266,13 +287,17 @@ def _referential_side_select(side: ReferentialSide, source: str, alias: str) -> 
     return f"SELECT {'DISTINCT ' if alias == 'to_' else ''}{side.column} AS v FROM {source}"  # noqa: S608
 
 
-def _referential_sql(check: ReferentialCheck, staged_tables: set[str]) -> str:
+def _referential_sql(
+    check: ReferentialCheck,
+    staged_tables: set[str],
+    active_versions: dict[str, int],
+) -> str:
     """Rule 9: every value on the `from` side of a confirmed referential pair
     must exist on the `to` side, after any declared numeric coercion or
     null-guarding.
     """
-    from_source = _referential_source(check.from_, staged_tables)
-    to_source = _referential_source(check.to, staged_tables)
+    from_source = _referential_source(check.from_, staged_tables, active_versions)
+    to_source = _referential_source(check.to, staged_tables, active_versions)
     from_select = _referential_side_select(check.from_, from_source, "from_")
     to_select = _referential_side_select(check.to, to_source, "to_")
 
@@ -290,9 +315,11 @@ def _referential_sql(check: ReferentialCheck, staged_tables: set[str]) -> str:
     )
 
 
-def _table_parts(table: str, rules: TableRules, floor_pct: float) -> list[str]:
+def _table_parts(
+    table: str, rules: TableRules, floor_pct: float, active_version: int | None
+) -> list[str]:
     """Every applicable per-table rule for one staged table, in check order."""
-    parts = [_row_count_sql(table, rules, floor_pct)]
+    parts = [_row_count_sql(table, rules, floor_pct, active_version)]
     if rules.key is not None:
         if rules.key.source == "column":
             parts.append(_column_key_sql(table, rules))
@@ -308,7 +335,9 @@ def _table_parts(table: str, rules: TableRules, floor_pct: float) -> list[str]:
 
 
 def _referential_parts(
-    checks: list[ReferentialCheck], staged_tables: set[str]
+    checks: list[ReferentialCheck],
+    staged_tables: set[str],
+    active_versions: dict[str, int],
 ) -> list[str]:
     """Rule 9 for every referential check touching a staged table, de-duplicated
     by check name so a check shared across tables is emitted only once.
@@ -319,18 +348,30 @@ def _referential_parts(
         if check.name in seen_checks:
             continue
         if check.from_.table in staged_tables or check.to.table in staged_tables:
-            parts.append(_referential_sql(check, staged_tables))
+            parts.append(_referential_sql(check, staged_tables, active_versions))
             seen_checks.add(check.name)
     return parts
 
 
-def build_qc_sql(items: list[tuple[str, Path]], rules: QcRules) -> str:
+def build_qc_sql(
+    items: list[RestoreItem],
+    rules: QcRules,
+    active_versions: dict[str, int] | None = None,
+) -> str:
     """Build the full `DO $qc$ ... $qc$;` block checking every applicable rule
     against every table in `items`. Raises (via the generated SQL) once, with
     every failing rule across every table joined by newlines, if any rule
     fails — the caller's enclosing transaction then rolls back atomically.
+
+    `active_versions` maps a table to its active integer version. Two uses: an
+    unstaged table an emitted referential check reads is pinned to that version
+    rather than the whole retained table, and a staged table's row-count floor
+    is measured against it rather than MAX(version) (they differ after a
+    rollback). A staged table absent from the map keeps the MAX(version)
+    behaviour.
     """
-    staged_tables = {table for table, _ in items}
+    active_versions = active_versions or {}
+    staged_tables = {item.table for item in items}
     parts = [
         (
             "DO $qc$\n"
@@ -345,8 +386,17 @@ def build_qc_sql(items: list[tuple[str, Path]], rules: QcRules) -> str:
     for table in staged_tables:
         table_rules = rules.tables.get(table)
         if table_rules is not None:
-            parts.extend(_table_parts(table, table_rules, rules.row_count_floor_pct))
-    parts.extend(_referential_parts(rules.referential_checks, staged_tables))
+            parts.extend(
+                _table_parts(
+                    table,
+                    table_rules,
+                    rules.row_count_floor_pct,
+                    active_versions.get(table),
+                )
+            )
+    parts.extend(
+        _referential_parts(rules.referential_checks, staged_tables, active_versions)
+    )
     parts.append(
         "IF array_length(failures, 1) > 0 THEN\n"
         "  RAISE EXCEPTION '%', array_to_string(failures, E'\\n');\n"

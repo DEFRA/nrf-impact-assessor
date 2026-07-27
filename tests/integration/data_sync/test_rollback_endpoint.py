@@ -112,6 +112,35 @@ def test_rollback_defaults_to_last_run_tables(client, test_engine, monkeypatch):
     assert events == 1
 
 
+def test_default_rollback_ignores_intervening_noop_run(
+    client, test_engine, monkeypatch
+):
+    """A successful no-op run (all tables already applied) writes no history
+    rows, so it must not mask the previous load: default rollback still targets
+    the tables of the most recent history-bearing run.
+    """
+    monkeypatch.setenv("DATA_SYNC_TABLES", '["nn_catchments"]')
+    load_run = uuid4()
+    _seed_two_versions(test_engine, load_run)
+
+    # A later successful run that loaded nothing: a run row, no history rows.
+    with test_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO public.data_sync_run (id, status, data_version) "
+                "VALUES (:id, 'success', 'v2')"
+            ),
+            {"id": str(uuid4())},
+        )
+
+    resp = client.post(
+        "/admin/data-sync/rollback", headers={"X-Data-Sync-Token": "test-token"}
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["rolled_back"] == {"nn_catchments": {"from": 2, "to": 1}}
+
+
 def test_rollback_explicit_table_list_rejects_non_allow_listed_table(
     client, test_engine, monkeypatch
 ):

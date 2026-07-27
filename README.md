@@ -253,14 +253,26 @@ make test      # or: uv run pytest tests/ app/ -v
 Reference/spatial tables can be reloaded from S3 `pg_dump` files at runtime,
 without a redeploy, via an authenticated background job.
 
-1. Publish the gzipped per-table dumps and a `manifest.json` to S3, bumping the
-   manifest's `data_version`. The manifest maps each table to its dump key:
+1. Publish the gzipped per-table dumps to S3 and POST a manifest naming them.
+   The manifest maps each table to its dump key plus the version to record. A
+   dump too large for one object may be given as the ordered list of its
+   `split -b` part keys (as `make db-backup-tables` produces); list order is
+   concatenation order and every part must be present.
 
    ```json
    {
-     "data_version": "20260603_120000",
      "tables": {
-       "nn_catchments": "public_nn_catchments_20260603_120000.sql.gz"
+       "nn_catchments": {
+         "key": "20260727/nn_catchments.sql.gz",
+         "version": "20260727_090000"
+       },
+       "lookup_table": {
+         "key": [
+           "20260727/lookup_table.sql.gz.part-aa",
+           "20260727/lookup_table.sql.gz.part-ab"
+         ],
+         "version": "20260727_090000"
+       }
      }
    }
    ```

@@ -57,19 +57,27 @@ class RollbackRequest(BaseModel):
 
 
 def _last_run_tables(session: Session) -> list[str]:
-    """Distinct tables loaded by the most recent successful reload."""
-    run = (
-        session.query(DataSyncRun)
-        .filter(DataSyncRun.status == "success", DataSyncRun.data_version.isnot(None))
-        .order_by(DataSyncRun.started_at.desc())
+    """Distinct tables loaded by the most recent reload that actually loaded
+    something.
+
+    Keyed off the most recent success/reconciled DataLoadHistory row rather than
+    the most recent successful run: a successful *no-op* run (a manifest whose
+    tables were all already applied) writes no history rows, so keying off the
+    run would let a no-op mask the prior load and leave a default rollback with
+    nothing to target.
+    """
+    latest = (
+        session.query(DataLoadHistory.run_id)
+        .filter(DataLoadHistory.status.in_(["success", "reconciled"]))
+        .order_by(DataLoadHistory.loaded_at.desc())
         .first()
     )
-    if run is None:
+    if latest is None:
         return []
     rows = (
         session.query(DataLoadHistory.table_name)
         .filter(
-            DataLoadHistory.run_id == run.id,
+            DataLoadHistory.run_id == latest[0],
             DataLoadHistory.status.in_(["success", "reconciled"]),
         )
         .distinct()

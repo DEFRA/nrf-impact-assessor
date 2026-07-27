@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 from app.data_sync import service
+from app.data_sync.manifest import Manifest
 from app.data_sync.service import REFERENCE_TABLES, _log_table_status
 
 N_TABLES = len(REFERENCE_TABLES)
@@ -85,15 +86,18 @@ def test_never_raises_even_if_counting_blows_up(caplog):
     assert any("table status" in r.message for r in caplog.records)
 
 
-def _do_run_with(monkeypatch, *, reload_needed: bool) -> tuple[MagicMock, MagicMock]:
-    """Drive _do_run with everything stubbed; return relevant collaborator mocks."""
+def _do_run_with(monkeypatch, *, loaded: list[str]) -> tuple[MagicMock, MagicMock]:
+    """Drive _do_run with everything stubbed; `loaded` is what _restore_all
+    returns (the tables actually restored — empty means a no-op). Returns the
+    _log_table_status and clear_spatial_caches mocks _do_run itself drives.
+    """
     fake_session = MagicMock()
     fake_session.get.return_value = MagicMock()
     monkeypatch.setattr(service, "Session", lambda bind: fake_session)  # noqa: ARG005
     monkeypatch.setattr(service, "_build_s3_client", MagicMock())
-    monkeypatch.setattr(service, "_last_applied_version", MagicMock(return_value=None))
-    monkeypatch.setattr(service, "needs_reload", MagicMock(return_value=reload_needed))
-    monkeypatch.setattr(service, "_restore_all", MagicMock())
+    # A manifest with one table so the run's data_version summary can be built.
+    manifest = Manifest(tables={"nn_catchments": {"key": "k", "version": "v1"}})
+    monkeypatch.setattr(service, "_restore_all", MagicMock(return_value=loaded))
     log_status = MagicMock()
     monkeypatch.setattr(service, "_log_table_status", log_status)
     clear_caches = MagicMock()
@@ -106,26 +110,26 @@ def _do_run_with(monkeypatch, *, reload_needed: bool) -> tuple[MagicMock, MagicM
         MagicMock(),  # db
         "eu-west-2",
         uuid4(),
-        MagicMock(),  # manifest
+        manifest,
         force=False,
     )
     return log_status, clear_caches
 
 
 def test_do_run_logs_table_status_after_successful_restore(monkeypatch):
-    log_status, _ = _do_run_with(monkeypatch, reload_needed=True)
+    log_status, _ = _do_run_with(monkeypatch, loaded=["nn_catchments"])
     log_status.assert_called_once()
 
 
 def test_do_run_clears_spatial_caches_after_successful_restore(monkeypatch):
-    _, clear_caches = _do_run_with(monkeypatch, reload_needed=True)
+    _, clear_caches = _do_run_with(monkeypatch, loaded=["nn_catchments"])
     clear_caches.assert_called_once()
 
 
-def test_do_run_logs_table_status_on_noop(monkeypatch):
-    # A no-op sync still reports table status so an empty reference table is
-    # visible even when the data version is already applied and no reload runs.
-    log_status, clear_caches = _do_run_with(monkeypatch, reload_needed=False)
-    log_status.assert_called_once()
-    # No reload happened, so caches are left intact.
+def test_do_run_skips_log_and_clear_on_noop(monkeypatch):
+    # When _restore_all loads nothing (all tables already at their version) it
+    # reports table status itself; _do_run adds no extra log and leaves caches
+    # intact since no reference data changed.
+    log_status, clear_caches = _do_run_with(monkeypatch, loaded=[])
+    log_status.assert_not_called()
     clear_caches.assert_not_called()
