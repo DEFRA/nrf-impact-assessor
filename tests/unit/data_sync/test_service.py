@@ -139,9 +139,11 @@ def test_restore_all_reraises_restore_error_when_failure_history_write_fails(
 
     monkeypatch.setattr(service, "restore_all_atomic", _raise)
 
+    run_id = uuid4()
+    settings = MagicMock()
     with pytest.raises(RuntimeError, match="psql atomic restore failed"):
         service._restore_all(
-            session, s3, cfg, MagicMock(), "eu-west-2", uuid4(), manifest, force=True
+            session, s3, cfg, settings, "eu-west-2", run_id, manifest, force=True
         )
     session.rollback.assert_called()
 
