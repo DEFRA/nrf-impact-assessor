@@ -413,6 +413,60 @@ class TestCheckBoundaryGeometryValidation:
         body = response.json()
         assert body["error"] == "duplicate_vertices"
 
+    def test_unclosed_ring_returns_400_with_geometry(self, client):
+        """A polygon ring whose first and last coordinates differ should be
+        rejected, but with the boundary still included so the frontend can
+        show the user exactly what they uploaded."""
+        content = _make_geojson_bytes(
+            coordinates=[[[0, 0], [1, 0], [1, 1], [0, 1]]]
+        )
+        response = _post_boundary(client, "not-closed.geojson", content)
+
+        assert response.status_code == 400
+        body = response.json()
+        assert body["error"] == "unclosed_ring"
+
+        geometry = body["boundaryGeometryWgs84"]["features"][0]["geometry"]
+        exterior = geometry["coordinates"][0]
+        # The preview must show the boundary as unclosed, exactly as
+        # uploaded — not the ring we closed ourselves to get GDAL to parse
+        # it. 4 points in, 4 points back out; first and last must differ.
+        assert len(exterior) == 4
+        assert exterior[0] != exterior[-1]
+
+        assert body["boundaryMetadata"] is not None
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_closed_ring_passes_validation(self, client):
+        """A properly closed ring must not be rejected by the ring-closure
+        pre-check."""
+        content = _make_geojson_bytes(
+            coordinates=[[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]
+        )
+        response = _post_boundary(client, "closed.geojson", content)
+
+        assert response.status_code == 200
+
+    def test_unclosed_hole_with_closed_exterior_reports_holes_not_unclosed_ring(
+        self, client
+    ):
+        """An unclosed *interior* ring (hole) must not be misreported as
+        unclosed_ring, and must not corrupt the already-closed exterior ring
+        in the response — the exterior was never actually unclosed."""
+        exterior = [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]
+        unclosed_hole = [[2, 2], [2, 4], [4, 4], [4, 2]]
+        content = _make_geojson_bytes(coordinates=[exterior, unclosed_hole])
+        response = _post_boundary(client, "unclosed-hole.geojson", content)
+
+        assert response.status_code == 400
+        body = response.json()
+        assert body["error"] == "geometry_has_holes"
+
+        geometry = body["boundaryGeometryWgs84"]["features"][0]["geometry"]
+        returned_exterior = geometry["coordinates"][0]
+        assert len(returned_exterior) == len(exterior)
+        assert returned_exterior[0] == returned_exterior[-1]
+
     def test_missing_crs_returns_422(self, client):
         """A shapefile with no CRS defined should return a missing_crs code."""
         zip_buf = _make_shapefile_zip_without_crs()

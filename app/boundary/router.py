@@ -176,6 +176,72 @@ def _check_declared_geojson_crs(content: bytes, ext: str) -> None:
         raise UnsupportedCRSError(msg)
 
 
+def _iter_polygon_geometries(node):
+    """Yield each Polygon geometry dict found in a GeoJSON Geometry,
+    Feature, or FeatureCollection."""
+    if not isinstance(node, dict):
+        return
+
+    node_type = node.get("type")
+    if node_type == "FeatureCollection":
+        for feature in node.get("features") or []:
+            yield from _iter_polygon_geometries(feature)
+    elif node_type == "Feature":
+        yield from _iter_polygon_geometries(node.get("geometry"))
+    elif node_type == "GeometryCollection":
+        for geometry in node.get("geometries") or []:
+            yield from _iter_polygon_geometries(geometry)
+    elif node_type == "Polygon":
+        yield node
+
+
+def _close_unclosed_rings(content: bytes, ext: str) -> tuple[bytes, bool]:
+    """Close any unclosed ring (exterior or interior/hole) in every Polygon
+    geometry in a GeoJSON/JSON file's raw bytes.
+
+    GDAL silently closes unclosed rings on read (RFC 7946 requires closed
+    rings) rather than surfacing an error — even with
+    OGR_GEOMETRY_ACCEPT_UNCLOSED_RING=NO it just drops the ring, producing a
+    valid-but-empty geometry with no way to tell what went wrong. We close
+    rings ourselves first so GDAL/validate_geometry can parse and check the
+    shape normally.
+
+    Only the *exterior* ring's closure state is reported back. An unclosed
+    interior ring (hole) is still closed here so GDAL can parse the
+    geometry, but is left to be reported via the normal geometry_has_holes
+    validation error rather than unclosed_ring — the single-ring preview
+    built for unclosed_ring can't represent "a hole was unclosed" without
+    fabricating a break in an exterior ring that was never actually broken.
+
+    Returns:
+        A (content, exterior_was_unclosed) tuple. `content` reflects any
+        ring closures (exterior or interior); `exterior_was_unclosed`
+        reflects only the exterior ring.
+    """
+    if ext not in _GEOJSON_EXTENSIONS:
+        return content, False
+
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return content, False
+
+    any_ring_closed = False
+    exterior_was_unclosed = False
+    for polygon in _iter_polygon_geometries(data):
+        for index, ring in enumerate(polygon.get("coordinates") or []):
+            if isinstance(ring, list) and len(ring) >= 2 and ring[0] != ring[-1]:
+                ring.append(ring[0])
+                any_ring_closed = True
+                if index == 0:
+                    exterior_was_unclosed = True
+
+    if not any_ring_closed:
+        return content, False
+
+    return json.dumps(data).encode("utf-8"), exterior_was_unclosed
+
+
 def _read_geometry(
     content: bytes,
     filename: str,
@@ -353,6 +419,48 @@ def _find_intersecting_edps(
     return results
 
 
+def _build_invalid_geometry_response(
+    gdf: gpd.GeoDataFrame, error_code: str, *, reopen_exterior_ring: bool
+) -> JSONResponse:
+    """Build the 400 response for an invalid/rejected geometry, still
+    including the (invalid) boundary so the frontend can preview it.
+
+    Args:
+        gdf: Single-row GeoDataFrame holding the geometry to preview, in
+            its post-validation CRS (not yet reprojected to WGS84).
+        error_code: The failure code to report.
+        reopen_exterior_ring: If True, remove the final (duplicate) point
+            from the WGS84 exterior ring — used when the ring was only
+            closed internally so GDAL could parse it, so the map shows the
+            boundary exactly as unclosed as it was uploaded.
+    """
+    # Keep the projected geometry to compute metadata bounds/centre so
+    # the frontend can still zoom the map to the (invalid) boundary.
+    geom_projected = gdf.geometry.iloc[0]
+    gdf = gdf.to_crs(_WGS84)
+    gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
+    geojson = json.loads(gdf.to_json())
+
+    # Some rejected geometries (e.g. empty/corrupt) have no computable
+    # bounds; skip metadata in that case rather than fail the response.
+    boundary_metadata = None
+    geom_wgs84 = gdf.geometry.iloc[0]
+    if geom_projected is not None and not geom_projected.is_empty:
+        boundary_metadata = _compute_boundary_metadata(geom_projected, geom_wgs84)
+
+    if reopen_exterior_ring:
+        exterior = geojson["features"][0]["geometry"]["coordinates"][0]
+        if len(exterior) > 1 and exterior[0] == exterior[-1]:
+            exterior.pop()
+
+    return _make_response(
+        400,
+        error=error_code,
+        boundary_geometry_wgs84=geojson,
+        boundary_metadata=boundary_metadata,
+    )
+
+
 @router.post(
     "/check-boundary",
     responses={
@@ -392,6 +500,8 @@ async def check_boundary(
     except UnsupportedCRSError:
         return _make_response(422, error="unsupported_crs")
 
+    content, exterior_was_unclosed = _close_unclosed_rings(content, ext)
+
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
             gdf = _read_geometry(content, filename, Path(tmpdir), boundary_filename)
@@ -412,28 +522,19 @@ async def check_boundary(
 
         validation_error = validate_geometry(gdf)
 
-        if validation_error:
-            # Keep the projected geometry to compute metadata bounds/centre so
-            # the frontend can still zoom the map to the (invalid) boundary.
-            geom_projected = gdf.geometry.iloc[0]
-            gdf = gdf.to_crs(_WGS84)
-            gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
-            geojson = json.loads(gdf.to_json())
+        # Only report unclosed_ring in place of another validation error when
+        # the exterior ring itself needed closing — an unclosed hole is left
+        # for geometry_has_holes to report instead (see _close_unclosed_rings).
+        # A MultiPolygon (already rejected as unsupported_geometry_type) also
+        # can't be safely re-opened using the single-ring logic below.
+        report_unclosed_ring = (
+            exterior_was_unclosed and gdf.geometry.iloc[0].geom_type == "Polygon"
+        )
 
-            # Some rejected geometries (e.g. empty/corrupt) have no computable
-            # bounds; skip metadata in that case rather than fail the response.
-            boundary_metadata = None
-            geom_wgs84 = gdf.geometry.iloc[0]
-            if geom_projected is not None and not geom_projected.is_empty:
-                boundary_metadata = _compute_boundary_metadata(
-                    geom_projected, geom_wgs84
-                )
-
-            return _make_response(
-                400,
-                error=validation_error,
-                boundary_geometry_wgs84=geojson,
-                boundary_metadata=boundary_metadata,
+        if report_unclosed_ring or validation_error:
+            error_code = "unclosed_ring" if report_unclosed_ring else validation_error
+            return _build_invalid_geometry_response(
+                gdf, error_code, reopen_exterior_ring=report_unclosed_ring
             )
 
         repository = _get_repository()
