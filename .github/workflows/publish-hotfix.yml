@@ -41,3 +41,9 @@ jobs:
         uses: DEFRA/cdp-build-action/build-hotfix@e96983a427efc87dee7923f4ffdb5b9867259239 # main
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Database Schema
+        uses: DEFRA/cdp-build-action/publish-db-migrations@550c4792fac07cfd59eaea469bc0a17ce202cced # main
+        with:
+          path: ./changelog
+          github-token: ${{ secrets.GITHUB_TOKEN }}
