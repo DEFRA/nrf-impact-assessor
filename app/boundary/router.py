@@ -176,40 +176,47 @@ def _check_declared_geojson_crs(content: bytes, ext: str) -> None:
         raise UnsupportedCRSError(msg)
 
 
-def _iter_polygon_rings(node):
-    """Yield each ring (a list of coordinate pairs) of every Polygon
-    geometry found in a GeoJSON Geometry, Feature, or FeatureCollection."""
+def _iter_polygon_geometries(node):
+    """Yield each Polygon geometry dict found in a GeoJSON Geometry,
+    Feature, or FeatureCollection."""
     if not isinstance(node, dict):
         return
 
     node_type = node.get("type")
     if node_type == "FeatureCollection":
         for feature in node.get("features") or []:
-            yield from _iter_polygon_rings(feature)
+            yield from _iter_polygon_geometries(feature)
     elif node_type == "Feature":
-        yield from _iter_polygon_rings(node.get("geometry"))
+        yield from _iter_polygon_geometries(node.get("geometry"))
     elif node_type == "GeometryCollection":
         for geometry in node.get("geometries") or []:
-            yield from _iter_polygon_rings(geometry)
+            yield from _iter_polygon_geometries(geometry)
     elif node_type == "Polygon":
-        yield from node.get("coordinates") or []
+        yield node
 
 
 def _close_unclosed_rings(content: bytes, ext: str) -> tuple[bytes, bool]:
-    """Close any unclosed Polygon ring in a GeoJSON/JSON file's raw bytes.
+    """Close any unclosed ring (exterior or interior/hole) in every Polygon
+    geometry in a GeoJSON/JSON file's raw bytes.
 
     GDAL silently closes unclosed rings on read (RFC 7946 requires closed
     rings) rather than surfacing an error — even with
     OGR_GEOMETRY_ACCEPT_UNCLOSED_RING=NO it just drops the ring, producing a
     valid-but-empty geometry with no way to tell what went wrong. We close
-    the ring ourselves first so GDAL/validate_geometry can parse and check
-    the shape normally, tracking whether a fix was needed so the caller can
-    still report unclosed_ring — with a previewable geometry, unlike a
-    pre-parse rejection — rather than silently accepting it as valid.
+    rings ourselves first so GDAL/validate_geometry can parse and check the
+    shape normally.
+
+    Only the *exterior* ring's closure state is reported back. An unclosed
+    interior ring (hole) is still closed here so GDAL can parse the
+    geometry, but is left to be reported via the normal geometry_has_holes
+    validation error rather than unclosed_ring — the single-ring preview
+    built for unclosed_ring can't represent "a hole was unclosed" without
+    fabricating a break in an exterior ring that was never actually broken.
 
     Returns:
-        A (content, was_unclosed) tuple. `content` is unchanged unless a
-        ring needed closing.
+        A (content, exterior_was_unclosed) tuple. `content` reflects any
+        ring closures (exterior or interior); `exterior_was_unclosed`
+        reflects only the exterior ring.
     """
     if ext not in _GEOJSON_EXTENSIONS:
         return content, False
@@ -219,16 +226,20 @@ def _close_unclosed_rings(content: bytes, ext: str) -> tuple[bytes, bool]:
     except (json.JSONDecodeError, UnicodeDecodeError):
         return content, False
 
-    was_unclosed = False
-    for ring in _iter_polygon_rings(data):
-        if isinstance(ring, list) and len(ring) >= 2 and ring[0] != ring[-1]:
-            ring.append(ring[0])
-            was_unclosed = True
+    any_ring_closed = False
+    exterior_was_unclosed = False
+    for polygon in _iter_polygon_geometries(data):
+        for index, ring in enumerate(polygon.get("coordinates") or []):
+            if isinstance(ring, list) and len(ring) >= 2 and ring[0] != ring[-1]:
+                ring.append(ring[0])
+                any_ring_closed = True
+                if index == 0:
+                    exterior_was_unclosed = True
 
-    if not was_unclosed:
+    if not any_ring_closed:
         return content, False
 
-    return json.dumps(data).encode("utf-8"), True
+    return json.dumps(data).encode("utf-8"), exterior_was_unclosed
 
 
 def _read_geometry(
@@ -489,7 +500,7 @@ async def check_boundary(
     except UnsupportedCRSError:
         return _make_response(422, error="unsupported_crs")
 
-    content, had_unclosed_ring = _close_unclosed_rings(content, ext)
+    content, exterior_was_unclosed = _close_unclosed_rings(content, ext)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
@@ -511,12 +522,13 @@ async def check_boundary(
 
         validation_error = validate_geometry(gdf)
 
-        # Only report unclosed_ring in place of another validation error
-        # when we actually closed a Polygon ring ourselves — a MultiPolygon
-        # (already rejected as unsupported_geometry_type) can't be safely
-        # re-opened using the single-ring logic below.
+        # Only report unclosed_ring in place of another validation error when
+        # the exterior ring itself needed closing — an unclosed hole is left
+        # for geometry_has_holes to report instead (see _close_unclosed_rings).
+        # A MultiPolygon (already rejected as unsupported_geometry_type) also
+        # can't be safely re-opened using the single-ring logic below.
         report_unclosed_ring = (
-            had_unclosed_ring and gdf.geometry.iloc[0].geom_type == "Polygon"
+            exterior_was_unclosed and gdf.geometry.iloc[0].geom_type == "Polygon"
         )
 
         if report_unclosed_ring or validation_error:
