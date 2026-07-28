@@ -192,8 +192,7 @@ def _iter_polygon_rings(node):
         for geometry in node.get("geometries") or []:
             yield from _iter_polygon_rings(geometry)
     elif node_type == "Polygon":
-        for ring in node.get("coordinates") or []:
-            yield ring
+        yield from node.get("coordinates") or []
 
 
 def _close_unclosed_rings(content: bytes, ext: str) -> tuple[bytes, bool]:
