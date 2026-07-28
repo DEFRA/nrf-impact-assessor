@@ -455,3 +455,49 @@ def test_row_count_falls_back_to_max_version_without_an_active_version():
         "SELECT COUNT(*) INTO prev_count FROM public.gcn_ponds "
         "WHERE version = (SELECT MAX(version) FROM public.gcn_ponds);" in sql
     )
+
+
+_FLOOR_OPTED_OUT = ("edp_boundary_layer", "edp_excluded_areas")
+
+
+@pytest.mark.parametrize("table", _FLOOR_OPTED_OUT)
+def test_edp_layer_floor_allows_a_legitimate_shrink(table):
+    """The EDP layers opt out of the proportional floor.
+
+    They hold single-digit rows, where a percentage cannot express anything
+    useful: at 3 rows the 90% default gives CEIL(3 * 0.9) = 3, so it blocks the
+    loss of even one row, and any pct above ~34% still blocks a real 3 -> 1
+    consolidation. Set to 0 so the ratio comparison can never fire, leaving the
+    unconditional `staged_count = 0` hard fail as the guard against a truncated
+    or empty dump.
+    """
+    from app.data_sync.qc_rules import load_qc_rules
+
+    rules = load_qc_rules()
+    table_rules = rules.tables[table]
+    assert table_rules.row_count_floor_pct == 0
+
+    sql = _row_count_sql(
+        table,
+        table_rules,
+        floor_pct=rules.row_count_floor_pct,
+        active_version=None,
+    )
+    # CEIL(prev_count * 0.0) is 0, and a count is never < 0.
+    assert "staged_count < CEIL(prev_count * 0.0)" in sql
+    # The zero-row hard fail is unconditional (DM-2) and must survive the opt-out.
+    assert "staged_count = 0" in sql
+
+
+def test_global_row_count_floor_is_unchanged():
+    """The opt-out is per-table: every other table keeps the 90% default."""
+    from app.data_sync.qc_rules import load_qc_rules
+
+    rules = load_qc_rules()
+    assert rules.row_count_floor_pct == 90
+    overridden = {
+        name: r.row_count_floor_pct
+        for name, r in rules.tables.items()
+        if r.row_count_floor_pct is not None
+    }
+    assert overridden == dict.fromkeys(_FLOOR_OPTED_OUT, 0)
