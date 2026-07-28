@@ -413,6 +413,40 @@ class TestCheckBoundaryGeometryValidation:
         body = response.json()
         assert body["error"] == "duplicate_vertices"
 
+    def test_unclosed_ring_returns_400_with_geometry(self, client):
+        """A polygon ring whose first and last coordinates differ should be
+        rejected, but with the boundary still included so the frontend can
+        show the user exactly what they uploaded."""
+        content = _make_geojson_bytes(
+            coordinates=[[[0, 0], [1, 0], [1, 1], [0, 1]]]
+        )
+        response = _post_boundary(client, "not-closed.geojson", content)
+
+        assert response.status_code == 400
+        body = response.json()
+        assert body["error"] == "unclosed_ring"
+
+        geometry = body["boundaryGeometryWgs84"]["features"][0]["geometry"]
+        exterior = geometry["coordinates"][0]
+        # The preview must show the boundary as unclosed, exactly as
+        # uploaded — not the ring we closed ourselves to get GDAL to parse
+        # it. 4 points in, 4 points back out; first and last must differ.
+        assert len(exterior) == 4
+        assert exterior[0] != exterior[-1]
+
+        assert body["boundaryMetadata"] is not None
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_closed_ring_passes_validation(self, client):
+        """A properly closed ring must not be rejected by the ring-closure
+        pre-check."""
+        content = _make_geojson_bytes(
+            coordinates=[[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]
+        )
+        response = _post_boundary(client, "closed.geojson", content)
+
+        assert response.status_code == 200
+
     def test_missing_crs_returns_422(self, client):
         """A shapefile with no CRS defined should return a missing_crs code."""
         zip_buf = _make_shapefile_zip_without_crs()

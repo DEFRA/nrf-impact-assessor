@@ -176,6 +176,62 @@ def _check_declared_geojson_crs(content: bytes, ext: str) -> None:
         raise UnsupportedCRSError(msg)
 
 
+def _iter_polygon_rings(node):
+    """Yield each ring (a list of coordinate pairs) of every Polygon
+    geometry found in a GeoJSON Geometry, Feature, or FeatureCollection."""
+    if not isinstance(node, dict):
+        return
+
+    node_type = node.get("type")
+    if node_type == "FeatureCollection":
+        for feature in node.get("features") or []:
+            yield from _iter_polygon_rings(feature)
+    elif node_type == "Feature":
+        yield from _iter_polygon_rings(node.get("geometry"))
+    elif node_type == "GeometryCollection":
+        for geometry in node.get("geometries") or []:
+            yield from _iter_polygon_rings(geometry)
+    elif node_type == "Polygon":
+        for ring in node.get("coordinates") or []:
+            yield ring
+
+
+def _close_unclosed_rings(content: bytes, ext: str) -> tuple[bytes, bool]:
+    """Close any unclosed Polygon ring in a GeoJSON/JSON file's raw bytes.
+
+    GDAL silently closes unclosed rings on read (RFC 7946 requires closed
+    rings) rather than surfacing an error — even with
+    OGR_GEOMETRY_ACCEPT_UNCLOSED_RING=NO it just drops the ring, producing a
+    valid-but-empty geometry with no way to tell what went wrong. We close
+    the ring ourselves first so GDAL/validate_geometry can parse and check
+    the shape normally, tracking whether a fix was needed so the caller can
+    still report unclosed_ring — with a previewable geometry, unlike a
+    pre-parse rejection — rather than silently accepting it as valid.
+
+    Returns:
+        A (content, was_unclosed) tuple. `content` is unchanged unless a
+        ring needed closing.
+    """
+    if ext not in _GEOJSON_EXTENSIONS:
+        return content, False
+
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return content, False
+
+    was_unclosed = False
+    for ring in _iter_polygon_rings(data):
+        if isinstance(ring, list) and len(ring) >= 2 and ring[0] != ring[-1]:
+            ring.append(ring[0])
+            was_unclosed = True
+
+    if not was_unclosed:
+        return content, False
+
+    return json.dumps(data).encode("utf-8"), True
+
+
 def _read_geometry(
     content: bytes,
     filename: str,
@@ -392,6 +448,8 @@ async def check_boundary(
     except UnsupportedCRSError:
         return _make_response(422, error="unsupported_crs")
 
+    content, had_unclosed_ring = _close_unclosed_rings(content, ext)
+
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
             gdf = _read_geometry(content, filename, Path(tmpdir), boundary_filename)
@@ -412,7 +470,17 @@ async def check_boundary(
 
         validation_error = validate_geometry(gdf)
 
-        if validation_error:
+        # Only report unclosed_ring in place of another validation error
+        # when we actually closed a Polygon ring ourselves — a MultiPolygon
+        # (already rejected as unsupported_geometry_type) can't be safely
+        # re-opened using the single-ring logic below.
+        report_unclosed_ring = (
+            had_unclosed_ring and gdf.geometry.iloc[0].geom_type == "Polygon"
+        )
+
+        if report_unclosed_ring or validation_error:
+            error_code = "unclosed_ring" if report_unclosed_ring else validation_error
+
             # Keep the projected geometry to compute metadata bounds/centre so
             # the frontend can still zoom the map to the (invalid) boundary.
             geom_projected = gdf.geometry.iloc[0]
@@ -429,9 +497,19 @@ async def check_boundary(
                     geom_projected, geom_wgs84
                 )
 
+            if report_unclosed_ring:
+                # We closed the ring ourselves above so GDAL could parse a
+                # geometry at all; re-open the exterior ring in the WGS84
+                # preview so the map shows the boundary exactly as unclosed
+                # as it was uploaded, not the auto-closed shape used for
+                # validation/metadata.
+                exterior = geojson["features"][0]["geometry"]["coordinates"][0]
+                if len(exterior) > 1 and exterior[0] == exterior[-1]:
+                    exterior.pop()
+
             return _make_response(
                 400,
-                error=validation_error,
+                error=error_code,
                 boundary_geometry_wgs84=geojson,
                 boundary_metadata=boundary_metadata,
             )
