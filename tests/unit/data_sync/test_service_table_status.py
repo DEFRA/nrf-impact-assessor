@@ -12,7 +12,13 @@ from app.data_sync.service import REFERENCE_TABLES, _log_table_status
 N_TABLES = len(REFERENCE_TABLES)
 
 
-def test_logs_single_info_line_when_all_tables_have_rows(caplog):
+def _no_versions(monkeypatch) -> None:
+    """Most status tests only care about counts; silence the version lookup."""
+    monkeypatch.setattr(service, "_active_data_versions", lambda _session: {})
+
+
+def test_logs_single_info_line_when_all_tables_have_rows(caplog, monkeypatch):
+    _no_versions(monkeypatch)
     session = MagicMock()
     session.scalar.return_value = 5
 
@@ -28,7 +34,8 @@ def test_logs_single_info_line_when_all_tables_have_rows(caplog):
     assert "all tables have rows" in record.message
 
 
-def test_status_message_uses_context_label(caplog):
+def test_status_message_uses_context_label(caplog, monkeypatch):
+    _no_versions(monkeypatch)
     session = MagicMock()
     session.scalar.return_value = 5
 
@@ -40,7 +47,8 @@ def test_status_message_uses_context_label(caplog):
     assert "Post-sync" not in records[0].message
 
 
-def test_warns_and_names_empty_tables(caplog):
+def test_warns_and_names_empty_tables(caplog, monkeypatch):
+    _no_versions(monkeypatch)
     session = MagicMock()
     # lookup_table (3rd in the list) comes back empty
     counts = [5] * N_TABLES
@@ -58,7 +66,8 @@ def test_warns_and_names_empty_tables(caplog):
     assert "all tables have rows" not in record.message
 
 
-def test_warns_and_names_tables_that_fail_to_count(caplog):
+def test_warns_and_names_tables_that_fail_to_count(caplog, monkeypatch):
+    _no_versions(monkeypatch)
     session = MagicMock()
     effects: list = [5] * N_TABLES
     effects[0] = RuntimeError("boom")
@@ -75,7 +84,8 @@ def test_warns_and_names_tables_that_fail_to_count(caplog):
     session.rollback.assert_called_once()
 
 
-def test_never_raises_even_if_counting_blows_up(caplog):
+def test_never_raises_even_if_counting_blows_up(caplog, monkeypatch):
+    _no_versions(monkeypatch)
     session = MagicMock()
     session.scalar.side_effect = RuntimeError("count failed")
     session.rollback.side_effect = RuntimeError("rollback failed too")
@@ -84,6 +94,42 @@ def test_never_raises_even_if_counting_blows_up(caplog):
         _log_table_status(session)  # must not raise
 
     assert any("table status" in r.message for r in caplog.records)
+
+
+def test_annotates_each_table_with_its_active_data_version(caplog, monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "_active_data_versions",
+        lambda _session: {"coefficient_layer": "2026-06-01"},
+    )
+    session = MagicMock()
+    session.scalar.return_value = 5
+
+    with caplog.at_level(logging.INFO, logger="app.data_sync.service"):
+        _log_table_status(session)
+
+    message = next(r for r in caplog.records if "table status" in r.message).message
+    assert "coefficient_layer=5@2026-06-01" in message
+    # A table with no applied version is reported as a bare count.
+    assert "edp_edges=5 " in message or message.endswith("edp_edges=5")
+
+
+def test_status_still_logs_when_version_lookup_fails(caplog, monkeypatch):
+    def boom(_session):
+        msg = "no provenance"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(service, "resolve_active_provenance", boom)
+    session = MagicMock()
+    session.scalar.return_value = 5
+
+    with caplog.at_level(logging.INFO, logger="app.data_sync.service"):
+        _log_table_status(session)
+
+    records = [r for r in caplog.records if "Post-sync table status" in r.message]
+    assert len(records) == 1
+    assert "coefficient_layer=5" in records[0].message
+    assert "all tables have rows" in records[0].message
 
 
 def _do_run_with(monkeypatch, *, loaded: list[str]) -> tuple[MagicMock, MagicMock]:

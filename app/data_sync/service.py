@@ -63,13 +63,32 @@ REFERENCE_TABLES = [
 _MODEL_BY_TABLE_NAME = {label: model for model, label in REFERENCE_TABLES}
 
 
-def _log_table_status(session: Session, *, context: str = "Post-sync") -> None:
-    """Log one line of per-table row counts so an empty reference table is
-    visible in the logs. `context` labels the message (e.g. "Post-sync",
-    "No-op sync", "Startup"). Never raises: callers run it best-effort, so a
-    failed count must not fail the surrounding operation.
+def _active_data_versions(session: Session) -> dict[str, str]:
+    """Per-table active `data_version`, for annotating the status line. Best
+    effort: an unreadable provenance table must not cost us the row counts, so
+    any failure degrades to "no versions known" rather than raising.
     """
     try:
+        return {
+            name: prov.data_version
+            for name, prov in resolve_active_provenance(session).tables.items()
+            if prov.data_version
+        }
+    except Exception:  # noqa: BLE001
+        session.rollback()
+        logger.warning("table status: data_version lookup failed", exc_info=True)
+        return {}
+
+
+def _log_table_status(session: Session, *, context: str = "Post-sync") -> None:
+    """Log one line of per-table row counts and active data versions
+    (`table=count@version`, version omitted when none is applied) so an empty or
+    stale reference table is visible in the logs. `context` labels the message
+    (e.g. "Post-sync", "No-op sync", "Startup"). Never raises: callers run it
+    best-effort, so a failed count must not fail the surrounding operation.
+    """
+    try:
+        versions = _active_data_versions(session)
         parts: list[str] = []
         empty: list[str] = []
         errors: list[str] = []
@@ -81,7 +100,8 @@ def _log_table_status(session: Session, *, context: str = "Post-sync") -> None:
                 parts.append(f"{label}=error")
                 errors.append(f"{label} ({exc})")
                 continue
-            parts.append(f"{label}={n}")
+            version = versions.get(label)
+            parts.append(f"{label}={n}@{version}" if version else f"{label}={n}")
             if not n:
                 empty.append(label)
         summary = f"{context} table status: " + " ".join(parts)

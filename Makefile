@@ -6,17 +6,17 @@ help: ## Show this help
 # ---------------------------------------------------------------------------
 # Development
 # ---------------------------------------------------------------------------
-TEST_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5434
+TEST_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5432
 
 test: ## Run unit tests only (integration and regression excluded by default)
 	$(TEST_ENV) uv run pytest tests/ app/ -v
 
-test-integration: ## Run integration tests against test_nrf_impact DB on port 5434
+test-integration: ## Run integration tests against test_nrf_impact DB on port 5432
 	$(TEST_ENV) uv run pytest tests/integration/ -v -m integration
 
-REGRESSION_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5434
+REGRESSION_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5432
 
-test-regression: ## Run regression tests against production DB on port 5434
+test-regression: ## Run regression tests against production DB on port 5432
 	$(REGRESSION_ENV) uv run pytest tests/regression/ -v -m regression
 
 update-regression-baseline: ## Regenerate nutrient regression baselines from PostGIS (run then commit the CSVs)
@@ -168,7 +168,7 @@ db-restore-tables: ## Restore per-table backup: apply schema grants then table d
 # ---------------------------------------------------------------------------
 # Database migrations
 # ---------------------------------------------------------------------------
-DB_MIGRATE_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5434
+DB_MIGRATE_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5432
 
 db-migrate: ## Apply all pending Alembic migrations
 	$(DB_MIGRATE_ENV) uv run alembic upgrade head
@@ -198,7 +198,7 @@ db-rollback-liquibase: ## Rollback last N Liquibase changesets (COUNT=N, default
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
-LOAD_DATA_ENV = PYTHONPATH=. DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5434
+LOAD_DATA_ENV = PYTHONPATH=. DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5432
 
 load-data: ## Load all reference data into PostGIS (destructive)
 	$(LOAD_DATA_ENV) uv run python scripts/load_data.py
