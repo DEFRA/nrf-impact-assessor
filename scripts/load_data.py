@@ -167,8 +167,8 @@ class SpatialDataLoader:
             self.gcn_ponds_layer = "gcn_ponds"
             self.edp_edges_gdb = fixtures_dir / "edp_edges.gpkg"
             self.edp_edges_layer = "edp_edges"
-            self.edp_boundary_gpkg = fixtures_dir / "edp_boundaries.gpkg"
-            self.edp_boundary_layer = "edp_boundaries"
+            self.edp_boundary_gpkg = fixtures_dir / "edp_boundary_extents.gpkg"
+            self.edp_boundary_layer = "edp_boundary_extents"
             self.edp_excluded_areas_gpkg = fixtures_dir / "edp_excluded_areas.gpkg"
             self.edp_excluded_areas_layer = "edp_excluded_areas"
         else:

@@ -20,7 +20,11 @@ def test_fixture_exists():
 
 
 def test_load_populates_rows_and_name(repository: Repository):
-    """Load just this layer from the committed fixtures into the test DB."""
+    """Load just this layer from the committed fixtures into the test DB.
+
+    The fixture is clipped to the buffered EDP boundary, which contains all
+    three source SSSIs.
+    """
     loader = SpatialDataLoader(repository, fixtures_dir=FIXTURES_DIR)
     loader.load_spatial_layers(layer_types=["edp_excluded_areas"])
 
@@ -30,3 +34,5 @@ def test_load_populates_rows_and_name(repository: Repository):
 
     assert count == 3
     assert "Yare Broads and Marshes SSSI" in names
+    assert "Bure Broads and Marshes SSSI" in names
+    assert "River Wensum SSSI" in names
