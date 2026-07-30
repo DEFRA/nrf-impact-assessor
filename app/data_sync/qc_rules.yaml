@@ -73,6 +73,7 @@ tables:
     geometry: {expected_types: [MultiPolygon], expected_srid: 27700}
 
   edp_excluded_areas:
+    non_null_json_columns: ["attributes.site_name"]
     geometry: {expected_types: [MultiPolygon], expected_srid: 27700}
 
 referential_checks:

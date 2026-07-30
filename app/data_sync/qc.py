@@ -136,27 +136,53 @@ def _json_key_sql(table: str, rules: TableRules) -> str:
             "value(s)', detail_count));\n"
             "END IF;\n"
         )
-    for extra in rules.non_null_json_columns:
-        extra_expr = _json_path_expr(extra)
+    return sql
+
+
+def _non_null_json_sql(table: str, rules: TableRules) -> str:
+    """Rule 3 for JSONB attributes that must be present but are not the key.
+
+    Emitted independently of `key`: these rules previously lived inside
+    `_json_key_sql`, so a table declaring `non_null_json_columns` without also
+    declaring a `key` had them silently dropped.
+    """
+    stage = staging_name(table)
+    sql = ""
+    for path in rules.non_null_json_columns:
+        expr = _json_path_expr(path)
         sql += (
             f"SELECT COUNT(*) INTO detail_count FROM pg_temp.{stage} "  # noqa: S608
-            f"WHERE {extra_expr} IS NULL;\n"
+            f"WHERE {expr} IS NULL;\n"
             "IF detail_count > 0 THEN\n"
             "  failures := array_append(failures, format("
-            f"'table={table} rule=non_null detail=%s row(s) with NULL {extra}', "
+            f"'table={table} rule=non_null detail=%s row(s) with NULL {path}', "
             "detail_count));\n"
             "END IF;\n"
         )
-    for path2, allowed in rules.allowed_values.items():
-        expr2 = _json_path_expr(path2)
+    return sql
+
+
+def _allowed_values_sql(table: str, rules: TableRules) -> str:
+    """Rule 8 enum constraints on JSONB attributes.
+
+    Emitted independently of `key` for the same reason as `_non_null_json_sql`.
+    """
+    stage = staging_name(table)
+    sql = ""
+    for path, allowed in rules.allowed_values.items():
+        expr = _json_path_expr(path)
         values = ", ".join(f"'{v}'" for v in allowed)
+        # The WHERE ... NOT IN clause is a standalone SQL context and keeps
+        # single-escaped quotes, but the error-message text is embedded inside
+        # an outer format('...') string literal, so its quotes must be doubled
+        # to avoid terminating that literal early (PostgreSQL syntax error).
         values_display = ", ".join(f"''{v}''" for v in allowed)
         sql += (
             f"SELECT COUNT(*) INTO detail_count FROM pg_temp.{stage} "  # noqa: S608
-            f"WHERE {expr2} NOT IN ({values});\n"
+            f"WHERE {expr} NOT IN ({values});\n"
             "IF detail_count > 0 THEN\n"
             "  failures := array_append(failures, format("
-            f"'table={table} rule=allowed_values detail=%s row(s) with {path2} "
+            f"'table={table} rule=allowed_values detail=%s row(s) with {path} "
             f"outside {{{values_display}}}', detail_count));\n"
             "END IF;\n"
         )
@@ -298,6 +324,10 @@ def _table_parts(table: str, rules: TableRules, floor_pct: float) -> list[str]:
             parts.append(_column_key_sql(table, rules))
         else:
             parts.append(_json_key_sql(table, rules))
+    if rules.non_null_json_columns:
+        parts.append(_non_null_json_sql(table, rules))
+    if rules.allowed_values:
+        parts.append(_allowed_values_sql(table, rules))
     if rules.lookup_rows:
         parts.append(_lookup_row_sql(table, rules))
     if rules.geometry is not None:
