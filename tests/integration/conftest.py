@@ -120,6 +120,9 @@ def repository(test_engine: Engine) -> Repository:
         conn.execute(text("TRUNCATE public.gcn_risk_zones CASCADE"))
         conn.execute(text("TRUNCATE public.gcn_ponds CASCADE"))
         conn.execute(text("TRUNCATE public.edp_edges CASCADE"))
+        conn.execute(text("TRUNCATE public.edp_boundary_layer CASCADE"))
+        conn.execute(text("TRUNCATE public.edp_excluded_areas CASCADE"))
+        conn.execute(text("TRUNCATE public.data_active_version CASCADE"))
         conn.execute(text("TRUNCATE public.lookup_table CASCADE"))
 
     return Repository(test_engine)

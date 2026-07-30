@@ -31,7 +31,8 @@ from sqlalchemy import select
 
 from app.boundary.validation import SUPPORTED_CRS, validate_geometry
 from app.config import ApiServerConfig
-from app.models.db import EdpBoundaryLayer
+from app.data_sync.active_version import get_active_version
+from app.models.db import EdpBoundaryLayer, EdpExcludedAreas
 from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
 from app.spatial.utils import UnsupportedCRSError, ensure_crs
@@ -40,6 +41,11 @@ logger = logging.getLogger(__name__)
 
 _VALID_GEOM_TYPES = {"Polygon"}
 _WGS84 = "EPSG:4326"
+
+# Stands in for an exclusion zone whose name is missing or blank. The boundary
+# is still ineligible, so the overlap must be reported even when we cannot say
+# which site caused it.
+_UNNAMED_EXCLUDED_AREA = "Unnamed exclusion area"
 
 
 router = APIRouter()
@@ -98,6 +104,7 @@ def _make_response(
     boundary_geometry_original: dict | None = None,
     boundary_geometry_wgs84: dict | None = None,
     intersecting_edps: list | None = None,
+    intersecting_excluded_areas: list | None = None,
     boundary_metadata: dict | None = None,
     error: str | None = None,
 ) -> JSONResponse:
@@ -108,6 +115,7 @@ def _make_response(
             "boundaryGeometryOriginal": boundary_geometry_original,
             "boundaryGeometryWgs84": boundary_geometry_wgs84,
             "intersectingEdps": intersecting_edps or [],
+            "intersectingExcludedAreas": intersecting_excluded_areas or [],
             "boundaryMetadata": boundary_metadata,
             "error": error,
         },
@@ -159,7 +167,7 @@ def _check_declared_geojson_crs(content: bytes, ext: str) -> None:
 
     try:
         crs_name = json.loads(content)["crs"]["properties"]["name"]
-    except (json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError):
+    except json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError:
         return
 
     try:
@@ -174,6 +182,72 @@ def _check_declared_geojson_crs(content: bytes, ext: str) -> None:
     if epsg is not None and epsg not in SUPPORTED_CRS:
         msg = f"Unsupported coordinate reference system: EPSG:{epsg}"
         raise UnsupportedCRSError(msg)
+
+
+def _iter_polygon_geometries(node):
+    """Yield each Polygon geometry dict found in a GeoJSON Geometry,
+    Feature, or FeatureCollection."""
+    if not isinstance(node, dict):
+        return
+
+    node_type = node.get("type")
+    if node_type == "FeatureCollection":
+        for feature in node.get("features") or []:
+            yield from _iter_polygon_geometries(feature)
+    elif node_type == "Feature":
+        yield from _iter_polygon_geometries(node.get("geometry"))
+    elif node_type == "GeometryCollection":
+        for geometry in node.get("geometries") or []:
+            yield from _iter_polygon_geometries(geometry)
+    elif node_type == "Polygon":
+        yield node
+
+
+def _close_unclosed_rings(content: bytes, ext: str) -> tuple[bytes, bool]:
+    """Close any unclosed ring (exterior or interior/hole) in every Polygon
+    geometry in a GeoJSON/JSON file's raw bytes.
+
+    GDAL silently closes unclosed rings on read (RFC 7946 requires closed
+    rings) rather than surfacing an error — even with
+    OGR_GEOMETRY_ACCEPT_UNCLOSED_RING=NO it just drops the ring, producing a
+    valid-but-empty geometry with no way to tell what went wrong. We close
+    rings ourselves first so GDAL/validate_geometry can parse and check the
+    shape normally.
+
+    Only the *exterior* ring's closure state is reported back. An unclosed
+    interior ring (hole) is still closed here so GDAL can parse the
+    geometry, but is left to be reported via the normal geometry_has_holes
+    validation error rather than unclosed_ring — the single-ring preview
+    built for unclosed_ring can't represent "a hole was unclosed" without
+    fabricating a break in an exterior ring that was never actually broken.
+
+    Returns:
+        A (content, exterior_was_unclosed) tuple. `content` reflects any
+        ring closures (exterior or interior); `exterior_was_unclosed`
+        reflects only the exterior ring.
+    """
+    if ext not in _GEOJSON_EXTENSIONS:
+        return content, False
+
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError, UnicodeDecodeError:
+        return content, False
+
+    any_ring_closed = False
+    exterior_was_unclosed = False
+    for polygon in _iter_polygon_geometries(data):
+        for index, ring in enumerate(polygon.get("coordinates") or []):
+            if isinstance(ring, list) and len(ring) >= 2 and ring[0] != ring[-1]:
+                ring.append(ring[0])
+                any_ring_closed = True
+                if index == 0:
+                    exterior_was_unclosed = True
+
+    if not any_ring_closed:
+        return content, False
+
+    return json.dumps(data).encode("utf-8"), exterior_was_unclosed
 
 
 def _read_geometry(
@@ -300,6 +374,59 @@ def _check_shapefile_companions(shp_path: Path) -> Path:
     return shp_path
 
 
+def _find_intersecting_excluded_areas(
+    gdf: gpd.GeoDataFrame, repository: Repository
+) -> list[str]:
+    """Return names of EDP exclusion zones the uploaded geometry overlaps.
+
+    A boundary overlapping any exclusion zone is not eligible for the EDP and
+    must be routed to HRA instead, so the caller treats a non-empty result as
+    ineligibility.
+
+    Only positive-area overlap counts: the exclusion zones are already buffered
+    SSSI polygons, so a boundary that merely touches a zone edge lies outside
+    the zone and stays eligible.
+
+    Names are deduplicated (one SSSI may be several polygons) and sorted so the
+    response is deterministic.
+
+    A row whose name is NULL or blank becomes `_UNNAMED_EXCLUDED_AREA` rather
+    than being dropped. Dropping it would be a fail-*open* bug: the caller gates
+    on this list being non-empty, so a nameless zone would read as "no overlap"
+    and the boundary would wrongly continue down the EDP route. Detection has to
+    depend only on geometry, never on attribute quality — the QC rules reduce
+    how often the placeholder is needed, they do not make it unnecessary.
+    """
+    input_geom = ST_SetSRID(ST_GeomFromText(gdf.union_all().wkt), 27700)
+    intersection = ST_CollectionExtract(
+        ST_Intersection(EdpExcludedAreas.geometry, input_geom), 3
+    )
+
+    with repository.session() as session:
+        version = get_active_version(session, "edp_excluded_areas")
+        stmt = (
+            select(EdpExcludedAreas.name)
+            .where(
+                EdpExcludedAreas.version == version,
+                # ST_Intersects is the index-backed predicate that narrows
+                # candidates; the area test then drops touch-only contact.
+                ST_Intersects(EdpExcludedAreas.geometry, input_geom),
+                ST_Area(intersection) > 0,
+            )
+            .distinct()
+        )
+        rows = session.execute(stmt).fetchall()
+
+    return sorted(
+        {
+            row.name.strip()
+            if row.name and row.name.strip()
+            else _UNNAMED_EXCLUDED_AREA
+            for row in rows
+        }
+    )
+
+
 def _find_intersecting_edps(
     gdf: gpd.GeoDataFrame, repository: Repository, output_srid: int = 4326
 ) -> list[dict]:
@@ -313,24 +440,27 @@ def _find_intersecting_edps(
         ST_Intersection(EdpBoundaryLayer.geometry, input_geom), 3
     )
 
-    stmt = select(
-        EdpBoundaryLayer.name,
-        EdpBoundaryLayer.attributes,
-        ST_AsGeoJSON(ST_Transform(EdpBoundaryLayer.geometry, output_srid)).label(
-            "edp_geojson"
-        ),
-        ST_AsGeoJSON(ST_Transform(intersection, output_srid)).label(
-            "intersection_geojson"
-        ),
-        ST_Area(intersection).label("intersection_area_sqm"),
-    ).where(
-        ST_Intersects(
-            EdpBoundaryLayer.geometry,
-            input_geom,
-        )
-    )
-
     with repository.session() as session:
+        # Without this the query spans every loaded version, so once a data sync
+        # has staged v2 alongside v1 each EDP would be reported twice.
+        version = get_active_version(session, "edp_boundary_layer")
+        stmt = select(
+            EdpBoundaryLayer.name,
+            EdpBoundaryLayer.attributes,
+            ST_AsGeoJSON(ST_Transform(EdpBoundaryLayer.geometry, output_srid)).label(
+                "edp_geojson"
+            ),
+            ST_AsGeoJSON(ST_Transform(intersection, output_srid)).label(
+                "intersection_geojson"
+            ),
+            ST_Area(intersection).label("intersection_area_sqm"),
+        ).where(
+            EdpBoundaryLayer.version == version,
+            ST_Intersects(
+                EdpBoundaryLayer.geometry,
+                input_geom,
+            ),
+        )
         rows = session.execute(stmt).fetchall()
 
     results = []
@@ -351,6 +481,48 @@ def _find_intersecting_edps(
             }
         )
     return results
+
+
+def _build_invalid_geometry_response(
+    gdf: gpd.GeoDataFrame, error_code: str, *, reopen_exterior_ring: bool
+) -> JSONResponse:
+    """Build the 400 response for an invalid/rejected geometry, still
+    including the (invalid) boundary so the frontend can preview it.
+
+    Args:
+        gdf: Single-row GeoDataFrame holding the geometry to preview, in
+            its post-validation CRS (not yet reprojected to WGS84).
+        error_code: The failure code to report.
+        reopen_exterior_ring: If True, remove the final (duplicate) point
+            from the WGS84 exterior ring — used when the ring was only
+            closed internally so GDAL could parse it, so the map shows the
+            boundary exactly as unclosed as it was uploaded.
+    """
+    # Keep the projected geometry to compute metadata bounds/centre so
+    # the frontend can still zoom the map to the (invalid) boundary.
+    geom_projected = gdf.geometry.iloc[0]
+    gdf = gdf.to_crs(_WGS84)
+    gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
+    geojson = json.loads(gdf.to_json())
+
+    # Some rejected geometries (e.g. empty/corrupt) have no computable
+    # bounds; skip metadata in that case rather than fail the response.
+    boundary_metadata = None
+    geom_wgs84 = gdf.geometry.iloc[0]
+    if geom_projected is not None and not geom_projected.is_empty:
+        boundary_metadata = _compute_boundary_metadata(geom_projected, geom_wgs84)
+
+    if reopen_exterior_ring:
+        exterior = geojson["features"][0]["geometry"]["coordinates"][0]
+        if len(exterior) > 1 and exterior[0] == exterior[-1]:
+            exterior.pop()
+
+    return _make_response(
+        400,
+        error=error_code,
+        boundary_geometry_wgs84=geojson,
+        boundary_metadata=boundary_metadata,
+    )
 
 
 @router.post(
@@ -378,7 +550,14 @@ async def check_boundary(
     format-agnostic. This service then opens that specific file rather than
     re-implementing a picking rule of its own.
 
-    Returns the uploaded geometry as GeoJSON along with any intersecting EDP areas.
+    Returns the uploaded geometry as GeoJSON along with any intersecting EDP
+    areas and any intersecting EDP exclusion zones.
+
+    A boundary that overlaps an exclusion zone (a buffered SSSI polygon) is not
+    eligible for the EDP and must be routed to HRA. Such a response is a normal
+    200 with `error: null`: a non-empty `intersectingExcludedAreas` is the
+    signal, and `intersectingEdps` is then always empty. Touching a zone edge
+    without overlapping it does not exclude.
     """
     content = await geometry_file.read(_max_upload_bytes + 1)
     if len(content) > _max_upload_bytes:
@@ -391,6 +570,8 @@ async def check_boundary(
         _check_declared_geojson_crs(content, ext)
     except UnsupportedCRSError:
         return _make_response(422, error="unsupported_crs")
+
+    content, exterior_was_unclosed = _close_unclosed_rings(content, ext)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
@@ -412,32 +593,31 @@ async def check_boundary(
 
         validation_error = validate_geometry(gdf)
 
-        if validation_error:
-            # Keep the projected geometry to compute metadata bounds/centre so
-            # the frontend can still zoom the map to the (invalid) boundary.
-            geom_projected = gdf.geometry.iloc[0]
-            gdf = gdf.to_crs(_WGS84)
-            gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
-            geojson = json.loads(gdf.to_json())
+        # Only report unclosed_ring in place of another validation error when
+        # the exterior ring itself needed closing — an unclosed hole is left
+        # for geometry_has_holes to report instead (see _close_unclosed_rings).
+        # A MultiPolygon (already rejected as unsupported_geometry_type) also
+        # can't be safely re-opened using the single-ring logic below.
+        report_unclosed_ring = (
+            exterior_was_unclosed and gdf.geometry.iloc[0].geom_type == "Polygon"
+        )
 
-            # Some rejected geometries (e.g. empty/corrupt) have no computable
-            # bounds; skip metadata in that case rather than fail the response.
-            boundary_metadata = None
-            geom_wgs84 = gdf.geometry.iloc[0]
-            if geom_projected is not None and not geom_projected.is_empty:
-                boundary_metadata = _compute_boundary_metadata(
-                    geom_projected, geom_wgs84
-                )
-
-            return _make_response(
-                400,
-                error=validation_error,
-                boundary_geometry_wgs84=geojson,
-                boundary_metadata=boundary_metadata,
+        if report_unclosed_ring or validation_error:
+            error_code = "unclosed_ring" if report_unclosed_ring else validation_error
+            return _build_invalid_geometry_response(
+                gdf, error_code, reopen_exterior_ring=report_unclosed_ring
             )
 
         repository = _get_repository()
-        intersecting_edps = _find_intersecting_edps(gdf, repository, output_srid=4326)
+        # A boundary overlapping any exclusion zone is ineligible for the EDP
+        # and goes to HRA instead, so its EDP overlap is moot — skip that query
+        # rather than compute a result the caller must not act on.
+        intersecting_excluded_areas = _find_intersecting_excluded_areas(gdf, repository)
+        intersecting_edps = (
+            []
+            if intersecting_excluded_areas
+            else _find_intersecting_edps(gdf, repository, output_srid=4326)
+        )
 
         # Extract the first Polygon/MultiPolygon geometry, stripping user-supplied
         # properties to avoid processing Personal Identifiable Information (PII).
@@ -467,5 +647,6 @@ async def check_boundary(
         boundary_geometry_original=boundary_geometry_original,
         boundary_geometry_wgs84=boundary_geometry_wgs84,
         intersecting_edps=intersecting_edps,
+        intersecting_excluded_areas=intersecting_excluded_areas,
         boundary_metadata=boundary_metadata,
     )

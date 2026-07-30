@@ -59,6 +59,13 @@ _GOOD_GEOM_BY_TYPE = {
 
 _QC_TABLE_RULES = load_qc_rules().tables
 
+_SPATIAL_COLUMNS = "id, version, geometry, name, attributes, created_at"
+_COEFFICIENT_COLUMNS = (
+    "id, version, geometry, crome_id, land_use_cat, nn_catchment, "
+    "subcatchment, lu_curr_n_coeff, lu_curr_p_coeff, n_resi_coeff, "
+    "p_resi_coeff, created_at"
+)
+
 
 def _good_geom(table: str) -> str:
     """EWKB hex of a geometry type `table`'s QC rules accept.
@@ -84,6 +91,20 @@ def _dump(table: str, columns: str, rows: list[str]) -> bytes:
     return gzip.compress(body.encode())
 
 
+def _spatial_dump(table: str, name: str, attributes: str) -> bytes:
+    """One-row dump for a table on the shared spatial-layer column set."""
+    return _dump(
+        table,
+        _SPATIAL_COLUMNS,
+        [
+            (
+                f"{uuid4()}\t1\t{_good_geom(table)}\t{name}\t{attributes}"
+                "\t2026-01-01 00:00:00+00\n"
+            )
+        ],
+    )
+
+
 def _good_dumps() -> dict[str, bytes]:
     """Minimal one-row, QC-passing dump for every allow-listed table."""
     dumps = {}
@@ -96,24 +117,13 @@ def _good_dumps() -> dict[str, bytes]:
         "gcn_risk_zones": '{"RZ": "Green"}',
         "gcn_ponds": "{}",
         "edp_edges": "{}",
-        "edp_excluded_areas": "{}",
+        "edp_excluded_areas": '{"site_name": "Yare Broads and Marshes SSSI"}',
     }
     for table, attrs in attrs_by_table.items():
-        dumps[table] = _dump(
-            table,
-            "id, version, geometry, name, attributes, created_at",
-            [
-                (
-                    f"{uuid4()}\t1\t{_good_geom(table)}\tName\t{attrs}"
-                    "\t2026-01-01 00:00:00+00\n"
-                )
-            ],
-        )
+        dumps[table] = _spatial_dump(table, "Name", attrs)
     dumps["coefficient_layer"] = _dump(
         "coefficient_layer",
-        "id, version, geometry, crome_id, land_use_cat, nn_catchment, "
-        "subcatchment, lu_curr_n_coeff, lu_curr_p_coeff, n_resi_coeff, "
-        "p_resi_coeff, created_at",
+        _COEFFICIENT_COLUMNS,
         [
             (
                 f"{uuid4()}\t1\t{_good_geom('coefficient_layer')}\tCROME1\tARABLE"
@@ -157,6 +167,57 @@ def _reset_sync_state(engine) -> None:
             conn.execute(text(f"TRUNCATE public.{table} CASCADE"))
 
 
+def _publish(s3_client, dumps: dict[str, bytes], version: str) -> Manifest:
+    """Upload every dump under `version` and return the manifest pointing at them."""
+    tables_map = {}
+    for table, body in dumps.items():
+        key = f"public_{table}_{version}.sql.gz"
+        s3_client.put_object(Bucket=BUCKET, Key=f"dumps/{key}", Body=body)
+        tables_map[table] = {"key": key, "version": version}
+    return Manifest(tables=tables_map)
+
+
+def _start_run(engine):
+    """Insert a running data_sync_run row and return its id."""
+    run_id = uuid4()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO public.data_sync_run (id, status) VALUES (:id, 'running')"
+            ),
+            {"id": str(run_id)},
+        )
+    return run_id
+
+
+def _run_row(conn, run_id):
+    return conn.execute(
+        text("SELECT status, error FROM public.data_sync_run WHERE id = :id"),
+        {"id": str(run_id)},
+    ).one()
+
+
+def _table_counts(conn) -> dict[str, int]:
+    return {
+        table: conn.execute(
+            text(f"SELECT count(*) FROM public.{table}")  # noqa: S608
+        ).scalar()
+        for table in _ALL_TABLES
+    }
+
+
+@pytest.fixture
+def data_sync_env(monkeypatch):
+    """Point the sync at the test database and the localstack bucket."""
+    monkeypatch.setenv("DB_IAM_AUTHENTICATION", "false")
+    monkeypatch.setenv("DB_DATABASE", "test_nrf_impact")
+    monkeypatch.setenv("DATA_SYNC_S3_BUCKET", BUCKET)
+    monkeypatch.setenv("DATA_SYNC_S3_PREFIX", "dumps")
+    monkeypatch.setenv(
+        "AWS_ENDPOINT_URL", os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4568")
+    )
+
+
 @pytest.fixture
 def s3_localstack():
     endpoint = os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4568")
@@ -170,35 +231,16 @@ def s3_localstack():
 
 
 def test_bad_manifest_rolls_back_every_table_and_records_per_table_detail(
-    test_engine, s3_localstack, monkeypatch
+    test_engine, s3_localstack, data_sync_env
 ):
-    monkeypatch.setenv("DB_IAM_AUTHENTICATION", "false")
-    monkeypatch.setenv("DB_DATABASE", "test_nrf_impact")
-    monkeypatch.setenv("DATA_SYNC_S3_BUCKET", BUCKET)
-    monkeypatch.setenv("DATA_SYNC_S3_PREFIX", "dumps")
-    monkeypatch.setenv(
-        "AWS_ENDPOINT_URL", os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4568")
-    )
-
     dumps = _good_dumps()
     # Break nn_catchments: row-count floor will be satisfied (first load, no
     # previous version) but its business key is NULL -> rule 3 fails.
-    dumps["nn_catchments"] = _dump(
-        "nn_catchments",
-        "id, version, geometry, name, attributes, created_at",
-        [
-            (
-                f"{uuid4()}\t1\t{_good_geom('nn_catchments')}\tBad\t\\N"
-                "\t2026-01-01 00:00:00+00\n"
-            )
-        ],
-    )
+    dumps["nn_catchments"] = _spatial_dump("nn_catchments", "Bad", "\\N")
     # Break coefficient_layer: coefficient out of range.
     dumps["coefficient_layer"] = _dump(
         "coefficient_layer",
-        "id, version, geometry, crome_id, land_use_cat, nn_catchment, "
-        "subcatchment, lu_curr_n_coeff, lu_curr_p_coeff, n_resi_coeff, "
-        "p_resi_coeff, created_at",
+        _COEFFICIENT_COLUMNS,
         [
             (
                 f"{uuid4()}\t1\t{_good_geom('coefficient_layer')}\tCROME1\tARABLE"
@@ -208,40 +250,16 @@ def test_bad_manifest_rolls_back_every_table_and_records_per_table_detail(
         ],
     )
 
-    version = "20260701_120000"
-    tables_map = {}
-    for table, body in dumps.items():
-        key = f"public_{table}_{version}.sql.gz"
-        s3_localstack.put_object(Bucket=BUCKET, Key=f"dumps/{key}", Body=body)
-        tables_map[table] = {"key": key, "version": version}
-    manifest = Manifest(tables=tables_map)
+    manifest = _publish(s3_localstack, dumps, "20260701_120000")
 
-    with test_engine.begin() as conn:
-        for table in _ALL_TABLES:
-            conn.execute(text(f"TRUNCATE public.{table} CASCADE"))
-
-    run_id = uuid4()
-    with test_engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO public.data_sync_run (id, status) VALUES (:id, 'running')"
-            ),
-            {"id": str(run_id)},
-        )
+    _reset_sync_state(test_engine)
+    run_id = _start_run(test_engine)
 
     run_data_sync(run_id, manifest, force=False)
 
     with test_engine.connect() as conn:
-        run_row = conn.execute(
-            text("SELECT status, error FROM public.data_sync_run WHERE id = :id"),
-            {"id": str(run_id)},
-        ).one()
-        counts = {
-            table: conn.execute(
-                text(f"SELECT count(*) FROM public.{table}")  # noqa: S608
-            ).scalar()
-            for table in _ALL_TABLES
-        }
+        run_row = _run_row(conn, run_id)
+        counts = _table_counts(conn)
         history = conn.execute(
             text(
                 "SELECT table_name, status, status_detail FROM public.data_load_history "
@@ -265,16 +283,11 @@ def test_bad_manifest_rolls_back_every_table_and_records_per_table_detail(
     assert history_by_table["wwtw_catchments"].status == "failed"
     assert "blocked by QC failure" in history_by_table["wwtw_catchments"].status_detail
 
-    # cleanup
-    with test_engine.begin() as conn:
-        conn.execute(text("DELETE FROM public.data_load_history"))
-        conn.execute(text("DELETE FROM public.data_sync_run"))
-        for table in _ALL_TABLES:
-            conn.execute(text(f"TRUNCATE public.{table} CASCADE"))
+    _reset_sync_state(test_engine)
 
 
 def test_good_manifest_passes_qc_and_promotes_every_table(
-    test_engine, s3_localstack, monkeypatch
+    test_engine, s3_localstack, data_sync_env
 ):
     """The counterpart to the rollback test: _good_dumps must actually pass.
 
@@ -282,46 +295,16 @@ def test_good_manifest_passes_qc_and_promotes_every_table(
     the rollback test above (it only asserts the run failed), so the fixtures
     can drift out of agreement with qc_rules.yaml unnoticed.
     """
-    monkeypatch.setenv("DB_IAM_AUTHENTICATION", "false")
-    monkeypatch.setenv("DB_DATABASE", "test_nrf_impact")
-    monkeypatch.setenv("DATA_SYNC_S3_BUCKET", BUCKET)
-    monkeypatch.setenv("DATA_SYNC_S3_PREFIX", "dumps")
-    monkeypatch.setenv(
-        "AWS_ENDPOINT_URL", os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4568")
-    )
-
-    version = "20260701_130000"
-    tables_map = {}
-    for table, body in _good_dumps().items():
-        key = f"public_{table}_{version}.sql.gz"
-        s3_localstack.put_object(Bucket=BUCKET, Key=f"dumps/{key}", Body=body)
-        tables_map[table] = {"key": key, "version": version}
-    manifest = Manifest(tables=tables_map)
+    manifest = _publish(s3_localstack, _good_dumps(), "20260701_130000")
 
     _reset_sync_state(test_engine)
-
-    run_id = uuid4()
-    with test_engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO public.data_sync_run (id, status) VALUES (:id, 'running')"
-            ),
-            {"id": str(run_id)},
-        )
+    run_id = _start_run(test_engine)
 
     run_data_sync(run_id, manifest, force=True)
 
     with test_engine.connect() as conn:
-        run_row = conn.execute(
-            text("SELECT status, error FROM public.data_sync_run WHERE id = :id"),
-            {"id": str(run_id)},
-        ).one()
-        counts = {
-            table: conn.execute(
-                text(f"SELECT count(*) FROM public.{table}")  # noqa: S608
-            ).scalar()
-            for table in _ALL_TABLES
-        }
+        run_row = _run_row(conn, run_id)
+        counts = _table_counts(conn)
         history = conn.execute(
             text(
                 "SELECT table_name, status FROM public.data_load_history "
@@ -346,7 +329,7 @@ def _insert_row(conn, table: str, columns: str, values: str) -> None:
 
 
 def test_subset_qc_referential_uses_active_version_not_retained_inactive(
-    test_engine, s3_localstack, monkeypatch
+    test_engine, s3_localstack, data_sync_env
 ):
     """A subset sync's referential QC must read an unstaged referenced table at
     its *active* version. A key that exists only in a superseded (inactive)
@@ -359,14 +342,6 @@ def test_subset_qc_referential_uses_active_version_not_retained_inactive(
     but inactive (active pointer is version 2, carrying "NEW"). A subset sync of
     coefficient_layer referencing subcatchment "OLD" must fail QC.
     """
-    monkeypatch.setenv("DB_IAM_AUTHENTICATION", "false")
-    monkeypatch.setenv("DB_DATABASE", "test_nrf_impact")
-    monkeypatch.setenv("DATA_SYNC_S3_BUCKET", BUCKET)
-    monkeypatch.setenv("DATA_SYNC_S3_PREFIX", "dumps")
-    monkeypatch.setenv(
-        "AWS_ENDPOINT_URL", os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4568")
-    )
-
     _reset_sync_state(test_engine)
     geom = _good_geom("subcatchments")
     with test_engine.begin() as conn:
@@ -404,12 +379,9 @@ def test_subset_qc_referential_uses_active_version_not_retained_inactive(
 
     # coefficient_layer references nn_catchment "Site A" (active) and
     # subcatchment "OLD" (only in the inactive subcatchments version 1).
-    version = "20260701_140000"
     body = _dump(
         "coefficient_layer",
-        "id, version, geometry, crome_id, land_use_cat, nn_catchment, "
-        "subcatchment, lu_curr_n_coeff, lu_curr_p_coeff, n_resi_coeff, "
-        "p_resi_coeff, created_at",
+        _COEFFICIENT_COLUMNS,
         [
             (
                 f"{uuid4()}\t1\t{_good_geom('coefficient_layer')}\tCROME1\tARABLE"
@@ -418,26 +390,13 @@ def test_subset_qc_referential_uses_active_version_not_retained_inactive(
             )
         ],
     )
-    key = f"public_coefficient_layer_{version}.sql.gz"
-    s3_localstack.put_object(Bucket=BUCKET, Key=f"dumps/{key}", Body=body)
-    manifest = Manifest(tables={"coefficient_layer": {"key": key, "version": version}})
-
-    run_id = uuid4()
-    with test_engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO public.data_sync_run (id, status) VALUES (:id, 'running')"
-            ),
-            {"id": str(run_id)},
-        )
+    manifest = _publish(s3_localstack, {"coefficient_layer": body}, "20260701_160000")
+    run_id = _start_run(test_engine)
 
     run_data_sync(run_id, manifest, force=False)
 
     with test_engine.connect() as conn:
-        run_row = conn.execute(
-            text("SELECT status, error FROM public.data_sync_run WHERE id = :id"),
-            {"id": str(run_id)},
-        ).one()
+        run_row = _run_row(conn, run_id)
         coeff_count = conn.execute(
             text("SELECT count(*) FROM public.coefficient_layer")
         ).scalar()
@@ -452,7 +411,7 @@ def test_subset_qc_referential_uses_active_version_not_retained_inactive(
 
 
 def test_row_count_floor_uses_active_version_not_rolled_back_max(
-    test_engine, s3_localstack, monkeypatch
+    test_engine, s3_localstack, data_sync_env, monkeypatch
 ):
     """After a rollback, the row-count floor must be measured against the
     *active* version, not MAX(version).
@@ -467,13 +426,6 @@ def test_row_count_floor_uses_active_version_not_rolled_back_max(
     of 1 row and sail through, which is the bug: rolling back away from a bad
     small load would leave the gate anchored to that bad load.
     """
-    monkeypatch.setenv("DB_IAM_AUTHENTICATION", "false")
-    monkeypatch.setenv("DB_DATABASE", "test_nrf_impact")
-    monkeypatch.setenv("DATA_SYNC_S3_BUCKET", BUCKET)
-    monkeypatch.setenv("DATA_SYNC_S3_PREFIX", "dumps")
-    monkeypatch.setenv(
-        "AWS_ENDPOINT_URL", os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4568")
-    )
     monkeypatch.setenv("DATA_SYNC_TABLES", '["gcn_ponds"]')
 
     _reset_sync_state(test_engine)
@@ -501,10 +453,9 @@ def test_row_count_floor_uses_active_version_not_rolled_back_max(
             )
         )
 
-    version = "20260728_090000"
     body = _dump(
         "gcn_ponds",
-        "id, version, geometry, name, attributes, created_at",
+        _SPATIAL_COLUMNS,
         [
             (
                 f"{uuid4()}\t1\t{_good_geom('gcn_ponds')}\tNEW1\t{{}}"
@@ -516,26 +467,13 @@ def test_row_count_floor_uses_active_version_not_rolled_back_max(
             ),
         ],
     )
-    key = f"public_gcn_ponds_{version}.sql.gz"
-    s3_localstack.put_object(Bucket=BUCKET, Key=f"dumps/{key}", Body=body)
-    manifest = Manifest(tables={"gcn_ponds": {"key": key, "version": version}})
-
-    run_id = uuid4()
-    with test_engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO public.data_sync_run (id, status) VALUES (:id, 'running')"
-            ),
-            {"id": str(run_id)},
-        )
+    manifest = _publish(s3_localstack, {"gcn_ponds": body}, "20260728_090000")
+    run_id = _start_run(test_engine)
 
     run_data_sync(run_id, manifest, force=False)
 
     with test_engine.connect() as conn:
-        run_row = conn.execute(
-            text("SELECT status, error FROM public.data_sync_run WHERE id = :id"),
-            {"id": str(run_id)},
-        ).one()
+        run_row = _run_row(conn, run_id)
         active = conn.execute(
             text(
                 "SELECT active_version FROM public.data_active_version "
@@ -548,5 +486,69 @@ def test_row_count_floor_uses_active_version_not_rolled_back_max(
     # The floor names the active version's 10 rows, not the inactive MAX's 1.
     assert "of previous 10" in (run_row.error or "")
     assert active == 1  # nothing promoted
+
+    _reset_sync_state(test_engine)
+
+
+@pytest.mark.parametrize(
+    ("case", "version", "name", "attributes", "expected_rule"),
+    [
+        # Empty attributes object -> attributes.site_name is NULL. The
+        # check-boundary exclusion gate reads the site-name list, so an unnamed
+        # exclusion polygon would be invisible to it and the boundary would
+        # wrongly stay on the EDP route instead of being sent to HRA.
+        ("null_site_name", "20260701_140000", "Unnamed", "{}", "non_null"),
+        # site_name present but `name` is whitespace. attributes.site_name being
+        # present does not imply the `name` column is usable, and the exclusion
+        # gate reads `name`. A blank one passes an IS NULL rule, so it needs the
+        # stricter non_blank check.
+        (
+            "blank_name_column",
+            "20260701_150000",
+            "   ",
+            '{"site_name": "Blank Name SSSI"}',
+            "non_blank",
+        ),
+    ],
+)
+def test_excluded_areas_unusable_name_fails_qc(
+    test_engine,
+    s3_localstack,
+    data_sync_env,
+    case,
+    version,
+    name,
+    attributes,
+    expected_rule,
+):
+    """An exclusion polygon the boundary gate could not name must fail QC, not load."""
+    dumps = _good_dumps()
+    dumps["edp_excluded_areas"] = _spatial_dump("edp_excluded_areas", name, attributes)
+
+    manifest = _publish(s3_localstack, dumps, version)
+
+    _reset_sync_state(test_engine)
+    run_id = _start_run(test_engine)
+
+    run_data_sync(run_id, manifest, force=True)
+
+    with test_engine.connect() as conn:
+        run_row = _run_row(conn, run_id)
+        detail = conn.execute(
+            text(
+                "SELECT status, status_detail FROM public.data_load_history "
+                "WHERE run_id = :id AND table_name = 'edp_excluded_areas'"
+            ),
+            {"id": str(run_id)},
+        ).one()
+        count = conn.execute(
+            text("SELECT count(*) FROM public.edp_excluded_areas")
+        ).scalar()
+
+    assert run_row.status == "failed"
+    assert "edp_excluded_areas" in run_row.error
+    assert detail.status == "failed"
+    assert expected_rule in detail.status_detail
+    assert count == 0, "a QC failure must leave the table empty"
 
     _reset_sync_state(test_engine)

@@ -76,8 +76,9 @@ def test_json_key_sql_checks_null_and_uniqueness():
     assert "rule=key_not_null" in sql
     assert "GROUP BY attributes->>'OID' HAVING COUNT(*) > 1" in sql
     assert "rule=key_unique" in sql
-    assert "attributes->>'N2K_Site_N' IS NULL" in sql
-    assert "rule=non_null" in sql
+    # non_null_json_columns is emitted by _non_null_json_sql, not here, so that
+    # a table declaring one without a key still gets the check.
+    assert "attributes->>'N2K_Site_N' IS NULL" not in sql
 
 
 def test_json_key_sql_non_unique_skips_uniqueness_check():
@@ -91,7 +92,12 @@ def test_json_key_sql_non_unique_skips_uniqueness_check():
     assert "rule=key_unique" not in sql
 
 
-def test_json_key_sql_allowed_values():
+def test_json_key_sql_omits_allowed_values():
+    """allowed_values is emitted by _allowed_values_sql, not here.
+
+    Keeping it out of the key SQL is what lets a keyless table declare enum
+    constraints and still have them checked.
+    """
     from app.data_sync.qc import _json_key_sql
     from app.data_sync.qc_rules import KeyRule, TableRules
 
@@ -100,13 +106,7 @@ def test_json_key_sql_allowed_values():
         allowed_values={"attributes.RZ": ["Red", "Amber", "Green"]},
     )
     sql = _json_key_sql("gcn_risk_zones", rules)
-    assert "attributes->>'RZ' NOT IN ('Red', 'Amber', 'Green')" in sql
-    assert "rule=allowed_values" in sql
-    # The WHERE ... NOT IN clause is a standalone SQL context and keeps
-    # single-escaped quotes, but the error-message text is embedded inside
-    # an outer format('...') string literal, so its quotes must be doubled
-    # to avoid terminating that literal early (PostgreSQL syntax error).
-    assert "outside {''Red'', ''Amber'', ''Green''}" in sql
+    assert "rule=allowed_values" not in sql
 
 
 def test_json_key_sql_rejects_composite_json_key():
@@ -489,3 +489,152 @@ def test_no_table_opts_out_of_the_row_count_floor():
         if r.row_count_floor_pct is not None
     }
     assert overridden == {}
+
+
+# ---------------------------------------------------------------------------
+# non_null_json_columns / allowed_values are independent of the key rule
+# ---------------------------------------------------------------------------
+
+
+def test_non_null_json_sql_checks_each_column():
+    from app.data_sync.qc import _non_null_json_sql
+    from app.data_sync.qc_rules import TableRules
+
+    rules = TableRules(non_null_json_columns=["attributes.site_name"])
+    sql = _non_null_json_sql("edp_excluded_areas", rules)
+
+    assert "FROM pg_temp._ds_stage_edp_excluded_areas" in sql
+    assert "attributes->>'site_name' IS NULL" in sql
+    assert "rule=non_null" in sql
+
+
+def test_allowed_values_sql_checks_each_column():
+    from app.data_sync.qc import _allowed_values_sql
+    from app.data_sync.qc_rules import TableRules
+
+    rules = TableRules(allowed_values={"attributes.RZ": ["Red", "Amber", "Green"]})
+    sql = _allowed_values_sql("gcn_risk_zones", rules)
+
+    assert "attributes->>'RZ' NOT IN ('Red', 'Amber', 'Green')" in sql
+    assert "rule=allowed_values" in sql
+    assert "outside {''Red'', ''Amber'', ''Green''}" in sql
+
+
+def test_keyless_table_still_gets_its_non_null_checks():
+    """A non-null rule must not depend on the table also declaring a key.
+
+    These checks used to be emitted only from inside _json_key_sql, so a table
+    with non_null_json_columns and no `key` had its rule silently ignored.
+    """
+    from app.data_sync.qc import _table_parts
+    from app.data_sync.qc_rules import TableRules
+
+    rules = TableRules(non_null_json_columns=["attributes.site_name"])
+    sql = "".join(
+        _table_parts("edp_excluded_areas", rules, floor_pct=90, active_version=None)
+    )
+
+    assert rules.key is None
+    assert "attributes->>'site_name' IS NULL" in sql
+    assert "rule=non_null" in sql
+
+
+def test_keyless_table_still_gets_its_allowed_values_checks():
+    from app.data_sync.qc import _table_parts
+    from app.data_sync.qc_rules import TableRules
+
+    rules = TableRules(allowed_values={"attributes.RZ": ["Red", "Amber"]})
+    sql = "".join(
+        _table_parts("gcn_risk_zones", rules, floor_pct=90, active_version=None)
+    )
+
+    assert rules.key is None
+    assert "rule=allowed_values" in sql
+
+
+def test_non_null_checks_are_not_duplicated_when_a_key_exists():
+    """nn_catchments has both a key and a non-null column: emit the check once."""
+    from app.data_sync.qc import _table_parts
+    from app.data_sync.qc_rules import KeyRule, TableRules
+
+    rules = TableRules(
+        key=KeyRule(columns=["attributes.OID"], source="json", unique=True),
+        non_null_json_columns=["attributes.N2K_Site_N"],
+    )
+    sql = "".join(
+        _table_parts("nn_catchments", rules, floor_pct=90, active_version=None)
+    )
+
+    assert sql.count("attributes->>'N2K_Site_N' IS NULL") == 1
+
+
+@pytest.mark.parametrize(
+    ("table", "column"),
+    [
+        ("edp_excluded_areas", "site_name"),
+        ("edp_boundary_layer", "EDP_Name"),
+    ],
+)
+def test_real_config_enforces_edp_layer_names(table, column):
+    """Both EDP layers declare a non-null name rule and neither declares a key.
+
+    The check-boundary exclusion gate depends on edp_excluded_areas.site_name
+    being present, so this asserts against the shipped qc_rules.yaml rather than
+    a synthetic TableRules.
+    """
+    from app.data_sync.qc import _table_parts
+    from app.data_sync.qc_rules import load_qc_rules
+
+    rules = load_qc_rules().tables[table]
+    sql = "".join(_table_parts(table, rules, floor_pct=90, active_version=None))
+
+    assert f"attributes->>'{column}' IS NULL" in sql
+    assert "rule=non_null" in sql
+
+
+# ---------------------------------------------------------------------------
+# non_blank_columns: table columns that must be present and not whitespace
+# ---------------------------------------------------------------------------
+
+
+def test_non_blank_columns_sql_rejects_null_and_whitespace():
+    from app.data_sync.qc import _non_blank_columns_sql
+    from app.data_sync.qc_rules import TableRules
+
+    rules = TableRules(non_blank_columns=["name"])
+    sql = _non_blank_columns_sql("edp_excluded_areas", rules)
+
+    assert "FROM pg_temp._ds_stage_edp_excluded_areas" in sql
+    # COALESCE folds NULL into the blank check so one predicate covers both.
+    assert "btrim(COALESCE(name, '')) = ''" in sql
+    assert "rule=non_blank" in sql
+
+
+def test_table_parts_includes_non_blank_columns():
+    from app.data_sync.qc import _table_parts
+    from app.data_sync.qc_rules import TableRules
+
+    rules = TableRules(non_blank_columns=["name"])
+    sql = "".join(
+        _table_parts("edp_excluded_areas", rules, floor_pct=90, active_version=None)
+    )
+
+    assert "rule=non_blank" in sql
+
+
+def test_real_config_requires_non_blank_excluded_area_name():
+    """The exclusion gate reads the `name` column, not attributes.site_name.
+
+    A row can satisfy the attributes.site_name non-null rule and still have a
+    blank `name`, so the column itself needs its own rule.
+    """
+    from app.data_sync.qc import _table_parts
+    from app.data_sync.qc_rules import load_qc_rules
+
+    rules = load_qc_rules().tables["edp_excluded_areas"]
+    sql = "".join(
+        _table_parts("edp_excluded_areas", rules, floor_pct=90, active_version=None)
+    )
+
+    assert rules.non_blank_columns == ["name"]
+    assert "btrim(COALESCE(name, '')) = ''" in sql

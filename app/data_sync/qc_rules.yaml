@@ -73,6 +73,10 @@ tables:
     geometry: {expected_types: [MultiPolygon], expected_srid: 27700}
 
   edp_excluded_areas:
+    # The check-boundary exclusion gate reads the `name` column, so guard that
+    # column directly — attributes.site_name being present does not imply it.
+    non_blank_columns: ["name"]
+    non_null_json_columns: ["attributes.site_name"]
     geometry: {expected_types: [MultiPolygon], expected_srid: 27700}
 
 referential_checks:

@@ -167,27 +167,76 @@ def _json_key_sql(table: str, rules: TableRules) -> str:
             "value(s)', detail_count));\n"
             "END IF;\n"
         )
-    for extra in rules.non_null_json_columns:
-        extra_expr = _json_path_expr(extra)
+    return sql
+
+
+def _non_null_json_sql(table: str, rules: TableRules) -> str:
+    """Rule 3 for JSONB attributes that must be present but are not the key.
+
+    Emitted independently of `key`: these rules previously lived inside
+    `_json_key_sql`, so a table declaring `non_null_json_columns` without also
+    declaring a `key` had them silently dropped.
+    """
+    stage = staging_name(table)
+    sql = ""
+    for path in rules.non_null_json_columns:
+        expr = _json_path_expr(path)
         sql += (
             f"SELECT COUNT(*) INTO detail_count FROM pg_temp.{stage} "  # noqa: S608
-            f"WHERE {extra_expr} IS NULL;\n"
+            f"WHERE {expr} IS NULL;\n"
             "IF detail_count > 0 THEN\n"
             "  failures := array_append(failures, format("
-            f"'table={table} rule=non_null detail=%s row(s) with NULL {extra}', "
+            f"'table={table} rule=non_null detail=%s row(s) with NULL {path}', "
             "detail_count));\n"
             "END IF;\n"
         )
-    for path2, allowed in rules.allowed_values.items():
-        expr2 = _json_path_expr(path2)
+    return sql
+
+
+def _non_blank_columns_sql(table: str, rules: TableRules) -> str:
+    """Reject NULL *or* whitespace-only values in a table column.
+
+    Needed where downstream code reads the text rather than merely checking it
+    is present: a `'   '` name passes an IS NULL rule but is useless to display
+    and, worse, indistinguishable from no name at all to a consumer that trims.
+    COALESCE folds NULL into the same predicate.
+    """
+    stage = staging_name(table)
+    sql = ""
+    for column in rules.non_blank_columns:
+        sql += (
+            f"SELECT COUNT(*) INTO detail_count FROM pg_temp.{stage} "  # noqa: S608
+            f"WHERE btrim(COALESCE({column}, '')) = '';\n"
+            "IF detail_count > 0 THEN\n"
+            "  failures := array_append(failures, format("
+            f"'table={table} rule=non_blank detail=%s row(s) with blank {column}', "
+            "detail_count));\n"
+            "END IF;\n"
+        )
+    return sql
+
+
+def _allowed_values_sql(table: str, rules: TableRules) -> str:
+    """Rule 8 enum constraints on JSONB attributes.
+
+    Emitted independently of `key` for the same reason as `_non_null_json_sql`.
+    """
+    stage = staging_name(table)
+    sql = ""
+    for path, allowed in rules.allowed_values.items():
+        expr = _json_path_expr(path)
         values = ", ".join(f"'{v}'" for v in allowed)
+        # The WHERE ... NOT IN clause is a standalone SQL context and keeps
+        # single-escaped quotes, but the error-message text is embedded inside
+        # an outer format('...') string literal, so its quotes must be doubled
+        # to avoid terminating that literal early (PostgreSQL syntax error).
         values_display = ", ".join(f"''{v}''" for v in allowed)
         sql += (
             f"SELECT COUNT(*) INTO detail_count FROM pg_temp.{stage} "  # noqa: S608
-            f"WHERE {expr2} NOT IN ({values});\n"
+            f"WHERE {expr} NOT IN ({values});\n"
             "IF detail_count > 0 THEN\n"
             "  failures := array_append(failures, format("
-            f"'table={table} rule=allowed_values detail=%s row(s) with {path2} "
+            f"'table={table} rule=allowed_values detail=%s row(s) with {path} "
             f"outside {{{values_display}}}', detail_count));\n"
             "END IF;\n"
         )
@@ -341,6 +390,12 @@ def _table_parts(
             parts.append(_column_key_sql(table, rules))
         else:
             parts.append(_json_key_sql(table, rules))
+    if rules.non_null_json_columns:
+        parts.append(_non_null_json_sql(table, rules))
+    if rules.non_blank_columns:
+        parts.append(_non_blank_columns_sql(table, rules))
+    if rules.allowed_values:
+        parts.append(_allowed_values_sql(table, rules))
     if rules.lookup_rows:
         parts.append(_lookup_row_sql(table, rules))
     if rules.geometry is not None:
