@@ -89,7 +89,7 @@ def test_build_psql_env_local_password():
     secret = uuid4().hex
     settings = DatabaseSettings(
         host="localhost",
-        port=5434,
+        port=5432,
         database="nrf_impact",
         user="postgres",
         iam_authentication=False,
@@ -97,7 +97,7 @@ def test_build_psql_env_local_password():
     )
     env = build_psql_env(settings, region="eu-west-2")
     assert env["PGHOST"] == "localhost"
-    assert env["PGPORT"] == "5434"
+    assert env["PGPORT"] == "5432"
     assert env["PGDATABASE"] == "nrf_impact"
     assert env["PGUSER"] == "postgres"
     assert env["PGPASSWORD"] == secret

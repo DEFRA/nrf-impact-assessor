@@ -38,7 +38,7 @@ services:
     # platform: linux/${DOCKER_DEFAULT_PLATFORM:-arm64}
     container_name: nrf-postgis
     ports:
-      - "5434:5432"
+      - "${DB_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: nrf_impact
       POSTGRES_HOST_AUTH_METHOD: trust  # No password for local dev
