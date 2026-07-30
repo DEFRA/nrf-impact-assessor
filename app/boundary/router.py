@@ -31,7 +31,8 @@ from sqlalchemy import select
 
 from app.boundary.validation import SUPPORTED_CRS, validate_geometry
 from app.config import ApiServerConfig
-from app.models.db import EdpBoundaryLayer
+from app.data_sync.active_version import get_active_version
+from app.models.db import EdpBoundaryLayer, EdpExcludedAreas
 from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
 from app.spatial.utils import UnsupportedCRSError, ensure_crs
@@ -159,7 +160,7 @@ def _check_declared_geojson_crs(content: bytes, ext: str) -> None:
 
     try:
         crs_name = json.loads(content)["crs"]["properties"]["name"]
-    except (json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError):
+    except json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError:
         return
 
     try:
@@ -223,7 +224,7 @@ def _close_unclosed_rings(content: bytes, ext: str) -> tuple[bytes, bool]:
 
     try:
         data = json.loads(content)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except json.JSONDecodeError, UnicodeDecodeError:
         return content, False
 
     any_ring_closed = False
@@ -364,6 +365,47 @@ def _check_shapefile_companions(shp_path: Path) -> Path:
         code = "zip_missing_shapefile_parts"
         raise ValueError(code)
     return shp_path
+
+
+def _find_intersecting_excluded_areas(
+    gdf: gpd.GeoDataFrame, repository: Repository
+) -> list[str]:
+    """Return names of EDP exclusion zones the uploaded geometry overlaps.
+
+    A boundary overlapping any exclusion zone is not eligible for the EDP and
+    must be routed to HRA instead, so the caller treats a non-empty result as
+    ineligibility.
+
+    Only positive-area overlap counts: the exclusion zones are already buffered
+    SSSI polygons, so a boundary that merely touches a zone edge lies outside
+    the zone and stays eligible.
+
+    Names are deduplicated (one SSSI may be several polygons) and sorted so the
+    response is deterministic. Rows with no name are dropped rather than emitted
+    as null into a list the API contract types as strings — the QC rule on
+    `attributes.site_name` is what stops that from hiding a real overlap.
+    """
+    input_geom = ST_SetSRID(ST_GeomFromText(gdf.union_all().wkt), 27700)
+    intersection = ST_CollectionExtract(
+        ST_Intersection(EdpExcludedAreas.geometry, input_geom), 3
+    )
+
+    with repository.session() as session:
+        version = get_active_version(session, "edp_excluded_areas")
+        stmt = (
+            select(EdpExcludedAreas.name)
+            .where(
+                EdpExcludedAreas.version == version,
+                # ST_Intersects is the index-backed predicate that narrows
+                # candidates; the area test then drops touch-only contact.
+                ST_Intersects(EdpExcludedAreas.geometry, input_geom),
+                ST_Area(intersection) > 0,
+            )
+            .distinct()
+        )
+        rows = session.execute(stmt).fetchall()
+
+    return sorted({row.name for row in rows if row.name and row.name.strip()})
 
 
 def _find_intersecting_edps(
