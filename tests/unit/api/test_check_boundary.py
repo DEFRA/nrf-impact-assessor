@@ -417,9 +417,7 @@ class TestCheckBoundaryGeometryValidation:
         """A polygon ring whose first and last coordinates differ should be
         rejected, but with the boundary still included so the frontend can
         show the user exactly what they uploaded."""
-        content = _make_geojson_bytes(
-            coordinates=[[[0, 0], [1, 0], [1, 1], [0, 1]]]
-        )
+        content = _make_geojson_bytes(coordinates=[[[0, 0], [1, 0], [1, 1], [0, 1]]])
         response = _post_boundary(client, "not-closed.geojson", content)
 
         assert response.status_code == 400
@@ -656,6 +654,7 @@ class TestCheckBoundaryEdpIntersection:
             "boundaryGeometryOriginal",
             "boundaryGeometryWgs84",
             "intersectingEdps",
+            "intersectingExcludedAreas",
             "boundaryMetadata",
             "error",
         }
@@ -667,6 +666,13 @@ class TestCheckBoundaryEdpIntersection:
             "centre",
             "bounds",
         }
+
+    def test_error_responses_include_excluded_areas_key(self, client):
+        """The field is present on every path, so consumers never null-check."""
+        response = _post_boundary(client, "boundary.txt", b"not a geometry")
+
+        assert response.status_code == 400
+        assert response.json()["intersectingExcludedAreas"] == []
 
 
 class TestFindIntersectingEdpsMapping:

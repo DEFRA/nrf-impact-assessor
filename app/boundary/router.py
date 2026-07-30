@@ -99,6 +99,7 @@ def _make_response(
     boundary_geometry_original: dict | None = None,
     boundary_geometry_wgs84: dict | None = None,
     intersecting_edps: list | None = None,
+    intersecting_excluded_areas: list | None = None,
     boundary_metadata: dict | None = None,
     error: str | None = None,
 ) -> JSONResponse:
@@ -109,6 +110,7 @@ def _make_response(
             "boundaryGeometryOriginal": boundary_geometry_original,
             "boundaryGeometryWgs84": boundary_geometry_wgs84,
             "intersectingEdps": intersecting_edps or [],
+            "intersectingExcludedAreas": intersecting_excluded_areas or [],
             "boundaryMetadata": boundary_metadata,
             "error": error,
         },
