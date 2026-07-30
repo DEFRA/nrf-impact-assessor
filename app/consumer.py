@@ -119,6 +119,14 @@ def run_api_server(host: str, port: int) -> None:
     traceback in `error.stack_trace`. None means "leave logging alone", which is
     the right behaviour when configure_logging fell back to basicConfig.
 
+    `log_level` is deliberately NOT passed. uvicorn applies it *after*
+    `log_config`, calling setLevel on `uvicorn.error`/`.access`/`.asgi`, so it
+    silently overrides the file we just handed it. The previous "warning"
+    suppressed access logs entirely — which also made logging.json's
+    healthcheck_filter on `uvicorn.access` unreachable, since it exists to drop
+    /health from access logs that were never emitted. Omitting it lets the
+    file's root INFO stand and that filter do its job.
+
     Args:
         host: The host interface to bind (e.g. 127.0.0.1 or 0.0.0.0).
         port: The port to listen on for API requests.
@@ -127,7 +135,6 @@ def run_api_server(host: str, port: int) -> None:
         "app.main:app",
         host=host,
         port=port,
-        log_level="warning",
         log_config=load_logging_config(),
     )
 

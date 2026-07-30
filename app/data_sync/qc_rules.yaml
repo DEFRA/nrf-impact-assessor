@@ -69,12 +69,10 @@ tables:
     geometry: {expected_types: [MultiPolygon], expected_srid: 27700}
 
   edp_boundary_layer:
-    row_count_floor_pct: 0
     non_null_json_columns: ["attributes.EDP_Name"]
     geometry: {expected_types: [MultiPolygon], expected_srid: 27700}
 
   edp_excluded_areas:
-    row_count_floor_pct: 0
     geometry: {expected_types: [MultiPolygon], expected_srid: 27700}
 
 referential_checks:

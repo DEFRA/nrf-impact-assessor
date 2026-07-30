@@ -1,6 +1,6 @@
 import pytest
 
-from app.data_sync.qc import _row_count_sql
+from app.data_sync.qc import _RATIO_MIN_PREV_COUNT, _row_count_sql
 from app.data_sync.qc_rules import TableRules
 
 
@@ -457,40 +457,28 @@ def test_row_count_falls_back_to_max_version_without_an_active_version():
     )
 
 
-_FLOOR_OPTED_OUT = ("edp_boundary_layer", "edp_excluded_areas")
+def test_ratio_is_skipped_below_the_small_table_threshold():
+    """The proportional floor only applies once the live table is big enough.
 
-
-@pytest.mark.parametrize("table", _FLOOR_OPTED_OUT)
-def test_edp_layer_floor_allows_a_legitimate_shrink(table):
-    """The EDP layers opt out of the proportional floor.
-
-    They hold single-digit rows, where a percentage cannot express anything
-    useful: at 3 rows the 90% default gives CEIL(3 * 0.9) = 3, so it blocks the
-    loss of even one row, and any pct above ~34% still blocks a real 3 -> 1
-    consolidation. Set to 0 so the ratio comparison can never fire, leaving the
-    unconditional `staged_count = 0` hard fail as the guard against a truncated
-    or empty dump.
+    At single-digit row counts a percentage cannot express anything useful: at
+    3 rows the 90% default gives CEIL(3 * 0.9) = 3, so it blocks the loss of
+    even one row, and any pct above ~34% still blocks a real 3 -> 1
+    consolidation — which is what failed a legitimate edp_boundary_layer
+    reload.
     """
-    from app.data_sync.qc_rules import load_qc_rules
-
-    rules = load_qc_rules()
-    table_rules = rules.tables[table]
-    assert table_rules.row_count_floor_pct == 0
-
     sql = _row_count_sql(
-        table,
-        table_rules,
-        floor_pct=rules.row_count_floor_pct,
-        active_version=None,
+        "edp_boundary_layer", TableRules(), floor_pct=90, active_version=None
     )
-    # CEIL(prev_count * 0.0) is 0, and a count is never < 0.
-    assert "staged_count < CEIL(prev_count * 0.0)" in sql
-    # The zero-row hard fail is unconditional (DM-2) and must survive the opt-out.
+    assert f"ELSIF prev_count >= {_RATIO_MIN_PREV_COUNT} " in sql
+    # The zero-row hard fail is unconditional (DM-2) and still covers small tables.
     assert "staged_count = 0" in sql
 
 
-def test_global_row_count_floor_is_unchanged():
-    """The opt-out is per-table: every other table keeps the 90% default."""
+def test_no_table_opts_out_of_the_row_count_floor():
+    """The small-table skip is a global rule, so no per-table override is
+    needed. A `row_count_floor_pct` here would disable the ratio permanently,
+    including once the table grew past the threshold.
+    """
     from app.data_sync.qc_rules import load_qc_rules
 
     rules = load_qc_rules()
@@ -500,4 +488,4 @@ def test_global_row_count_floor_is_unchanged():
         for name, r in rules.tables.items()
         if r.row_count_floor_pct is not None
     }
-    assert overridden == dict.fromkeys(_FLOOR_OPTED_OUT, 0)
+    assert overridden == {}

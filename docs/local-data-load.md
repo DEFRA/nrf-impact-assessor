@@ -120,7 +120,7 @@ Valid `--layer` / `LAYER` values:
 | `edp_excluded_areas` | Buffered SSSI areas excluded from EDP mitigation | `edp_excluded_areas` |
 
 Each layer loads into its own table in the `public` schema. The legacy shared
-`spatial_layer` table has been dropped (revision `d5a1c7b3e2f8`).
+`spatial_layer` table has been dropped (revision `c3d7e1f2a4b6`).
 
 ### Load specific lookup tables
 
@@ -226,7 +226,7 @@ All nine share an identical column set:
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 
 > The legacy `public.spatial_layer` table, superseded by these per-layer tables,
-> is dropped by revision `d5a1c7b3e2f8`. Databases predating the squashed
+> is dropped by revision `c3d7e1f2a4b6`. Databases predating the squashed
 > baseline kept it around empty; upgrading to head clears it.
 
 ### `public.coefficient_layer`

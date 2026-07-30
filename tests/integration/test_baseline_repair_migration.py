@@ -16,7 +16,7 @@ pytestmark = pytest.mark.integration
 REPAIR_DB = "test_nrf_impact_repair"
 # The head that shipped before the repair migration existed: a database at this
 # revision with the table missing is exactly the drift seen in the wild.
-PRE_REPAIR_REVISION = "c3d7e1f2a4b6"
+PRE_REPAIR_REVISION = "b2e5f0a1c9d4"
 
 
 def _alembic(target: str, database: str) -> None:

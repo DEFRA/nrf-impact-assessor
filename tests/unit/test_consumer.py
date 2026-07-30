@@ -71,6 +71,33 @@ def test_run_api_server_gives_uvicorn_our_logging_config(monkeypatch):
     assert kwargs["log_config"] == consumer.load_logging_config()
 
 
+def test_run_api_server_does_not_override_the_config_with_log_level(monkeypatch):
+    """Passing log_level would undo the config above: uvicorn applies it after
+    log_config, calling setLevel on uvicorn.error/.access/.asgi. The old
+    "warning" suppressed access logs entirely, which also made logging.json's
+    healthcheck_filter on uvicorn.access unreachable.
+    """
+    fake_uvicorn = MagicMock()
+    monkeypatch.setattr(consumer, "uvicorn", fake_uvicorn)
+
+    consumer.run_api_server("0.0.0.0", 8085)  # noqa: S104
+
+    assert "log_level" not in fake_uvicorn.run.call_args.kwargs
+
+
+def test_healthcheck_filter_is_reachable_on_uvicorn_access(monkeypatch):
+    """The /health filter only does anything if access logs are emitted at all,
+    which is why run_api_server must not force them to WARNING.
+    """
+    monkeypatch.setenv("ECS_CONTAINER_METADATA_URI_V4", "http://169.254.170.2/v4/x")
+
+    config = consumer.load_logging_config()
+
+    assert "healthcheck_filter" in config["loggers"]["uvicorn.access"]["filters"]
+    assert config["root"]["level"] == "INFO"
+    assert "level" not in config["loggers"]["uvicorn.access"]
+
+
 def test_logging_config_lets_uvicorn_error_reach_the_ecs_handler(monkeypatch):
     """The config above only helps if it leaves uvicorn's loggers propagating to
     the root ECS handler; an override there would put the traceback back on a

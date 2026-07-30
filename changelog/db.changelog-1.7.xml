@@ -35,21 +35,37 @@
             DECLARE
                 t text;
                 maxv integer;
+                updated integer;
+                candidates integer;
             BEGIN
                 FOR t IN
                     SELECT DISTINCT table_name
                     FROM public.data_load_history
                     WHERE status IN ('success', 'reconciled')
                 LOOP
-                    CONTINUE WHEN to_regclass('public.' || quote_ident(t)) IS NULL;
-                    CONTINUE WHEN NOT EXISTS (
+                    IF to_regclass('public.' || quote_ident(t)) IS NULL THEN
+                        RAISE NOTICE 'row_version backfill: skipped % (table does not exist)', t;
+                        CONTINUE;
+                    END IF;
+                    IF NOT EXISTS (
                         SELECT 1 FROM information_schema.columns
                         WHERE table_schema = 'public'
                           AND table_name = t
                           AND column_name = 'version'
-                    );
+                    ) THEN
+                        RAISE NOTICE 'row_version backfill: skipped % (no version column)', t;
+                        CONTINUE;
+                    END IF;
                     EXECUTE format('SELECT MAX(version) FROM public.%I', t) INTO maxv;
-                    CONTINUE WHEN maxv IS NULL;
+                    IF maxv IS NULL THEN
+                        RAISE NOTICE 'row_version backfill: skipped % (table is empty)', t;
+                        CONTINUE;
+                    END IF;
+                    SELECT count(*) INTO candidates
+                    FROM public.data_load_history
+                    WHERE table_name = t
+                      AND status IN ('success', 'reconciled')
+                      AND row_version IS NULL;
                     UPDATE public.data_load_history h
                     SET row_version = maxv - (r.rn - 1)
                     FROM (
@@ -62,6 +78,14 @@
                     WHERE h.id = r.id
                       AND h.row_version IS NULL
                       AND maxv - (r.rn - 1) >= 1;
+                    GET DIAGNOSTICS updated = ROW_COUNT;
+                    RAISE NOTICE 'row_version backfill: % stamped %/% rows, max(version)=%',
+                        t, updated, candidates, maxv;
+                    IF updated &lt; candidates THEN
+                        RAISE NOTICE 'row_version backfill: % left % row(s) NULL '
+                            '(would fall below version 1; their data is no longer retained)',
+                            t, candidates - updated;
+                    END IF;
                 END LOOP;
             END $backfill$;
         </sql>
@@ -70,6 +94,94 @@
                 UPDATE public.data_load_history SET row_version = NULL;
             </sql>
         </rollback>
+    </changeSet>
+
+
+    <!--
+      Repairs databases that were stamped onto the squashed baseline instead of
+      running it: edp_boundary_layer (from the squashed 1bf027d04bb3) is missing,
+      and the legacy shared spatial_layer superseded by db.changelog-1.1.xml is
+      still present. Every changeSet is guarded by a precondition so a correctly
+      migrated database marks them ran and nothing is touched.
+    -->
+
+<changeSet id="07-repair-edp-boundary-layer" author="nrf">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="edp_boundary_layer" schemaName="public"/>
+            </not>
+        </preConditions>
+        <createTable tableName="edp_boundary_layer" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="geometry" type="geometry(GEOMETRY,27700)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="name" type="varchar"/>
+            <column name="attributes" type="jsonb"/>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <rollback/>
+    </changeSet>
+
+    <changeSet id="07-repair-edp-boundary-layer-name-index" author="nrf">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists indexName="ix_public_edp_boundary_layer_name"
+                             schemaName="public"/>
+            </not>
+        </preConditions>
+        <createIndex indexName="ix_public_edp_boundary_layer_name"
+                     tableName="edp_boundary_layer" schemaName="public">
+            <column name="name"/>
+        </createIndex>
+        <rollback/>
+    </changeSet>
+
+    <changeSet id="07-repair-edp-boundary-layer-version-index" author="nrf">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists indexName="ix_public_edp_boundary_layer_version"
+                             schemaName="public"/>
+            </not>
+        </preConditions>
+        <createIndex indexName="ix_public_edp_boundary_layer_version"
+                     tableName="edp_boundary_layer" schemaName="public">
+            <column name="version"/>
+        </createIndex>
+        <rollback/>
+    </changeSet>
+
+    <changeSet id="07-repair-edp-boundary-layer-geometry-index" author="nrf">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists indexName="ix_public_edp_boundary_layer_geometry"
+                             schemaName="public"/>
+            </not>
+        </preConditions>
+        <sql>
+            CREATE INDEX ix_public_edp_boundary_layer_geometry
+            ON public.edp_boundary_layer USING GIST (geometry)
+        </sql>
+        <rollback/>
+    </changeSet>
+
+    <changeSet id="07-drop-legacy-spatial-layer" author="nrf">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="spatial_layer" schemaName="public"/>
+        </preConditions>
+        <!-- No cascadeConstraints: nothing should depend on this table, but this
+             changelog exists because some databases drifted unpredictably. A
+             plain drop fails loudly on an unknown dependent instead of quietly
+             destroying it. -->
+        <dropTable tableName="spatial_layer" schemaName="public"/>
+        <rollback/>
     </changeSet>
 
 </databaseChangeLog>

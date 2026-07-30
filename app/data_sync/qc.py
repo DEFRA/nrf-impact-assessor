@@ -18,6 +18,11 @@ from app.data_sync.qc_rules import (
 )
 from app.data_sync.restore import RestoreItem, staging_name
 
+# Minimum live row count before the proportional floor is applied. Below this a
+# percentage floor is dominated by rounding — see `_row_count_sql`. The zero-row
+# hard fail is unconditional and still covers tables under this threshold.
+_RATIO_MIN_PREV_COUNT = 10
+
 
 def _row_count_sql(
     table: str, rules: TableRules, floor_pct: float, active_version: int | None
@@ -25,6 +30,15 @@ def _row_count_sql(
     """Rule 2: staged row count is non-zero and >= floor_pct% of the live
     table's current (pre-promotion) row count. `floor_pct` is the table's
     override if set, else the global default.
+
+    The ratio is only applied once the live table has at least
+    `_RATIO_MIN_PREV_COUNT` rows. Below that a percentage cannot express
+    anything useful: at 3 rows the 90% default gives CEIL(3 * 0.9) = 3, so it
+    blocks the loss of even one row, and any pct above ~34% still blocks a real
+    3 -> 1 consolidation. This is what made a legitimate 3 -> 1 reload of
+    edp_boundary_layer fail QC. Skipping the ratio for small tables fixes that
+    class of false positive without a per-table opt-out that would also disable
+    the check if the table later grew.
 
     The comparison is pinned to `active_version` — the same pin the referential
     checks use — not to MAX(version). After a rollback the two differ: MAX is
@@ -35,7 +49,8 @@ def _row_count_sql(
 
     The `staged_count = 0` hard fail below is unconditional per the DM-2
     sign-off, which applies it to all 10 reference tables; there is no
-    per-table flag to disable it.
+    per-table flag to disable it, and it still guards small tables against a
+    truncated or empty dump.
     """
     stage = staging_name(table)
     pct = (
@@ -58,7 +73,8 @@ def _row_count_sql(
         "IF staged_count = 0 THEN\n"
         f"  failures := array_append(failures, "
         f"'table={table} rule=row_count detail=staged row count is 0');\n"
-        f"ELSIF prev_count > 0 AND staged_count < CEIL(prev_count * {ratio}) THEN\n"
+        f"ELSIF prev_count >= {_RATIO_MIN_PREV_COUNT} "
+        f"AND staged_count < CEIL(prev_count * {ratio}) THEN\n"
         "  failures := array_append(failures, format("
         f"'table={table} rule=row_count detail=staged row count %s is below "
         f"the {pct}%% floor of previous %s (floor=%s)', "
