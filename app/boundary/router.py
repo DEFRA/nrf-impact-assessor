@@ -421,24 +421,27 @@ def _find_intersecting_edps(
         ST_Intersection(EdpBoundaryLayer.geometry, input_geom), 3
     )
 
-    stmt = select(
-        EdpBoundaryLayer.name,
-        EdpBoundaryLayer.attributes,
-        ST_AsGeoJSON(ST_Transform(EdpBoundaryLayer.geometry, output_srid)).label(
-            "edp_geojson"
-        ),
-        ST_AsGeoJSON(ST_Transform(intersection, output_srid)).label(
-            "intersection_geojson"
-        ),
-        ST_Area(intersection).label("intersection_area_sqm"),
-    ).where(
-        ST_Intersects(
-            EdpBoundaryLayer.geometry,
-            input_geom,
-        )
-    )
-
     with repository.session() as session:
+        # Without this the query spans every loaded version, so once a data sync
+        # has staged v2 alongside v1 each EDP would be reported twice.
+        version = get_active_version(session, "edp_boundary_layer")
+        stmt = select(
+            EdpBoundaryLayer.name,
+            EdpBoundaryLayer.attributes,
+            ST_AsGeoJSON(ST_Transform(EdpBoundaryLayer.geometry, output_srid)).label(
+                "edp_geojson"
+            ),
+            ST_AsGeoJSON(ST_Transform(intersection, output_srid)).label(
+                "intersection_geojson"
+            ),
+            ST_Area(intersection).label("intersection_area_sqm"),
+        ).where(
+            EdpBoundaryLayer.version == version,
+            ST_Intersects(
+                EdpBoundaryLayer.geometry,
+                input_geom,
+            ),
+        )
         rows = session.execute(stmt).fetchall()
 
     results = []

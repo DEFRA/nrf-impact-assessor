@@ -9,7 +9,10 @@ import pytest
 from shapely.geometry import box
 from sqlalchemy import text
 
-from app.boundary.router import _find_intersecting_excluded_areas
+from app.boundary.router import (
+    _find_intersecting_edps,
+    _find_intersecting_excluded_areas,
+)
 from app.repositories.repository import Repository
 
 pytestmark = pytest.mark.integration
@@ -127,3 +130,35 @@ def test_names_are_deduplicated_sorted_and_null_free(repository: Repository):
     )
 
     assert result == ["Alpha SSSI", "Zulu SSSI"]
+
+
+def _insert_edp(repository: Repository, name, wkt, version=1):
+    with repository.session() as session:
+        session.execute(
+            text(
+                "INSERT INTO public.edp_boundary_layer "
+                "(id, version, geometry, name, attributes) VALUES "
+                "(gen_random_uuid(), :v, ST_GeomFromText(:wkt, 27700), :n, "
+                "jsonb_build_object('EDP_Name', :n))"
+            ),
+            {"v": version, "wkt": wkt, "n": name},
+        )
+        session.commit()
+
+
+def test_edp_query_ignores_non_active_version_rows(repository: Repository):
+    """Version filtering needs its own test for the EDP query.
+
+    An exclusion hit skips the EDP query entirely, so no exclusion row is
+    inserted here — otherwise this code path would never execute.
+    """
+    edp = box(600000, 300000, 601000, 301000).wkt
+    _insert_edp(repository, "Stale EDP", edp, version=1)
+    _insert_edp(repository, "Current EDP", edp, version=2)
+    _set_active_version(repository, "edp_boundary_layer", 2)
+
+    results = _find_intersecting_edps(
+        _gdf(box(600500, 300500, 601500, 301500)), repository
+    )
+
+    assert [r["label"] for r in results] == ["Current EDP"]
