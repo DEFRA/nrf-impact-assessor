@@ -296,6 +296,7 @@ def _restore_all(
                 region,
                 items,
                 run_id,
+                cfg.lock_key,
                 qc_rules=qc_rules,
                 active_versions=active_versions,
             )

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.config import AWSConfig, DatabaseSettings, DataSyncConfig
 from app.data_sync.active_version import rollback_table
 from app.data_sync.manifest import Manifest
+from app.data_sync.restore import restore_lock_key
 from app.data_sync.service import run_data_sync
 from app.models.db import DataLoadHistory, DataRollbackEvent, DataSyncRun
 from app.repositories.engine import create_db_engine
@@ -93,13 +94,20 @@ def _last_run_tables(session: Session) -> list[str]:
 # survives a SIGKILL — unlike the run row itself, which `_finish` clears from a
 # Python `finally` path that a killed process (deploy, task replacement, OOM)
 # never reaches, leaving `running` set forever and 409-ing every later trigger.
+#
+# The parent's lock is not sufficient on its own: the restore runs in a psql
+# child on its own connection, which can outlive a SIGKILLed parent. So psql
+# takes restore_lock_key(cfg.lock_key) for the life of its transaction
+# (restore.py::begin_sql) and both keys are checked here — either one still held
+# means work may still be in flight, and reclaiming the row would let a second
+# run start alongside it.
 _LOCK_HELD_SQL = text(
     """
-    SELECT 1 FROM pg_locks
+    SELECT 1 FROM pg_locks, unnest(CAST(:keys AS bigint[])) AS k
     WHERE locktype = 'advisory'
       AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
-      AND classid::bigint = (CAST(:k AS bigint) >> 32)
-      AND objid::bigint = (CAST(:k AS bigint) & 4294967295)
+      AND classid::bigint = (k >> 32)
+      AND objid::bigint = (k & 4294967295)
       AND objsubid = 1
       AND granted
     LIMIT 1
@@ -120,7 +128,9 @@ def _reclaim_orphaned_run(session: Session) -> bool:
     run for a long time, and taking its slot on age alone would start a second
     concurrent run. The lock check is what distinguishes "slow" from "dead".
     """
-    if session.execute(_LOCK_HELD_SQL, {"k": DataSyncConfig().lock_key}).first():
+    lock_key = DataSyncConfig().lock_key
+    keys = [lock_key, restore_lock_key(lock_key)]
+    if session.execute(_LOCK_HELD_SQL, {"keys": keys}).first():
         return False
     now = datetime.now(UTC)
     result = session.execute(

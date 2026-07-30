@@ -9,6 +9,12 @@ Liveness is keyed off the advisory lock a run holds for its whole duration
 (service.py::run_data_sync), because Postgres drops that lock when the owning
 connection dies. Lock held => owner alive => 409. No lock and past the grace
 period => orphaned => take over.
+
+Two locks are checked, not one. The parent's key covers the Python process; the
+psql child holds restore_lock_key(key) for the life of its transaction
+(restore.py::begin_sql) because it runs on its own connection and can outlive a
+SIGKILLed parent. Reclaiming on the parent's key alone would let a second run
+start alongside an orphaned psql still holding locks on the live tables.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -113,6 +119,56 @@ def test_live_run_still_conflicts(client, test_engine):
 
     assert resp.status_code == 409
     assert _status(test_engine, running)[0] == "running"
+
+
+def test_orphaned_parent_with_live_psql_child_still_conflicts(client, test_engine):
+    """The parent is gone but its psql child is still in its transaction.
+
+    This is the reclamation hole: the parent's session lock vanishes with the
+    parent, so on that key alone the row looks orphaned and a second run would
+    start while the child still holds locks on the live tables. The child's own
+    key is what keeps the 409.
+    """
+    from app.config import DataSyncConfig
+    from app.data_sync.restore import restore_lock_key
+
+    child_key = restore_lock_key(DataSyncConfig().lock_key)
+    running = _insert_running(test_engine, age=timedelta(hours=3))
+
+    # A transaction-scoped lock, exactly as begin_sql takes it — and note no
+    # parent lock is held anywhere in this test.
+    with test_engine.begin() as child_conn:
+        child_conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": child_key})
+        with patch("app.data_sync.router.run_data_sync"):
+            resp = client.post("/admin/data-sync", headers=_HEADERS, json=_BODY)
+
+    assert resp.status_code == 409
+    assert _status(test_engine, running)[0] == "running"
+
+
+def test_run_is_reclaimed_once_the_psql_child_transaction_ends(client, test_engine):
+    """The child's lock is transaction-scoped, so it cannot wedge the slot.
+
+    Counterpart to the test above: once psql's transaction ends the lock goes
+    with it, and the orphaned row is reclaimable again. Without this, a crash
+    that left the child key held would be indistinguishable from the permanent
+    block the whole mechanism exists to prevent.
+    """
+    from app.config import DataSyncConfig
+    from app.data_sync.restore import restore_lock_key
+
+    child_key = restore_lock_key(DataSyncConfig().lock_key)
+    orphan = _insert_running(test_engine, age=timedelta(hours=3))
+
+    with test_engine.begin() as child_conn:
+        child_conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": child_key})
+    # Transaction closed: the lock is released.
+
+    with patch("app.data_sync.router.run_data_sync"):
+        resp = client.post("/admin/data-sync", headers=_HEADERS, json=_BODY)
+
+    assert resp.status_code == 202
+    assert _status(test_engine, orphan)[0] == "failed"
 
 
 def test_young_run_without_lock_still_conflicts(client, test_engine):

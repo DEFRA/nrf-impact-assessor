@@ -15,6 +15,7 @@ from app.data_sync.restore import (
     sql_str,
 )
 
+_LOCK_KEY = 728191
 _RUN_ID = uuid4()
 
 
@@ -79,6 +80,7 @@ def test_restore_all_atomic_rejects_unsafe_table_before_psql(tmp_path, monkeypat
             region="eu-west-2",
             items=items,
             run_id=_RUN_ID,
+            lock_key=_LOCK_KEY,
         )
 
 
@@ -263,6 +265,7 @@ def test_restore_all_atomic_writes_qc_block_between_stage_and_promote(
         region="eu-west-2",
         items=[_item("nn_catchments", dump)],
         run_id=_RUN_ID,
+        lock_key=_LOCK_KEY,
         qc_rules=rules,
         # nn_catchments' referential checks read the unstaged from-side tables.
         active_versions={"lookup_table": 1, "coefficient_layer": 1},
@@ -306,6 +309,7 @@ def test_restore_all_atomic_resets_search_path_after_every_dump(tmp_path, psql_s
         region="eu-west-2",
         items=[_item("nn_catchments", dump1), _item("lpa_boundaries", dump2)],
         run_id=_RUN_ID,
+        lock_key=_LOCK_KEY,
     )
 
     text = psql_stdin.decode()
@@ -330,6 +334,7 @@ def test_restore_all_atomic_omits_qc_block_when_rules_not_supplied(
         region="eu-west-2",
         items=[_item("nn_catchments", dump)],
         run_id=_RUN_ID,
+        lock_key=_LOCK_KEY,
     )
     assert "DO $qc$" not in psql_stdin.decode()
 
@@ -357,6 +362,7 @@ def test_restore_all_atomic_stages_all_tables_before_promoting_any(
         region="eu-west-2",
         items=[_item("nn_catchments", dump1), _item("lpa_boundaries", dump2)],
         run_id=_RUN_ID,
+        lock_key=_LOCK_KEY,
     )
 
     text = psql_stdin.decode()
@@ -368,6 +374,68 @@ def test_restore_all_atomic_stages_all_tables_before_promoting_any(
     promote2_idx = text.index("INSERT INTO public.lpa_boundaries")
 
     assert stage1_idx < copy1_idx < stage2_idx < copy2_idx < promote1_idx < promote2_idx
+
+
+def test_restore_all_atomic_brackets_the_batch_in_an_explicit_transaction(
+    tmp_path, psql_stdin
+):
+    """BEGIN first, COMMIT last, with every promote inside.
+
+    The COMMIT must be the final thing written: psql commits at EOF under
+    --single-transaction, so a parent that died mid-PROMOTE used to leave the
+    batch half-applied. With the COMMIT written explicitly and last, a premature
+    EOF ends the session with the transaction open and the server rolls back.
+    """
+    dump = tmp_path / "nn.sql.gz"
+    dump.write_bytes(
+        gzip.compress(b"COPY public.nn_catchments (id) FROM stdin;\nabc\n\\.\n")
+    )
+    settings = restore_mod.DatabaseSettings(iam_authentication=False)
+
+    restore_mod.restore_all_atomic(
+        settings=settings,
+        region="eu-west-2",
+        items=[_item("nn_catchments", dump)],
+        run_id=_RUN_ID,
+        lock_key=_LOCK_KEY,
+    )
+
+    text = psql_stdin.decode()
+    assert text.startswith("BEGIN;\n")
+    assert text.rstrip().endswith("COMMIT;")
+    assert text.index("BEGIN;") < text.index("INSERT INTO public.nn_catchments")
+    assert text.index("INSERT INTO public.nn_catchments") < text.index("COMMIT;")
+
+
+def test_restore_all_atomic_takes_the_child_advisory_lock(tmp_path, psql_stdin):
+    """psql holds its own transaction-scoped lock, distinct from the parent's.
+
+    Run reclamation reads this key to tell "psql still working" from "psql gone"
+    (router.py::_reclaim_orphaned_run). It must be transaction-scoped, so it is
+    released by the same COMMIT/rollback that ends the restore, and it must not
+    be the parent's key — the parent holds that on another session for the whole
+    run, so psql asking for it would block forever.
+    """
+    dump = tmp_path / "nn.sql.gz"
+    dump.write_bytes(
+        gzip.compress(b"COPY public.nn_catchments (id) FROM stdin;\nabc\n\\.\n")
+    )
+    settings = restore_mod.DatabaseSettings(iam_authentication=False)
+
+    restore_mod.restore_all_atomic(
+        settings=settings,
+        region="eu-west-2",
+        items=[_item("nn_catchments", dump)],
+        run_id=_RUN_ID,
+        lock_key=_LOCK_KEY,
+    )
+
+    text = psql_stdin.decode()
+    child_key = restore_mod.restore_lock_key(_LOCK_KEY)
+    assert child_key != _LOCK_KEY
+    assert f"SELECT pg_advisory_xact_lock({child_key});" in text
+    # Taken before any table work, so an orphaned psql is visible from the start.
+    assert text.index("pg_advisory_xact_lock") < text.index("CREATE TEMP TABLE")
 
 
 def _split_bytes(data: bytes, tmp_path, chunk: int, name="d.sql.gz"):

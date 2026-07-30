@@ -1,12 +1,22 @@
 """Versioned, whole-manifest restore of gzipped data-only pg_dumps.
 
-Each dump is `COPY ... FROM stdin`. All tables in a run stream into one
-`psql --single-transaction` process. Per table we: create a TEMP staging table
-shaped like the live table, redirect the dump's COPY into that staging table,
-then stamp a fresh id + `version = MAX(version)+1` and `INSERT ... SELECT *`
-into the live table. Because the whole batch shares one transaction, readers
-keep seeing the prior version of every table until the final COMMIT, then flip
-to the new version together; any error rolls back all tables.
+Each dump is `COPY ... FROM stdin`. All tables in a run stream into one psql
+process wrapped in an explicit `BEGIN` / `COMMIT`. Per table we: create a TEMP
+staging table shaped like the live table, redirect the dump's COPY into that
+staging table, then stamp a fresh id + `version = MAX(version)+1` and
+`INSERT ... SELECT *` into the live table. Because the whole batch shares one
+transaction, readers keep seeing the prior version of every table until the
+final COMMIT, then flip to the new version together; any error rolls back all
+tables.
+
+The transaction is opened and closed by statements we write, NOT by
+`psql --single-transaction`. That flag commits at end of input, and stdin
+reaching EOF because the parent *died* is indistinguishable to psql from an
+orderly finish — so a parent killed partway through the PROMOTE loop would have
+psql commit the promotions it had already received, leaving the batch
+half-applied at mixed versions. With an explicit `COMMIT` as the last statement,
+a premature EOF ends the session with the transaction still open and the server
+rolls it back. See tests/integration/data_sync/test_psql_eof_commit_window.py.
 
 This avoids the ACCESS EXCLUSIVE lock of TRUNCATE and needs no table ownership
 (only INSERT, plus the database-default TEMPORARY privilege). Superseded
@@ -59,12 +69,45 @@ def staging_name(table: str) -> str:
     return f"{_STAGE_PREFIX}{table}"
 
 
+def restore_lock_key(lock_key: int) -> int:
+    """The advisory-lock key psql holds, derived from the run's `lock_key`.
+
+    Must differ from the key the parent holds: the parent takes its lock for the
+    whole run on its own connection, so psql asking for the same key would block
+    forever waiting on a session that will not release until psql finishes.
+    """
+    return lock_key + 1
+
+
+def begin_sql(lock_key: int) -> str:
+    """Open the restore transaction and take psql's own liveness lock.
+
+    `pg_advisory_xact_lock` (transaction-scoped, not session-scoped) is held for
+    exactly as long as the restore transaction: the server drops it on COMMIT or
+    on the rollback that follows a lost connection. That makes it a liveness
+    signal for the *child*, which is what run reclamation needs — the parent's
+    session lock disappears the moment the parent is killed, but an orphaned psql
+    can outlive it (see app/data_sync/router.py::_reclaim_orphaned_run).
+    """
+    return f"BEGIN;\nSELECT pg_advisory_xact_lock({lock_key});\n"
+
+
+def commit_sql() -> str:
+    """Close the restore transaction.
+
+    The last thing written to psql's stdin. If the parent dies before this is
+    written, psql sees EOF with the transaction still open and the server rolls
+    the whole batch back.
+    """
+    return "COMMIT;\n"
+
+
 def pre_sql(table: str) -> str:
     """SQL emitted before a table's COPY data: create the temp staging table.
 
     Columns only (no indexes) for a fast staging load. CREATE TEMP always
     targets pg_temp regardless of search_path. No BEGIN/COMMIT — the outer
-    transaction is supplied by `psql --single-transaction`.
+    transaction is supplied by `begin_sql()` / `commit_sql()`.
     """
     stage = staging_name(table)
     return f"CREATE TEMP TABLE {stage} (LIKE public.{table});\n"
@@ -299,6 +342,7 @@ def restore_all_atomic(
     region: str,
     items: list[RestoreItem],
     run_id: UUID,
+    lock_key: int,
     qc_rules: QcRules | None = None,
     active_versions: dict[str, int] | None = None,
 ) -> None:
@@ -311,8 +355,9 @@ def restore_all_atomic(
 
     Validation for all tables happens up front (via staging_name), before psql
     is spawned, so an unsafe name aborts the whole batch before any subprocess
-    side effect. `--single-transaction` + `ON_ERROR_STOP=1` make the batch
-    atomic: the first error rolls back every table.
+    side effect. An explicit `BEGIN` / `COMMIT` pair (see `begin_sql`) plus
+    `ON_ERROR_STOP=1` make the batch atomic: the first error rolls back every
+    table, and so does a parent death before `COMMIT` is written.
 
     When `qc_rules` is supplied, a generated QC `DO` block (see
     `app.data_sync.qc.build_qc_sql`) runs after every table has staged and
@@ -340,7 +385,10 @@ def restore_all_atomic(
     ]
 
     env = build_psql_env(settings, region)
-    cmd = ["psql", "-v", "ON_ERROR_STOP=1", "--single-transaction", "--quiet"]
+    # No --single-transaction: that flag commits at end of input, so a parent
+    # killed mid-PROMOTE would have psql commit a half-applied batch. The
+    # transaction is opened and closed explicitly instead (see begin_sql).
+    cmd = ["psql", "-v", "ON_ERROR_STOP=1", "--quiet"]
     tables = [item.table for item in items]
     logger.info("Restoring %d table(s) atomically: %s", len(tables), ", ".join(tables))
 
@@ -358,6 +406,8 @@ def restore_all_atomic(
         msg = "failed to open psql stdin"
         raise RuntimeError(msg)
     try:
+        # BEGIN + psql's own liveness lock, before any work.
+        proc.stdin.write(begin_sql(restore_lock_key(lock_key)).encode())
         # STAGE: every table's staging table + COPY data, in order.
         for table, dumps, stage, pre, _post in plans:
             logger.info("Loading table %s from %d part(s)", table, len(dumps))
@@ -394,6 +444,9 @@ def restore_all_atomic(
         # also includes QC evaluation time and the final COMMIT.
         for _table, _dumps, _stage, _pre, post in plans:
             proc.stdin.write(post.encode())
+        # COMMIT last: everything above is durable only once this is written, so
+        # a parent that dies at any earlier point leaves the batch rolled back.
+        proc.stdin.write(commit_sql().encode())
         proc.stdin.close()
     except BrokenPipeError:  # psql already exited with an error
         pass
