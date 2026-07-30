@@ -180,14 +180,32 @@ db-migrate-liquibase: ## Apply Liquibase changesets against local postgres (requ
 	docker compose run --rm liquibase
 
 # Number of Liquibase changesets db-rollback-liquibase reverses. One Alembic
-# revision is often represented by SEVERAL changesets (1.1 uses 7, 1.5 uses 3,
-# 1.2 and 1.7 use 2), so the default of 1 does NOT undo a whole revision for
-# those. Pass the changeset count of the changelog you are reversing, e.g.
-# `make db-rollback-liquibase COUNT=2` for db.changelog-1.7.xml. Check with:
-#   grep -c '<changeSet ' changelog/db.changelog-<version>.xml
-COUNT ?= 1
+# revision is usually represented by SEVERAL changesets, so the default of 1
+# does NOT undo a whole revision. Name the changelog and let make count it:
+#
+#   make db-rollback-liquibase VERSION=1.7
+#
+# Do not hardcode a count here. A hardcoded number silently rots as a changelog
+# grows, and the failure is quiet: rollbackCount reverses the last N changesets
+# in EXECUTION order, so too small an N reverses the tail of the changelog —
+# which for repair-style changesets is typically a run of empty <rollback/>
+# no-ops — reporting success while undoing nothing.
+#
+# COUNT=N still overrides, for deliberately reversing part of a changelog.
+VERSION ?=
+CHANGELOG_FILE = changelog/db.changelog-$(VERSION).xml
+COUNT ?= $(if $(VERSION),$(shell grep -c '<changeSet ' $(CHANGELOG_FILE) 2>/dev/null),1)
 
-db-rollback-liquibase: ## Rollback last N Liquibase changesets (COUNT=N, default 1 — see note above; one Alembic revision may span several)
+db-rollback-liquibase: ## Rollback Liquibase changesets: VERSION=1.7 reverses that whole changelog (or COUNT=N for an exact number, default 1)
+	@if [ -n "$(VERSION)" ] && [ ! -f "$(CHANGELOG_FILE)" ]; then \
+		echo "No such changelog: $(CHANGELOG_FILE)" >&2; \
+		echo "Available:" >&2; ls changelog/db.changelog-*.xml >&2; \
+		exit 1; \
+	fi
+	@if [ -z "$(COUNT)" ] || [ "$(COUNT)" -lt 1 ] 2>/dev/null; then \
+		echo "Refusing to roll back $(COUNT) changeset(s)" >&2; exit 1; \
+	fi
+	@echo "Rolling back $(COUNT) changeset(s)$(if $(VERSION), — all of $(CHANGELOG_FILE),)"
 	docker compose run --rm liquibase \
 		--url=jdbc:postgresql://postgres:5432/nrf_impact \
 		--username=postgres \
