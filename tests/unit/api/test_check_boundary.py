@@ -96,6 +96,11 @@ def _mock_edp_intersections(gdf, repository, output_srid=4326):
     ]
 
 
+def _mock_excluded_areas(gdf, repository):
+    """Mock that returns one intersecting exclusion zone."""
+    return ["mid-Norfolk SSSI"]
+
+
 def _post_boundary(client, filename, content, content_type="application/json"):
     """Post a file to the /check-boundary endpoint."""
     return client.post(
@@ -725,3 +730,46 @@ class TestFindIntersectingEdpsMapping:
 
         assert results[0]["label"] is None
         assert results[0]["n2k_site_name"] is None
+
+
+class TestCheckBoundaryExcludedAreas:
+    """An exclusion-zone overlap makes the boundary ineligible for the EDP."""
+
+    @patch(
+        "app.boundary.router._find_intersecting_excluded_areas", _mock_excluded_areas
+    )
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    def test_exclusion_hit_returns_names_and_no_edps(self, client):
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"] is None
+        assert body["intersectingExcludedAreas"] == ["mid-Norfolk SSSI"]
+        assert body["intersectingEdps"] == []
+        assert body["boundaryMetadata"] is not None
+        assert body["boundaryGeometryWgs84"] is not None
+
+    @patch(
+        "app.boundary.router._find_intersecting_excluded_areas", _mock_excluded_areas
+    )
+    @patch("app.boundary.router._find_intersecting_edps")
+    def test_exclusion_hit_skips_the_edp_query(self, mock_find_edps, client):
+        """Skipping the query is the requirement, not an incidentally empty list."""
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        assert response.status_code == 200
+        mock_find_edps.assert_not_called()
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    def test_no_exclusion_hit_keeps_the_edp_path(self, client):
+        """With no exclusion overlap the endpoint behaves exactly as before.
+
+        The autouse _no_excluded_areas fixture supplies the empty result.
+        """
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["intersectingExcludedAreas"] == []
+        assert len(body["intersectingEdps"]) == 2

@@ -533,7 +533,14 @@ async def check_boundary(
     format-agnostic. This service then opens that specific file rather than
     re-implementing a picking rule of its own.
 
-    Returns the uploaded geometry as GeoJSON along with any intersecting EDP areas.
+    Returns the uploaded geometry as GeoJSON along with any intersecting EDP
+    areas and any intersecting EDP exclusion zones.
+
+    A boundary that overlaps an exclusion zone (a buffered SSSI polygon) is not
+    eligible for the EDP and must be routed to HRA. Such a response is a normal
+    200 with `error: null`: a non-empty `intersectingExcludedAreas` is the
+    signal, and `intersectingEdps` is then always empty. Touching a zone edge
+    without overlapping it does not exclude.
     """
     content = await geometry_file.read(_max_upload_bytes + 1)
     if len(content) > _max_upload_bytes:
@@ -585,7 +592,15 @@ async def check_boundary(
             )
 
         repository = _get_repository()
-        intersecting_edps = _find_intersecting_edps(gdf, repository, output_srid=4326)
+        # A boundary overlapping any exclusion zone is ineligible for the EDP
+        # and goes to HRA instead, so its EDP overlap is moot — skip that query
+        # rather than compute a result the caller must not act on.
+        intersecting_excluded_areas = _find_intersecting_excluded_areas(gdf, repository)
+        intersecting_edps = (
+            []
+            if intersecting_excluded_areas
+            else _find_intersecting_edps(gdf, repository, output_srid=4326)
+        )
 
         # Extract the first Polygon/MultiPolygon geometry, stripping user-supplied
         # properties to avoid processing Personal Identifiable Information (PII).
@@ -615,5 +630,6 @@ async def check_boundary(
         boundary_geometry_original=boundary_geometry_original,
         boundary_geometry_wgs84=boundary_geometry_wgs84,
         intersecting_edps=intersecting_edps,
+        intersecting_excluded_areas=intersecting_excluded_areas,
         boundary_metadata=boundary_metadata,
     )
