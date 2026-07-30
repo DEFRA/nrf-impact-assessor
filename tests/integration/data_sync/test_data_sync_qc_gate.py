@@ -409,3 +409,79 @@ def test_excluded_areas_null_site_name_fails_qc(
     assert count == 0, "a QC failure must leave the table empty"
 
     _reset_sync_state(test_engine)
+
+
+def test_excluded_areas_blank_name_column_fails_qc(
+    test_engine, s3_localstack, monkeypatch
+):
+    """A whitespace-only `name` must fail QC.
+
+    attributes.site_name being present does not imply the `name` column is
+    usable, and the exclusion gate reads `name`. A blank one passes an IS NULL
+    rule, so it needs the stricter non_blank check.
+    """
+    monkeypatch.setenv("DB_IAM_AUTHENTICATION", "false")
+    monkeypatch.setenv("DB_DATABASE", "test_nrf_impact")
+    monkeypatch.setenv("DATA_SYNC_S3_BUCKET", BUCKET)
+    monkeypatch.setenv("DATA_SYNC_S3_PREFIX", "dumps")
+    monkeypatch.setenv(
+        "AWS_ENDPOINT_URL", os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4568")
+    )
+
+    dumps = _good_dumps()
+    # site_name present (passes the non_null rule) but `name` is whitespace.
+    dumps["edp_excluded_areas"] = _dump(
+        "edp_excluded_areas",
+        "id, version, geometry, name, attributes, created_at",
+        [
+            (
+                f"{uuid4()}\t1\t{_good_geom('edp_excluded_areas')}\t   "
+                '\t{"site_name": "Blank Name SSSI"}'
+                "\t2026-01-01 00:00:00+00\n"
+            )
+        ],
+    )
+
+    version = "20260701_150000"
+    tables_map = {}
+    for table, body in dumps.items():
+        key = f"public_{table}_{version}.sql.gz"
+        s3_localstack.put_object(Bucket=BUCKET, Key=f"dumps/{key}", Body=body)
+        tables_map[table] = key
+    manifest = Manifest(data_version=version, tables=tables_map)
+
+    _reset_sync_state(test_engine)
+
+    run_id = uuid4()
+    with test_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO public.data_sync_run (id, status) VALUES (:id, 'running')"
+            ),
+            {"id": str(run_id)},
+        )
+
+    run_data_sync(run_id, manifest, force=True)
+
+    with test_engine.connect() as conn:
+        run_row = conn.execute(
+            text("SELECT status, error FROM public.data_sync_run WHERE id = :id"),
+            {"id": str(run_id)},
+        ).one()
+        detail = conn.execute(
+            text(
+                "SELECT status, status_detail FROM public.data_load_history "
+                "WHERE run_id = :id AND table_name = 'edp_excluded_areas'"
+            ),
+            {"id": str(run_id)},
+        ).one()
+        count = conn.execute(
+            text("SELECT count(*) FROM public.edp_excluded_areas")
+        ).scalar()
+
+    assert run_row.status == "failed"
+    assert detail.status == "failed"
+    assert "non_blank" in detail.status_detail
+    assert count == 0
+
+    _reset_sync_state(test_engine)

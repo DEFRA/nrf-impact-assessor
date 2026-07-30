@@ -108,7 +108,7 @@ def test_non_active_version_rows_are_ignored(repository: Repository):
     assert result == ["Current SSSI"]
 
 
-def test_names_are_deduplicated_sorted_and_null_free(repository: Repository):
+def test_names_are_deduplicated_and_sorted(repository: Repository):
     """Dedup, sort and NULL handling are contractual.
 
     The committed fixture cannot demonstrate them: its three site names are
@@ -122,14 +122,15 @@ def test_names_are_deduplicated_sorted_and_null_free(repository: Repository):
     _insert_zone(repository, "Zulu SSSI", zone_b)
     # Inserted after Zulu, so ordering cannot come from insertion order.
     _insert_zone(repository, "Alpha SSSI", zone_c)
-    # Unnamed row: dropped rather than emitted as null into a list of strings.
+    # Unnamed row: reported under a placeholder, never dropped — see
+    # test_blank_named_zone_still_reports_the_overlap for why.
     _insert_zone(repository, None, zone_c)
 
     result = _find_intersecting_excluded_areas(
         _gdf(box(600500, 300500, 600600, 302500)), repository
     )
 
-    assert result == ["Alpha SSSI", "Zulu SSSI"]
+    assert result == ["Alpha SSSI", "Unnamed exclusion area", "Zulu SSSI"]
 
 
 def _insert_edp(repository: Repository, name, wkt, version=1):
@@ -162,3 +163,80 @@ def test_edp_query_ignores_non_active_version_rows(repository: Repository):
     )
 
     assert [r["label"] for r in results] == ["Current EDP"]
+
+
+# ---------------------------------------------------------------------------
+# Overlap detection must not depend on name quality (fail-closed)
+# ---------------------------------------------------------------------------
+
+
+def _insert_zone_with_attrs(repository: Repository, name, site_name, wkt, version=1):
+    """Insert a zone setting the `name` column and attributes.site_name apart.
+
+    QC guards attributes.site_name while the query reads the `name` column, so
+    the two can disagree.
+    """
+    with repository.session() as session:
+        session.execute(
+            text(
+                "INSERT INTO public.edp_excluded_areas "
+                "(id, version, geometry, name, attributes) VALUES "
+                "(gen_random_uuid(), :v, ST_GeomFromText(:wkt, 27700), :n, "
+                "jsonb_build_object('site_name', :s))"
+            ),
+            {"v": version, "wkt": wkt, "n": name, "s": site_name},
+        )
+        session.commit()
+
+
+@pytest.mark.parametrize("blank_name", ["", "   ", "\t", None])
+def test_blank_named_zone_still_reports_the_overlap(repository, blank_name):
+    """A nameless zone must never read as "no overlap".
+
+    Dropping the row from the name list would empty the list, and the endpoint
+    gates on that list being non-empty — so the boundary would wrongly continue
+    down the EDP route instead of going to HRA.
+    """
+    _insert_zone(repository, blank_name, box(600000, 300000, 601000, 301000).wkt)
+
+    result = _find_intersecting_excluded_areas(
+        _gdf(box(600500, 300500, 601500, 301500)), repository
+    )
+
+    assert result != []
+    assert result == ["Unnamed exclusion area"]
+
+
+def test_blank_column_name_with_populated_site_name_still_reports_overlap(
+    repository: Repository,
+):
+    """The QC rule guards attributes.site_name; the query reads `name`.
+
+    A row satisfying QC can still have a blank `name`, so detection must not
+    rest on that column being populated.
+    """
+    _insert_zone_with_attrs(
+        repository, "   ", "Blank Name SSSI", box(600000, 300000, 601000, 301000).wkt
+    )
+
+    result = _find_intersecting_excluded_areas(
+        _gdf(box(600500, 300500, 601500, 301500)), repository
+    )
+
+    assert result == ["Unnamed exclusion area"]
+
+
+def test_named_and_unnamed_zones_are_both_reported(repository: Repository):
+    """A real name alongside a blank one keeps both signals."""
+    _insert_zone(
+        repository,
+        "Yare Broads and Marshes SSSI",
+        box(600000, 300000, 601000, 301000).wkt,
+    )
+    _insert_zone(repository, "  ", box(600000, 301000, 601000, 302000).wkt)
+
+    result = _find_intersecting_excluded_areas(
+        _gdf(box(600500, 300500, 600600, 301500)), repository
+    )
+
+    assert result == ["Unnamed exclusion area", "Yare Broads and Marshes SSSI"]

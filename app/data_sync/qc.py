@@ -162,6 +162,29 @@ def _non_null_json_sql(table: str, rules: TableRules) -> str:
     return sql
 
 
+def _non_blank_columns_sql(table: str, rules: TableRules) -> str:
+    """Reject NULL *or* whitespace-only values in a table column.
+
+    Needed where downstream code reads the text rather than merely checking it
+    is present: a `'   '` name passes an IS NULL rule but is useless to display
+    and, worse, indistinguishable from no name at all to a consumer that trims.
+    COALESCE folds NULL into the same predicate.
+    """
+    stage = staging_name(table)
+    sql = ""
+    for column in rules.non_blank_columns:
+        sql += (
+            f"SELECT COUNT(*) INTO detail_count FROM pg_temp.{stage} "  # noqa: S608
+            f"WHERE btrim(COALESCE({column}, '')) = '';\n"
+            "IF detail_count > 0 THEN\n"
+            "  failures := array_append(failures, format("
+            f"'table={table} rule=non_blank detail=%s row(s) with blank {column}', "
+            "detail_count));\n"
+            "END IF;\n"
+        )
+    return sql
+
+
 def _allowed_values_sql(table: str, rules: TableRules) -> str:
     """Rule 8 enum constraints on JSONB attributes.
 
@@ -326,6 +349,8 @@ def _table_parts(table: str, rules: TableRules, floor_pct: float) -> list[str]:
             parts.append(_json_key_sql(table, rules))
     if rules.non_null_json_columns:
         parts.append(_non_null_json_sql(table, rules))
+    if rules.non_blank_columns:
+        parts.append(_non_blank_columns_sql(table, rules))
     if rules.allowed_values:
         parts.append(_allowed_values_sql(table, rules))
     if rules.lookup_rows:

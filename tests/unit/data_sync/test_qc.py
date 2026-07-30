@@ -459,3 +459,47 @@ def test_real_config_enforces_edp_layer_names(table, column):
 
     assert f"attributes->>'{column}' IS NULL" in sql
     assert "rule=non_null" in sql
+
+
+# ---------------------------------------------------------------------------
+# non_blank_columns: table columns that must be present and not whitespace
+# ---------------------------------------------------------------------------
+
+
+def test_non_blank_columns_sql_rejects_null_and_whitespace():
+    from app.data_sync.qc import _non_blank_columns_sql
+    from app.data_sync.qc_rules import TableRules
+
+    rules = TableRules(non_blank_columns=["name"])
+    sql = _non_blank_columns_sql("edp_excluded_areas", rules)
+
+    assert "FROM pg_temp._ds_stage_edp_excluded_areas" in sql
+    # COALESCE folds NULL into the blank check so one predicate covers both.
+    assert "btrim(COALESCE(name, '')) = ''" in sql
+    assert "rule=non_blank" in sql
+
+
+def test_table_parts_includes_non_blank_columns():
+    from app.data_sync.qc import _table_parts
+    from app.data_sync.qc_rules import TableRules
+
+    rules = TableRules(non_blank_columns=["name"])
+    sql = "".join(_table_parts("edp_excluded_areas", rules, floor_pct=90))
+
+    assert "rule=non_blank" in sql
+
+
+def test_real_config_requires_non_blank_excluded_area_name():
+    """The exclusion gate reads the `name` column, not attributes.site_name.
+
+    A row can satisfy the attributes.site_name non-null rule and still have a
+    blank `name`, so the column itself needs its own rule.
+    """
+    from app.data_sync.qc import _table_parts
+    from app.data_sync.qc_rules import load_qc_rules
+
+    rules = load_qc_rules().tables["edp_excluded_areas"]
+    sql = "".join(_table_parts("edp_excluded_areas", rules, floor_pct=90))
+
+    assert rules.non_blank_columns == ["name"]
+    assert "btrim(COALESCE(name, '')) = ''" in sql

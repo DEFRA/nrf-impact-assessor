@@ -42,6 +42,11 @@ logger = logging.getLogger(__name__)
 _VALID_GEOM_TYPES = {"Polygon"}
 _WGS84 = "EPSG:4326"
 
+# Stands in for an exclusion zone whose name is missing or blank. The boundary
+# is still ineligible, so the overlap must be reported even when we cannot say
+# which site caused it.
+_UNNAMED_EXCLUDED_AREA = "Unnamed exclusion area"
+
 
 router = APIRouter()
 
@@ -383,9 +388,14 @@ def _find_intersecting_excluded_areas(
     the zone and stays eligible.
 
     Names are deduplicated (one SSSI may be several polygons) and sorted so the
-    response is deterministic. Rows with no name are dropped rather than emitted
-    as null into a list the API contract types as strings — the QC rule on
-    `attributes.site_name` is what stops that from hiding a real overlap.
+    response is deterministic.
+
+    A row whose name is NULL or blank becomes `_UNNAMED_EXCLUDED_AREA` rather
+    than being dropped. Dropping it would be a fail-*open* bug: the caller gates
+    on this list being non-empty, so a nameless zone would read as "no overlap"
+    and the boundary would wrongly continue down the EDP route. Detection has to
+    depend only on geometry, never on attribute quality — the QC rules reduce
+    how often the placeholder is needed, they do not make it unnecessary.
     """
     input_geom = ST_SetSRID(ST_GeomFromText(gdf.union_all().wkt), 27700)
     intersection = ST_CollectionExtract(
@@ -407,7 +417,14 @@ def _find_intersecting_excluded_areas(
         )
         rows = session.execute(stmt).fetchall()
 
-    return sorted({row.name for row in rows if row.name and row.name.strip()})
+    return sorted(
+        {
+            row.name.strip()
+            if row.name and row.name.strip()
+            else _UNNAMED_EXCLUDED_AREA
+            for row in rows
+        }
+    )
 
 
 def _find_intersecting_edps(
