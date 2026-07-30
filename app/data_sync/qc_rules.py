@@ -55,6 +55,9 @@ class TableRules(BaseModel):
     row_count_floor_pct: float | None = None
     key: KeyRule | None = None
     non_null_columns: list[str] = Field(default_factory=list)
+    # Stricter than non_null_columns: rejects whitespace-only values too, for
+    # columns whose text is actually read (not merely present).
+    non_blank_columns: list[str] = Field(default_factory=list)
     non_null_json_columns: list[str] = Field(default_factory=list)
     allowed_values: dict[str, list[str]] = Field(default_factory=dict)
     coefficient_ranges: dict[str, CoefficientRange] = Field(default_factory=dict)

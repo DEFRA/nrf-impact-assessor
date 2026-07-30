@@ -1,6 +1,24 @@
 """Shared test utilities for unit/api tests."""
 
 import json
+from unittest.mock import patch
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_excluded_areas():
+    """Default every endpoint test to "no exclusion zones hit".
+
+    /check-boundary queries exclusion zones before EDP areas, so without this
+    each test that gets past validation would fall through to a real PostGIS
+    connection. Exclusion-specific tests override it with their own @patch,
+    which takes precedence over this fixture.
+    """
+    with patch(
+        "app.boundary.router._find_intersecting_excluded_areas", return_value=[]
+    ):
+        yield
 
 
 def _make_geojson_bytes(

@@ -31,7 +31,8 @@ from sqlalchemy import select
 
 from app.boundary.validation import SUPPORTED_CRS, validate_geometry
 from app.config import ApiServerConfig
-from app.models.db import EdpBoundaryLayer
+from app.data_sync.active_version import get_active_version
+from app.models.db import EdpBoundaryLayer, EdpExcludedAreas
 from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
 from app.spatial.utils import UnsupportedCRSError, ensure_crs
@@ -40,6 +41,11 @@ logger = logging.getLogger(__name__)
 
 _VALID_GEOM_TYPES = {"Polygon"}
 _WGS84 = "EPSG:4326"
+
+# Stands in for an exclusion zone whose name is missing or blank. The boundary
+# is still ineligible, so the overlap must be reported even when we cannot say
+# which site caused it.
+_UNNAMED_EXCLUDED_AREA = "Unnamed exclusion area"
 
 
 router = APIRouter()
@@ -98,6 +104,7 @@ def _make_response(
     boundary_geometry_original: dict | None = None,
     boundary_geometry_wgs84: dict | None = None,
     intersecting_edps: list | None = None,
+    intersecting_excluded_areas: list | None = None,
     boundary_metadata: dict | None = None,
     error: str | None = None,
 ) -> JSONResponse:
@@ -108,6 +115,7 @@ def _make_response(
             "boundaryGeometryOriginal": boundary_geometry_original,
             "boundaryGeometryWgs84": boundary_geometry_wgs84,
             "intersectingEdps": intersecting_edps or [],
+            "intersectingExcludedAreas": intersecting_excluded_areas or [],
             "boundaryMetadata": boundary_metadata,
             "error": error,
         },
@@ -159,7 +167,7 @@ def _check_declared_geojson_crs(content: bytes, ext: str) -> None:
 
     try:
         crs_name = json.loads(content)["crs"]["properties"]["name"]
-    except (json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError):
+    except json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError:
         return
 
     try:
@@ -223,7 +231,7 @@ def _close_unclosed_rings(content: bytes, ext: str) -> tuple[bytes, bool]:
 
     try:
         data = json.loads(content)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except json.JSONDecodeError, UnicodeDecodeError:
         return content, False
 
     any_ring_closed = False
@@ -366,6 +374,59 @@ def _check_shapefile_companions(shp_path: Path) -> Path:
     return shp_path
 
 
+def _find_intersecting_excluded_areas(
+    gdf: gpd.GeoDataFrame, repository: Repository
+) -> list[str]:
+    """Return names of EDP exclusion zones the uploaded geometry overlaps.
+
+    A boundary overlapping any exclusion zone is not eligible for the EDP and
+    must be routed to HRA instead, so the caller treats a non-empty result as
+    ineligibility.
+
+    Only positive-area overlap counts: the exclusion zones are already buffered
+    SSSI polygons, so a boundary that merely touches a zone edge lies outside
+    the zone and stays eligible.
+
+    Names are deduplicated (one SSSI may be several polygons) and sorted so the
+    response is deterministic.
+
+    A row whose name is NULL or blank becomes `_UNNAMED_EXCLUDED_AREA` rather
+    than being dropped. Dropping it would be a fail-*open* bug: the caller gates
+    on this list being non-empty, so a nameless zone would read as "no overlap"
+    and the boundary would wrongly continue down the EDP route. Detection has to
+    depend only on geometry, never on attribute quality — the QC rules reduce
+    how often the placeholder is needed, they do not make it unnecessary.
+    """
+    input_geom = ST_SetSRID(ST_GeomFromText(gdf.union_all().wkt), 27700)
+    intersection = ST_CollectionExtract(
+        ST_Intersection(EdpExcludedAreas.geometry, input_geom), 3
+    )
+
+    with repository.session() as session:
+        version = get_active_version(session, "edp_excluded_areas")
+        stmt = (
+            select(EdpExcludedAreas.name)
+            .where(
+                EdpExcludedAreas.version == version,
+                # ST_Intersects is the index-backed predicate that narrows
+                # candidates; the area test then drops touch-only contact.
+                ST_Intersects(EdpExcludedAreas.geometry, input_geom),
+                ST_Area(intersection) > 0,
+            )
+            .distinct()
+        )
+        rows = session.execute(stmt).fetchall()
+
+    return sorted(
+        {
+            row.name.strip()
+            if row.name and row.name.strip()
+            else _UNNAMED_EXCLUDED_AREA
+            for row in rows
+        }
+    )
+
+
 def _find_intersecting_edps(
     gdf: gpd.GeoDataFrame, repository: Repository, output_srid: int = 4326
 ) -> list[dict]:
@@ -379,24 +440,27 @@ def _find_intersecting_edps(
         ST_Intersection(EdpBoundaryLayer.geometry, input_geom), 3
     )
 
-    stmt = select(
-        EdpBoundaryLayer.name,
-        EdpBoundaryLayer.attributes,
-        ST_AsGeoJSON(ST_Transform(EdpBoundaryLayer.geometry, output_srid)).label(
-            "edp_geojson"
-        ),
-        ST_AsGeoJSON(ST_Transform(intersection, output_srid)).label(
-            "intersection_geojson"
-        ),
-        ST_Area(intersection).label("intersection_area_sqm"),
-    ).where(
-        ST_Intersects(
-            EdpBoundaryLayer.geometry,
-            input_geom,
-        )
-    )
-
     with repository.session() as session:
+        # Without this the query spans every loaded version, so once a data sync
+        # has staged v2 alongside v1 each EDP would be reported twice.
+        version = get_active_version(session, "edp_boundary_layer")
+        stmt = select(
+            EdpBoundaryLayer.name,
+            EdpBoundaryLayer.attributes,
+            ST_AsGeoJSON(ST_Transform(EdpBoundaryLayer.geometry, output_srid)).label(
+                "edp_geojson"
+            ),
+            ST_AsGeoJSON(ST_Transform(intersection, output_srid)).label(
+                "intersection_geojson"
+            ),
+            ST_Area(intersection).label("intersection_area_sqm"),
+        ).where(
+            EdpBoundaryLayer.version == version,
+            ST_Intersects(
+                EdpBoundaryLayer.geometry,
+                input_geom,
+            ),
+        )
         rows = session.execute(stmt).fetchall()
 
     results = []
@@ -486,7 +550,14 @@ async def check_boundary(
     format-agnostic. This service then opens that specific file rather than
     re-implementing a picking rule of its own.
 
-    Returns the uploaded geometry as GeoJSON along with any intersecting EDP areas.
+    Returns the uploaded geometry as GeoJSON along with any intersecting EDP
+    areas and any intersecting EDP exclusion zones.
+
+    A boundary that overlaps an exclusion zone (a buffered SSSI polygon) is not
+    eligible for the EDP and must be routed to HRA. Such a response is a normal
+    200 with `error: null`: a non-empty `intersectingExcludedAreas` is the
+    signal, and `intersectingEdps` is then always empty. Touching a zone edge
+    without overlapping it does not exclude.
     """
     content = await geometry_file.read(_max_upload_bytes + 1)
     if len(content) > _max_upload_bytes:
@@ -538,7 +609,15 @@ async def check_boundary(
             )
 
         repository = _get_repository()
-        intersecting_edps = _find_intersecting_edps(gdf, repository, output_srid=4326)
+        # A boundary overlapping any exclusion zone is ineligible for the EDP
+        # and goes to HRA instead, so its EDP overlap is moot — skip that query
+        # rather than compute a result the caller must not act on.
+        intersecting_excluded_areas = _find_intersecting_excluded_areas(gdf, repository)
+        intersecting_edps = (
+            []
+            if intersecting_excluded_areas
+            else _find_intersecting_edps(gdf, repository, output_srid=4326)
+        )
 
         # Extract the first Polygon/MultiPolygon geometry, stripping user-supplied
         # properties to avoid processing Personal Identifiable Information (PII).
@@ -568,5 +647,6 @@ async def check_boundary(
         boundary_geometry_original=boundary_geometry_original,
         boundary_geometry_wgs84=boundary_geometry_wgs84,
         intersecting_edps=intersecting_edps,
+        intersecting_excluded_areas=intersecting_excluded_areas,
         boundary_metadata=boundary_metadata,
     )
