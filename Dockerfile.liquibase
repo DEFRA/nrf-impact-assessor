@@ -1,0 +1,6 @@
+# Liquibase 5.x no longer bundles JDBC drivers, so the postgres one has to be
+# added to the classpath explicitly or every command fails with
+# "Cannot find database driver: org.postgresql.Driver".
+FROM liquibase/liquibase:5.0.3-alpine
+
+RUN lpm add postgresql --global
