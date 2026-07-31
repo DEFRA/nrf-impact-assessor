@@ -29,7 +29,11 @@ from pyproj import CRS
 from pyproj.exceptions import CRSError
 from sqlalchemy import select
 
-from app.boundary.validation import SUPPORTED_CRS, validate_geometry
+from app.boundary.validation import (
+    SUPPORTED_CRS,
+    validate_coordinate_range,
+    validate_geometry,
+)
 from app.config import ApiServerConfig
 from app.data_sync.active_version import get_active_version
 from app.models.db import EdpBoundaryLayer, EdpExcludedAreas
@@ -574,74 +578,114 @@ async def check_boundary(
     content, exterior_was_unclosed = _close_unclosed_rings(content, ext)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        try:
-            gdf = _read_geometry(content, filename, Path(tmpdir), boundary_filename)
-        except ValueError as e:
-            return _make_response(400, error=str(e))
+        gdf, error_response = _load_and_validate_geometry(
+            content,
+            filename,
+            ext,
+            Path(tmpdir),
+            boundary_filename,
+            exterior_was_unclosed,
+        )
+        if error_response is not None:
+            return error_response
 
-        # GeoJSON (RFC 7946) and KML (OGC spec) mandate WGS84 —
-        # safe to assume EPSG:4326 when no CRS is present.
-        if gdf.crs is None and ext in _WGS84_EXTENSIONS:
-            gdf = gdf.set_crs(_WGS84)
+        return _assess_boundary(gdf)
 
-        try:
-            gdf = ensure_crs(gdf)
-        except UnsupportedCRSError:
-            return _make_response(422, error="unsupported_crs")
-        except ValueError:
-            return _make_response(422, error="missing_crs")
 
-        validation_error = validate_geometry(gdf)
+def _load_and_validate_geometry(
+    content: bytes,
+    filename: str,
+    ext: str,
+    tmpdir: Path,
+    boundary_filename: str | None,
+    exterior_was_unclosed: bool,
+) -> tuple[gpd.GeoDataFrame | None, JSONResponse | None]:
+    """Read an uploaded geometry file, resolve its CRS, and validate it.
 
-        # Only report unclosed_ring in place of another validation error when
-        # the exterior ring itself needed closing — an unclosed hole is left
-        # for geometry_has_holes to report instead (see _close_unclosed_rings).
-        # A MultiPolygon (already rejected as unsupported_geometry_type) also
-        # can't be safely re-opened using the single-ring logic below.
-        report_unclosed_ring = (
-            exterior_was_unclosed and gdf.geometry.iloc[0].geom_type == "Polygon"
+    Returns:
+        (gdf, None) on success, or (None, error_response) on any failure.
+    """
+    try:
+        gdf = _read_geometry(content, filename, tmpdir, boundary_filename)
+    except ValueError as e:
+        return None, _make_response(400, error=str(e))
+
+    # GeoJSON (RFC 7946) and KML (OGC spec) mandate WGS84 —
+    # safe to assume EPSG:4326 when no CRS is present.
+    if gdf.crs is None and ext in _WGS84_EXTENSIONS:
+        gdf = gdf.set_crs(_WGS84)
+
+    # Must run before ensure_crs()/reprojection: out-of-domain coordinates
+    # pass geometry validation unnoticed and only surface later as a
+    # reprojection crash (see validate_coordinate_range).
+    coordinate_range_error = validate_coordinate_range(gdf)
+    if coordinate_range_error:
+        return None, _make_response(400, error=coordinate_range_error)
+
+    try:
+        gdf = ensure_crs(gdf)
+    except UnsupportedCRSError:
+        return None, _make_response(422, error="unsupported_crs")
+    except ValueError:
+        return None, _make_response(422, error="missing_crs")
+
+    validation_error = validate_geometry(gdf)
+
+    # Only report unclosed_ring in place of another validation error when
+    # the exterior ring itself needed closing — an unclosed hole is left
+    # for geometry_has_holes to report instead (see _close_unclosed_rings).
+    # A MultiPolygon (already rejected as unsupported_geometry_type) also
+    # can't be safely re-opened using the single-ring logic below.
+    report_unclosed_ring = (
+        exterior_was_unclosed and gdf.geometry.iloc[0].geom_type == "Polygon"
+    )
+
+    if report_unclosed_ring or validation_error:
+        error_code = "unclosed_ring" if report_unclosed_ring else validation_error
+        return None, _build_invalid_geometry_response(
+            gdf, error_code, reopen_exterior_ring=report_unclosed_ring
         )
 
-        if report_unclosed_ring or validation_error:
-            error_code = "unclosed_ring" if report_unclosed_ring else validation_error
-            return _build_invalid_geometry_response(
-                gdf, error_code, reopen_exterior_ring=report_unclosed_ring
-            )
+    return gdf, None
 
-        repository = _get_repository()
-        # A boundary overlapping any exclusion zone is ineligible for the EDP
-        # and goes to HRA instead, so its EDP overlap is moot — skip that query
-        # rather than compute a result the caller must not act on.
-        intersecting_excluded_areas = _find_intersecting_excluded_areas(gdf, repository)
-        intersecting_edps = (
-            []
-            if intersecting_excluded_areas
-            else _find_intersecting_edps(gdf, repository, output_srid=4326)
-        )
 
-        # Extract the first Polygon/MultiPolygon geometry, stripping user-supplied
-        # properties to avoid processing Personal Identifiable Information (PII).
-        polygons = gdf[gdf.geometry.geom_type.isin(_VALID_GEOM_TYPES)]
-        if polygons.empty:
-            return _make_response(400, error="no_polygon_found")
-        first_geom = polygons.geometry.iloc[0]
-        authority, code = gdf.crs.to_authority()
-        crs_urn = f"urn:ogc:def:crs:{authority}::{code}"
-        geom = first_geom.__geo_interface__
-        boundary_geometry_original = {
-            "type": geom["type"],
-            "coordinates": geom["coordinates"],
-            "crs": {
-                "type": "name",
-                "properties": {"name": crs_urn},
-            },
-        }
+def _assess_boundary(gdf: gpd.GeoDataFrame) -> JSONResponse:
+    """Find EDP/exclusion-zone intersections and build the response for an
+    already-validated geometry."""
+    repository = _get_repository()
+    # A boundary overlapping any exclusion zone is ineligible for the EDP
+    # and goes to HRA instead, so its EDP overlap is moot — skip that query
+    # rather than compute a result the caller must not act on.
+    intersecting_excluded_areas = _find_intersecting_excluded_areas(gdf, repository)
+    intersecting_edps = (
+        []
+        if intersecting_excluded_areas
+        else _find_intersecting_edps(gdf, repository, output_srid=4326)
+    )
 
-        polygons = polygons.to_crs(_WGS84)
-        first_geom_wgs84 = polygons.geometry.iloc[0]
-        boundary_geometry_wgs84 = first_geom_wgs84.__geo_interface__
+    # Extract the first Polygon/MultiPolygon geometry, stripping user-supplied
+    # properties to avoid processing Personal Identifiable Information (PII).
+    polygons = gdf[gdf.geometry.geom_type.isin(_VALID_GEOM_TYPES)]
+    if polygons.empty:
+        return _make_response(400, error="no_polygon_found")
+    first_geom = polygons.geometry.iloc[0]
+    authority, code = gdf.crs.to_authority()
+    crs_urn = f"urn:ogc:def:crs:{authority}::{code}"
+    geom = first_geom.__geo_interface__
+    boundary_geometry_original = {
+        "type": geom["type"],
+        "coordinates": geom["coordinates"],
+        "crs": {
+            "type": "name",
+            "properties": {"name": crs_urn},
+        },
+    }
 
-        boundary_metadata = _compute_boundary_metadata(first_geom, first_geom_wgs84)
+    polygons = polygons.to_crs(_WGS84)
+    first_geom_wgs84 = polygons.geometry.iloc[0]
+    boundary_geometry_wgs84 = first_geom_wgs84.__geo_interface__
+
+    boundary_metadata = _compute_boundary_metadata(first_geom, first_geom_wgs84)
 
     return _make_response(
         boundary_geometry_original=boundary_geometry_original,

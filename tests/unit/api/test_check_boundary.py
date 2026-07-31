@@ -574,6 +574,90 @@ class TestCheckBoundaryUnsupportedCRS:
         )
 
 
+class TestCheckBoundaryCoordinateRange:
+    """Tests for out-of-range coordinate rejection.
+
+    Regression coverage for a real crash: a garbled/unprojected coordinate
+    (e.g. off by several orders of magnitude) passed geometry validation
+    unnoticed and only surfaced later, when reprojecting to WGS84 for the
+    response overflowed to `inf` and crashed JSON serialisation.
+    """
+
+    def test_wgs84_out_of_range_longitude_returns_400(self, client):
+        """A WGS84 polygon with a longitude outside [-180, 180] is rejected
+        before any reprojection is attempted."""
+        content = _make_geojson_bytes(
+            coordinates=[[[181, 0], [182, 0], [182, 1], [181, 1], [181, 0]]]
+        )
+        response = _post_boundary(client, "out-of-range-lon.geojson", content)
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "coordinates_out_of_range"
+
+    def test_wgs84_out_of_range_latitude_returns_400(self, client):
+        """A WGS84 polygon with a latitude outside [-90, 90] is rejected
+        before any reprojection is attempted."""
+        content = _make_geojson_bytes(
+            coordinates=[[[0, 91], [1, 91], [1, 92], [0, 92], [0, 91]]]
+        )
+        response = _post_boundary(client, "out-of-range-lat.geojson", content)
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "coordinates_out_of_range"
+
+    def test_bng_out_of_range_coordinates_returns_400(self, client):
+        """A declared-BNG polygon with astronomically large eastings/
+        northings is rejected with a clean 400, not left to crash the
+        WGS84 reprojection step with an `inf` value."""
+        content = _make_geojson_bytes(
+            coordinates=[
+                [
+                    [99999999, 99999999],
+                    [99999999.1, 99999999],
+                    [99999999.1, 99999999.1],
+                    [99999999, 99999999],
+                ]
+            ],
+            crs="urn:ogc:def:crs:EPSG::27700",
+        )
+        response = _post_boundary(client, "out-of-range-bng.geojson", content)
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "coordinates_out_of_range"
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_bng_coordinates_within_england_pass(self, client):
+        """A BNG polygon comfortably within England's extent must not be
+        rejected by the range check."""
+        content = _make_geojson_bytes(
+            coordinates=_BNG_COORDINATES, crs="urn:ogc:def:crs:EPSG::27700"
+        )
+        response = _post_boundary(client, "valid-bng.geojson", content)
+
+        assert response.status_code == 200
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_bng_northing_beyond_england_but_within_great_britain_passes(self, client):
+        """The BNG range covers all of Great Britain (northing up to
+        1,300,000), not just England — a northing beyond England's own
+        extent (~656,000 at the Scottish border) must still be accepted."""
+        content = _make_geojson_bytes(
+            coordinates=[
+                [
+                    [300000, 900000],
+                    [300100, 900000],
+                    [300100, 900100],
+                    [300000, 900100],
+                    [300000, 900000],
+                ]
+            ],
+            crs="urn:ogc:def:crs:EPSG::27700",
+        )
+        response = _post_boundary(client, "scotland-bng.geojson", content)
+
+        assert response.status_code == 200
+
+
 _BNG_COORDINATES = [
     [
         [400000, 100000],
