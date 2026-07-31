@@ -18,6 +18,7 @@ from app.data_sync.qc_rules import (
     QcRules,
     TableRules,
 )
+from app.data_sync.restore import RestoreItem
 
 pytestmark = pytest.mark.integration
 
@@ -28,9 +29,20 @@ _INVALID_POLYGON_WKT = (
 _WRONG_SRID_WKT = "SRID=4326;POLYGON((0 0,0 10,10 10,10 0,0 0))"
 
 
+def _qc_item(table: str, dump: str = "dummy.gz") -> RestoreItem:
+    """A RestoreItem for QC generation; build_qc_sql only reads `.table`."""
+    return RestoreItem(
+        table=table,
+        dumps=[Path(dump)],
+        s3_key="k/1",
+        etag="etag1",
+        data_version="v1",
+    )
+
+
 def _run_qc(conn, table: str, rules: TableRules):
     qc_rules = QcRules(tables={table: rules})
-    sql = build_qc_sql([(table, Path("dummy.gz"))], qc_rules)
+    sql = build_qc_sql([_qc_item(table)], qc_rules)
     conn.execute(text(sql))
 
 
@@ -194,7 +206,8 @@ def test_multiple_failures_are_aggregated_not_fail_fast(test_engine):
             }
         )
         sql = build_qc_sql(
-            [("gcn_ponds", Path("a.gz")), ("coefficient_layer", Path("b.gz"))], qc_rules
+            [_qc_item("gcn_ponds", "a.gz"), _qc_item("coefficient_layer", "b.gz")],
+            qc_rules,
         )
         stmt = text(sql)
         with pytest.raises(InternalError) as exc_info:

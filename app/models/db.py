@@ -244,6 +244,7 @@ class DataLoadHistory(Base):
     s3_key: Mapped[str] = mapped_column(String, nullable=False)
     etag: Mapped[str] = mapped_column(String, nullable=False)
     data_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    row_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
     status_detail: Mapped[str | None] = mapped_column(String, nullable=True)
     loaded_at: Mapped[datetime] = mapped_column(

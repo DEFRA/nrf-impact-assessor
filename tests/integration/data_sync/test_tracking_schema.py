@@ -33,6 +33,7 @@ def test_data_load_history_table_exists(test_engine):
         "s3_key",
         "etag",
         "data_version",
+        "row_version",
         "status",
         "loaded_at",
     } <= cols

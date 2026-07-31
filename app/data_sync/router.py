@@ -1,11 +1,12 @@
 """Admin endpoint to trigger and poll a reference-data reload."""
 
 import logging
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import text, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.config import AWSConfig, DatabaseSettings, DataSyncConfig
 from app.data_sync.active_version import rollback_table
 from app.data_sync.manifest import Manifest
+from app.data_sync.restore import restore_lock_key
 from app.data_sync.service import run_data_sync
 from app.models.db import DataLoadHistory, DataRollbackEvent, DataSyncRun
 from app.repositories.engine import create_db_engine
@@ -57,19 +59,27 @@ class RollbackRequest(BaseModel):
 
 
 def _last_run_tables(session: Session) -> list[str]:
-    """Distinct tables loaded by the most recent successful reload."""
-    run = (
-        session.query(DataSyncRun)
-        .filter(DataSyncRun.status == "success", DataSyncRun.data_version.isnot(None))
-        .order_by(DataSyncRun.started_at.desc())
+    """Distinct tables loaded by the most recent reload that actually loaded
+    something.
+
+    Keyed off the most recent success/reconciled DataLoadHistory row rather than
+    the most recent successful run: a successful *no-op* run (a manifest whose
+    tables were all already applied) writes no history rows, so keying off the
+    run would let a no-op mask the prior load and leave a default rollback with
+    nothing to target.
+    """
+    latest = (
+        session.query(DataLoadHistory.run_id)
+        .filter(DataLoadHistory.status.in_(["success", "reconciled"]))
+        .order_by(DataLoadHistory.loaded_at.desc())
         .first()
     )
-    if run is None:
+    if latest is None:
         return []
     rows = (
         session.query(DataLoadHistory.table_name)
         .filter(
-            DataLoadHistory.run_id == run.id,
+            DataLoadHistory.run_id == latest[0],
             DataLoadHistory.status.in_(["success", "reconciled"]),
         )
         .distinct()
@@ -78,16 +88,98 @@ def _last_run_tables(session: Session) -> list[str]:
     return [r[0] for r in rows]
 
 
+# A run holds cfg.lock_key for its entire duration (service.py::run_data_sync),
+# and Postgres releases session advisory locks when the owning connection dies.
+# That makes "lock not held" the one liveness signal for the owning process that
+# survives a SIGKILL — unlike the run row itself, which `_finish` clears from a
+# Python `finally` path that a killed process (deploy, task replacement, OOM)
+# never reaches, leaving `running` set forever and 409-ing every later trigger.
+#
+# The parent's lock is not sufficient on its own: the restore runs in a psql
+# child on its own connection, which can outlive a SIGKILLed parent. So psql
+# takes restore_lock_key(cfg.lock_key) for the life of its transaction
+# (restore.py::begin_sql) and both keys are checked here — either one still held
+# means work may still be in flight, and reclaiming the row would let a second
+# run start alongside it.
+_LOCK_HELD_SQL = text(
+    """
+    SELECT 1 FROM pg_locks, unnest(CAST(:keys AS bigint[])) AS k
+    WHERE locktype = 'advisory'
+      AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+      AND classid::bigint = (k >> 32)
+      AND objid::bigint = (k & 4294967295)
+      AND objsubid = 1
+      AND granted
+    LIMIT 1
+    """
+)
+
+# `_create_run` inserts the run row, but the lock is only taken once the
+# background task starts, so a live run holds no lock for a brief window. Ignore
+# rows younger than this to keep that gap from reading as a crash.
+_ORPHAN_GRACE = timedelta(seconds=60)
+
+
+def _reclaim_orphaned_run(session: Session) -> bool:
+    """Mark a crashed run's row failed so a new run can start.
+
+    Returns True if a row was reclaimed. Deliberately does *not* fall back to a
+    plain age cutoff: a restore streaming large multi-part dumps can legitimately
+    run for a long time, and taking its slot on age alone would start a second
+    concurrent run. The lock check is what distinguishes "slow" from "dead".
+    """
+    lock_key = DataSyncConfig().lock_key
+    keys = [lock_key, restore_lock_key(lock_key)]
+    if session.execute(_LOCK_HELD_SQL, {"keys": keys}).first():
+        return False
+    now = datetime.now(UTC)
+    result = session.execute(
+        update(DataSyncRun)
+        .where(
+            DataSyncRun.status == "running",
+            DataSyncRun.started_at < now - _ORPHAN_GRACE,
+        )
+        .values(
+            status="failed",
+            finished_at=now,
+            error="orphaned: owning process exited without finishing the run",
+        )
+    )
+    session.commit()
+    if result.rowcount:
+        logger.warning(
+            "reclaimed %d orphaned data sync run row(s): no advisory lock held, "
+            "so the owning process is gone",
+            result.rowcount,
+        )
+    return bool(result.rowcount)
+
+
+def _insert_run(session: Session, run_id: UUID, *, forced: bool) -> None:
+    session.add(DataSyncRun(id=run_id, status="running", forced=forced))
+    session.commit()
+
+
 def _create_run(*, forced: bool) -> UUID:
-    """Insert a 'running' run row; raise RunInProgressError on contention."""
+    """Insert a 'running' run row; raise RunInProgressError on contention.
+
+    The partial unique index on status='running' is what serialises runs, so a
+    genuine race still resolves to exactly one winner: the loser's retry hits the
+    index again and gets its 409.
+    """
     run_id = uuid4()
     with Session(bind=_get_engine()) as session:
-        session.add(DataSyncRun(id=run_id, status="running", forced=forced))
         try:
-            session.commit()
+            _insert_run(session, run_id, forced=forced)
         except IntegrityError as exc:
             session.rollback()
-            raise RunInProgressError from exc
+            if not _reclaim_orphaned_run(session):
+                raise RunInProgressError from exc
+            try:
+                _insert_run(session, run_id, forced=forced)
+            except IntegrityError as retry_exc:
+                session.rollback()
+                raise RunInProgressError from retry_exc
     return run_id
 
 

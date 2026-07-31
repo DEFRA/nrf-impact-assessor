@@ -116,11 +116,11 @@ Valid `--layer` / `LAYER` values:
 | `gcn_ponds` | GCN pond locations | `gcn_ponds` |
 | `edp_edges` | EDP edge geometries | `edp_edges` |
 | `coefficients` | Nutrient mitigation coefficient polygons (~5.4M features) | `coefficient_layer` |
-| `edp_boundaries` | EDP boundary extent polygon | `edp_boundary_layer` |
+| `edp_boundary_layer` | EDP boundary extent polygon | `edp_boundary_layer` |
 | `edp_excluded_areas` | Buffered SSSI areas excluded from EDP mitigation | `edp_excluded_areas` |
 
 Each layer loads into its own table in the `public` schema. The legacy shared
-`spatial_layer` table is no longer written to.
+`spatial_layer` table has been dropped (revision `c3d7e1f2a4b6`).
 
 ### Load specific lookup tables
 
@@ -225,9 +225,9 @@ All nine share an identical column set:
 | `attributes` | `JSONB` | All original attributes from source file |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 
-> A legacy `public.spatial_layer` table still exists but is empty and no longer
-> written to or read from. It is retained only so old migrations remain
-> replayable.
+> The legacy `public.spatial_layer` table, superseded by these per-layer tables,
+> is dropped by revision `c3d7e1f2a4b6`. Databases predating the squashed
+> baseline kept it around empty; upgrading to head clears it.
 
 ### `public.coefficient_layer`
 

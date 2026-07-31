@@ -13,6 +13,7 @@ from app.config import AWSConfig
 from app.data_sync.manifest import Manifest
 from app.data_sync.qc_rules import load_qc_rules
 from app.data_sync.service import run_data_sync
+from tests.integration.data_sync.dumps import PG_DUMP_PREAMBLE
 
 pytestmark = pytest.mark.integration
 
@@ -81,7 +82,12 @@ def _good_geom(table: str) -> str:
 
 
 def _dump(table: str, columns: str, rows: list[str]) -> bytes:
-    body = f"COPY public.{table} ({columns}) FROM stdin;\n" + "".join(rows) + "\\.\n"
+    body = (
+        PG_DUMP_PREAMBLE
+        + f"COPY public.{table} ({columns}) FROM stdin;\n"
+        + "".join(rows)
+        + "\\.\n"
+    )
     return gzip.compress(body.encode())
 
 
@@ -167,8 +173,8 @@ def _publish(s3_client, dumps: dict[str, bytes], version: str) -> Manifest:
     for table, body in dumps.items():
         key = f"public_{table}_{version}.sql.gz"
         s3_client.put_object(Bucket=BUCKET, Key=f"dumps/{key}", Body=body)
-        tables_map[table] = key
-    return Manifest(data_version=version, tables=tables_map)
+        tables_map[table] = {"key": key, "version": version}
+    return Manifest(tables=tables_map)
 
 
 def _start_run(engine):
@@ -314,6 +320,172 @@ def test_good_manifest_passes_qc_and_promotes_every_table(
     assert all(counts[t] == 1 for t in _ALL_TABLES if t != "lookup_table"), counts
     assert {row.table_name for row in history} == set(_ALL_TABLES)
     assert all(row.status == "success" for row in history)
+
+    _reset_sync_state(test_engine)
+
+
+def _insert_row(conn, table: str, columns: str, values: str) -> None:
+    conn.execute(text(f"INSERT INTO public.{table} ({columns}) VALUES ({values})"))  # noqa: S608
+
+
+def test_subset_qc_referential_uses_active_version_not_retained_inactive(
+    test_engine, s3_localstack, data_sync_env
+):
+    """A subset sync's referential QC must read an unstaged referenced table at
+    its *active* version. A key that exists only in a superseded (inactive)
+    retained version must NOT satisfy the check — otherwise a subset load could
+    pass by matching stale rows.
+
+    Setup (seeded directly to isolate the version-pinning behaviour from the
+    referential web of a full sync): nn_catchments has "Site A" active; the
+    subcatchment "OLD" exists only in subcatchments version 1, which is retained
+    but inactive (active pointer is version 2, carrying "NEW"). A subset sync of
+    coefficient_layer referencing subcatchment "OLD" must fail QC.
+    """
+    _reset_sync_state(test_engine)
+    geom = _good_geom("subcatchments")
+    with test_engine.begin() as conn:
+        # nn_catchments: one active row carrying the referenced "Site A".
+        _insert_row(
+            conn,
+            "nn_catchments",
+            "id, version, geometry, name, attributes, created_at",
+            f"gen_random_uuid(), 1, '{geom}', 'N', "
+            '\'{"OID": 1, "N2K_Site_N": "Site A"}\', now()',
+        )
+        # subcatchments: version 1 carries "OLD" (will be inactive), version 2
+        # carries "NEW" and is the active version.
+        _insert_row(
+            conn,
+            "subcatchments",
+            "id, version, geometry, name, attributes, created_at",
+            f"gen_random_uuid(), 1, '{geom}', 'S', "
+            '\'{"OPCAT_NAME": "OLD"}\', now()',
+        )
+        _insert_row(
+            conn,
+            "subcatchments",
+            "id, version, geometry, name, attributes, created_at",
+            f"gen_random_uuid(), 2, '{geom}', 'S', "
+            '\'{"OPCAT_NAME": "NEW"}\', now()',
+        )
+        conn.execute(
+            text(
+                "INSERT INTO public.data_active_version "
+                "(table_name, active_version) VALUES "
+                "('nn_catchments', 1), ('subcatchments', 2)"
+            )
+        )
+
+    # coefficient_layer references nn_catchment "Site A" (active) and
+    # subcatchment "OLD" (only in the inactive subcatchments version 1).
+    body = _dump(
+        "coefficient_layer",
+        _COEFFICIENT_COLUMNS,
+        [
+            (
+                f"{uuid4()}\t1\t{_good_geom('coefficient_layer')}\tCROME1\tARABLE"
+                "\tSite A\tOLD"
+                "\t10\t0.5\t12\t1.2\t2026-01-01 00:00:00+00\n"
+            )
+        ],
+    )
+    manifest = _publish(s3_localstack, {"coefficient_layer": body}, "20260701_160000")
+    run_id = _start_run(test_engine)
+
+    run_data_sync(run_id, manifest, force=False)
+
+    with test_engine.connect() as conn:
+        run_row = _run_row(conn, run_id)
+        coeff_count = conn.execute(
+            text("SELECT count(*) FROM public.coefficient_layer")
+        ).scalar()
+
+    # Active subcatchments (version 2) has only "NEW", so "OLD" is unmatched and
+    # the referential check fails — the subset load rolls back.
+    assert run_row.status == "failed"
+    assert "referential" in (run_row.error or "")
+    assert coeff_count == 0
+
+    _reset_sync_state(test_engine)
+
+
+def test_row_count_floor_uses_active_version_not_rolled_back_max(
+    test_engine, s3_localstack, data_sync_env, monkeypatch
+):
+    """After a rollback, the row-count floor must be measured against the
+    *active* version, not MAX(version).
+
+    Setup mirrors the aftermath of a real rollback: gcn_ponds version 1 (the
+    good load) holds 10 rows and is the active version; version 2 (the bad load
+    that was rolled back away from) holds 1 row and is retained but inactive.
+    MAX(version) is therefore 2.
+
+    A reload of 2 rows is 20% of the active version's 10 — below the 90% floor,
+    so it must FAIL. Measured against the inactive MAX instead it would be 200%
+    of 1 row and sail through, which is the bug: rolling back away from a bad
+    small load would leave the gate anchored to that bad load.
+    """
+    monkeypatch.setenv("DATA_SYNC_TABLES", '["gcn_ponds"]')
+
+    _reset_sync_state(test_engine)
+    geom = _good_geom("gcn_ponds")
+    with test_engine.begin() as conn:
+        for i in range(10):  # version 1: the good, active load
+            _insert_row(
+                conn,
+                "gcn_ponds",
+                "id, version, geometry, name, attributes, created_at",
+                f"gen_random_uuid(), 1, '{geom}', 'P{i}', '{{}}', now()",
+            )
+        # version 2: the bad load that was rolled back away from — retained but
+        # inactive, and MAX(version).
+        _insert_row(
+            conn,
+            "gcn_ponds",
+            "id, version, geometry, name, attributes, created_at",
+            f"gen_random_uuid(), 2, '{geom}', 'PBAD', '{{}}', now()",
+        )
+        conn.execute(
+            text(
+                "INSERT INTO public.data_active_version "
+                "(table_name, active_version) VALUES ('gcn_ponds', 1)"
+            )
+        )
+
+    body = _dump(
+        "gcn_ponds",
+        _SPATIAL_COLUMNS,
+        [
+            (
+                f"{uuid4()}\t1\t{_good_geom('gcn_ponds')}\tNEW1\t{{}}"
+                "\t2026-01-01 00:00:00+00\n"
+            ),
+            (
+                f"{uuid4()}\t1\t{_good_geom('gcn_ponds')}\tNEW2\t{{}}"
+                "\t2026-01-01 00:00:00+00\n"
+            ),
+        ],
+    )
+    manifest = _publish(s3_localstack, {"gcn_ponds": body}, "20260728_090000")
+    run_id = _start_run(test_engine)
+
+    run_data_sync(run_id, manifest, force=False)
+
+    with test_engine.connect() as conn:
+        run_row = _run_row(conn, run_id)
+        active = conn.execute(
+            text(
+                "SELECT active_version FROM public.data_active_version "
+                "WHERE table_name = 'gcn_ponds'"
+            )
+        ).scalar()
+
+    assert run_row.status == "failed"
+    assert "rule=row_count" in (run_row.error or "")
+    # The floor names the active version's 10 rows, not the inactive MAX's 1.
+    assert "of previous 10" in (run_row.error or "")
+    assert active == 1  # nothing promoted
 
     _reset_sync_state(test_engine)
 

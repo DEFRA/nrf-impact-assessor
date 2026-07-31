@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from app.models.domain import DataProvenance
+from app.models.domain import DataProvenance, TableProvenance
 from app.orchestrator import JobOrchestrator
 
 
@@ -10,7 +10,9 @@ def test_callback_resolves_and_passes_provenance():
     orch = JobOrchestrator.__new__(JobOrchestrator)
     orch.repository = MagicMock()
     orch.backend_client = MagicMock()
-    prov = DataProvenance(data_version="2026.07.01")
+    prov = DataProvenance(
+        tables={"nn_catchments": TableProvenance(data_version="2026.07.01")}
+    )
 
     job = MagicMock(reference="Q1")
     with (

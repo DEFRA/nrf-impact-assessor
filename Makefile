@@ -6,17 +6,17 @@ help: ## Show this help
 # ---------------------------------------------------------------------------
 # Development
 # ---------------------------------------------------------------------------
-TEST_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5434
+TEST_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5432
 
 test: ## Run unit tests only (integration and regression excluded by default)
 	$(TEST_ENV) uv run pytest tests/ app/ -v
 
-test-integration: ## Run integration tests against test_nrf_impact DB on port 5434
+test-integration: ## Run integration tests against test_nrf_impact DB on port 5432
 	$(TEST_ENV) uv run pytest tests/integration/ -v -m integration
 
-REGRESSION_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5434
+REGRESSION_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5432
 
-test-regression: ## Run regression tests against production DB on port 5434
+test-regression: ## Run regression tests against production DB on port 5432
 	$(REGRESSION_ENV) uv run pytest tests/regression/ -v -m regression
 
 update-regression-baseline: ## Regenerate nutrient regression baselines from PostGIS (run then commit the CSVs)
@@ -168,7 +168,7 @@ db-restore-tables: ## Restore per-table backup: apply schema grants then table d
 # ---------------------------------------------------------------------------
 # Database migrations
 # ---------------------------------------------------------------------------
-DB_MIGRATE_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5434
+DB_MIGRATE_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5432
 
 db-migrate: ## Apply all pending Alembic migrations
 	$(DB_MIGRATE_ENV) uv run alembic upgrade head
@@ -179,18 +179,44 @@ db-rollback: ## Rollback the last Alembic migration
 db-migrate-liquibase: ## Apply Liquibase changesets against local postgres (requires compose postgres running)
 	docker compose run --rm liquibase
 
-db-rollback-liquibase: ## Rollback last Liquibase changeset against local postgres
+# Number of Liquibase changesets db-rollback-liquibase reverses. One Alembic
+# revision is usually represented by SEVERAL changesets, so the default of 1
+# does NOT undo a whole revision. Name the changelog and let make count it:
+#
+#   make db-rollback-liquibase VERSION=1.7
+#
+# Do not hardcode a count here. A hardcoded number silently rots as a changelog
+# grows, and the failure is quiet: rollbackCount reverses the last N changesets
+# in EXECUTION order, so too small an N reverses the tail of the changelog —
+# which for repair-style changesets is typically a run of empty <rollback/>
+# no-ops — reporting success while undoing nothing.
+#
+# COUNT=N still overrides, for deliberately reversing part of a changelog.
+VERSION ?=
+CHANGELOG_FILE = changelog/db.changelog-$(VERSION).xml
+COUNT ?= $(if $(VERSION),$(shell grep -c '<changeSet ' $(CHANGELOG_FILE) 2>/dev/null),1)
+
+db-rollback-liquibase: ## Rollback Liquibase changesets: VERSION=1.7 reverses that whole changelog (or COUNT=N for an exact number, default 1)
+	@if [ -n "$(VERSION)" ] && [ ! -f "$(CHANGELOG_FILE)" ]; then \
+		echo "No such changelog: $(CHANGELOG_FILE)" >&2; \
+		echo "Available:" >&2; ls changelog/db.changelog-*.xml >&2; \
+		exit 1; \
+	fi
+	@if [ -z "$(COUNT)" ] || [ "$(COUNT)" -lt 1 ] 2>/dev/null; then \
+		echo "Refusing to roll back $(COUNT) changeset(s)" >&2; exit 1; \
+	fi
+	@echo "Rolling back $(COUNT) changeset(s)$(if $(VERSION), — all of $(CHANGELOG_FILE),)"
 	docker compose run --rm liquibase \
 		--url=jdbc:postgresql://postgres:5432/nrf_impact \
 		--username=postgres \
 		--changelog-file=changelog/db.changelog.xml \
 		--defaultSchemaName=public \
-		rollbackCount 1
+		rollbackCount $(COUNT)
 
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
-LOAD_DATA_ENV = PYTHONPATH=. DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5434
+LOAD_DATA_ENV = PYTHONPATH=. DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=5432
 
 load-data: ## Load all reference data into PostGIS (destructive)
 	$(LOAD_DATA_ENV) uv run python scripts/load_data.py
