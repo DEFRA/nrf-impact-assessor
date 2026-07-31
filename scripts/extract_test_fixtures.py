@@ -286,9 +286,8 @@ def main(
             settings.edp_excluded_areas_layer,
         ),
         # coefficient_layer is deliberately absent: clipped to anything useful it
-        # is far too large to commit, so its fixture is the single blanket polygon
-        # built by scripts/make_coefficient_layer_fixture.py. Extracting it here
-        # would overwrite that.
+        # is far too large to commit, so its fixture is a single blanket polygon.
+        # Extracting it here would overwrite that.
     ]
 
     for layer_name, source_path, source_layer in layers:

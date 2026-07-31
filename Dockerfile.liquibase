@@ -3,4 +3,10 @@
 # "Cannot find database driver: org.postgresql.Driver".
 FROM liquibase/liquibase:5.0.3-alpine
 
+# The base image already defaults to liquibase:liquibase (uid 1001); stating it
+# here keeps the build non-root even if a future base image changes that, and
+# tells image scanners so explicitly. lpm writes to /liquibase/lib, which this
+# user owns, so the install needs no elevation.
+USER liquibase
+
 RUN lpm add postgresql --global
