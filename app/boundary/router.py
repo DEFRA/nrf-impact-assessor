@@ -29,7 +29,11 @@ from pyproj import CRS
 from pyproj.exceptions import CRSError
 from sqlalchemy import select
 
-from app.boundary.validation import SUPPORTED_CRS, validate_geometry
+from app.boundary.validation import (
+    SUPPORTED_CRS,
+    validate_coordinate_range,
+    validate_geometry,
+)
 from app.config import ApiServerConfig
 from app.data_sync.active_version import get_active_version
 from app.models.db import EdpBoundaryLayer, EdpExcludedAreas
@@ -583,6 +587,13 @@ async def check_boundary(
         # safe to assume EPSG:4326 when no CRS is present.
         if gdf.crs is None and ext in _WGS84_EXTENSIONS:
             gdf = gdf.set_crs(_WGS84)
+
+        # Must run before ensure_crs()/reprojection: out-of-domain
+        # coordinates pass geometry validation unnoticed and only surface
+        # later as a reprojection crash (see validate_coordinate_range).
+        coordinate_range_error = validate_coordinate_range(gdf)
+        if coordinate_range_error:
+            return _make_response(400, error=coordinate_range_error)
 
         try:
             gdf = ensure_crs(gdf)

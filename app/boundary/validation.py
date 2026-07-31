@@ -14,6 +14,52 @@ SUPPORTED_CRS = {
     4326: "WGS 84",
 }
 
+# Standard valid range for longitude/latitude.
+_WGS84_LON_RANGE = (-180.0, 180.0)
+_WGS84_LAT_RANGE = (-90.0, 90.0)
+
+# Generous eastings/northings bounds covering all of England (Isles of Scilly
+# to the Scottish border) with margin. BNG has no natural mathematical limit
+# the way lon/lat does, so a garbled or unprojected value (e.g. off by
+# several orders of magnitude) would otherwise pass geometry validation
+# unnoticed and only surface later, when reprojecting to WGS84 for the
+# response overflows to `inf` and crashes JSON serialisation.
+_BNG_EASTING_RANGE = (0.0, 700_000.0)
+_BNG_NORTHING_RANGE = (0.0, 700_000.0)
+
+
+def validate_coordinate_range(gdf: gpd.GeoDataFrame) -> str | None:
+    """Validate that coordinates fall within sensible bounds for their CRS.
+
+    Must run before ensure_crs()/any reprojection: reprojecting an
+    out-of-domain BNG easting/northing (or a nonsensical WGS84 lon/lat) can
+    overflow to `inf`, which json.dumps refuses to serialise.
+
+    Returns:
+        Failure code string if any coordinate is out of range, or None.
+    """
+    if gdf.crs is None:
+        return None
+
+    epsg = gdf.crs.to_epsg()
+    if epsg == 4326:
+        x_range, y_range = _WGS84_LON_RANGE, _WGS84_LAT_RANGE
+    elif epsg == 27700:
+        x_range, y_range = _BNG_EASTING_RANGE, _BNG_NORTHING_RANGE
+    else:
+        return None
+
+    min_x, min_y, max_x, max_y = gdf.total_bounds
+    if (
+        min_x < x_range[0]
+        or max_x > x_range[1]
+        or min_y < y_range[0]
+        or max_y > y_range[1]
+    ):
+        return "coordinates_out_of_range"
+
+    return None
+
 
 def _has_duplicate_consecutive_vertices(geom) -> bool:
     """Check whether a polygon has duplicate consecutive vertices."""
