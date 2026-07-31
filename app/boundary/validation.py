@@ -18,14 +18,14 @@ SUPPORTED_CRS = {
 _WGS84_LON_RANGE = (-180.0, 180.0)
 _WGS84_LAT_RANGE = (-90.0, 90.0)
 
-# Generous eastings/northings bounds covering all of England (Isles of Scilly
-# to the Scottish border) with margin. BNG has no natural mathematical limit
-# the way lon/lat does, so a garbled or unprojected value (e.g. off by
-# several orders of magnitude) would otherwise pass geometry validation
-# unnoticed and only surface later, when reprojecting to WGS84 for the
-# response overflows to `inf` and crashes JSON serialisation.
+# Standard British National Grid extent, covering all of Great Britain
+# (Isles of Scilly to Shetland). BNG has no natural mathematical limit the
+# way lon/lat does, so a garbled or unprojected value (e.g. off by several
+# orders of magnitude) would otherwise pass geometry validation unnoticed
+# and only surface later, when reprojecting to WGS84 for the response
+# overflows to `inf` and crashes JSON serialisation.
 _BNG_EASTING_RANGE = (0.0, 700_000.0)
-_BNG_NORTHING_RANGE = (0.0, 700_000.0)
+_BNG_NORTHING_RANGE = (0.0, 1_300_000.0)
 
 
 def validate_coordinate_range(gdf: gpd.GeoDataFrame) -> str | None:

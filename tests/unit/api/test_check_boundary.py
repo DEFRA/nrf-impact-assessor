@@ -636,6 +636,27 @@ class TestCheckBoundaryCoordinateRange:
 
         assert response.status_code == 200
 
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_bng_northing_beyond_england_but_within_great_britain_passes(self, client):
+        """The BNG range covers all of Great Britain (northing up to
+        1,300,000), not just England — a northing beyond England's own
+        extent (~656,000 at the Scottish border) must still be accepted."""
+        content = _make_geojson_bytes(
+            coordinates=[
+                [
+                    [300000, 900000],
+                    [300100, 900000],
+                    [300100, 900100],
+                    [300000, 900100],
+                    [300000, 900000],
+                ]
+            ],
+            crs="urn:ogc:def:crs:EPSG::27700",
+        )
+        response = _post_boundary(client, "scotland-bng.geojson", content)
+
+        assert response.status_code == 200
+
 
 _BNG_COORDINATES = [
     [
