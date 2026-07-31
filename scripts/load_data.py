@@ -111,7 +111,7 @@ SPATIAL_LAYER_CHOICES = (
     "gcn_risk_zones",
     "gcn_ponds",
     "edp_edges",
-    "edp_boundaries",
+    "edp_boundary_layer",
     "edp_excluded_areas",
 )
 ALL_LAYER_CHOICES = (*SPATIAL_LAYER_CHOICES, "coefficients")
@@ -238,7 +238,7 @@ class SpatialDataLoader:
                 "path": self.edp_edges_gdb,
                 "layer": self.edp_edges_layer,
             },
-            "edp_boundaries": {
+            "edp_boundary_layer": {
                 "model": EdpBoundaryLayer,
                 "path": self.edp_boundary_gpkg,
                 "layer": self.edp_boundary_layer,

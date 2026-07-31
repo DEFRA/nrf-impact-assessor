@@ -80,14 +80,7 @@ def _generate_iam_auth_token(settings: DatabaseSettings, region: str) -> str:
         credentials = session.get_credentials()
 
         if credentials:
-            frozen_credentials = credentials.get_frozen_credentials()
-            logger.info(
-                "AWS credentials found: access_key_id=%s..., method=%s",
-                frozen_credentials.access_key[:8]
-                if frozen_credentials.access_key
-                else "None",
-                credentials.method,
-            )
+            logger.info("AWS credentials found: method=%s", credentials.method)
         else:
             logger.warning("No AWS credentials found - token generation may fail")
 

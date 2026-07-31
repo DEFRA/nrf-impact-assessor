@@ -15,16 +15,31 @@ from pydantic import BaseModel, ConfigDict, Field
 _AREA_TYPE_DESC = "'RLB' or 'Buffer'"
 
 
-class DataProvenance(BaseModel):
-    """Reference-data lineage captured at assessment time."""
+class TableProvenance(BaseModel):
+    """Reference-data lineage for a single reference table."""
 
     model_config = ConfigDict(frozen=True)
 
     data_version: str | None = Field(
-        default=None, description="Active reference-data manifest version"
+        default=None, description="Version applied for this table's active data"
     )
     data_sync_run_id: UUID | None = Field(
-        default=None, description="DataSyncRun.id that applied the active version"
+        default=None, description="DataSyncRun.id that applied this table's version"
+    )
+
+
+class DataProvenance(BaseModel):
+    """Reference-data lineage captured at assessment time.
+
+    With per-table subset syncs there is no single global version; each
+    reference table is tracked at its own version, keyed by table name.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    tables: dict[str, TableProvenance] = Field(
+        default_factory=dict,
+        description="Per-table active-version lineage, keyed by table name",
     )
 
 

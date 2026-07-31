@@ -57,6 +57,22 @@ def is_running_in_ecs() -> bool:
     )
 
 
+def load_logging_config() -> dict | None:
+    """Return this environment's logging dictConfig, or None if its file is absent.
+
+    Kept separate from `configure_logging` so the API subprocess can hand the
+    same config to uvicorn (see `run_api_server`) rather than letting uvicorn
+    install its own.
+    """
+    config_file = "logging.json" if is_running_in_ecs() else "logging-dev.json"
+    config_path = Path(__file__).parent.parent / config_file
+
+    if not config_path.exists():
+        return None
+    with open(config_path) as f:
+        return json.load(f)
+
+
 def configure_logging() -> None:
     """Configure logging based on environment.
 
@@ -65,12 +81,10 @@ def configure_logging() -> None:
 
     Locally: Uses logging-dev.json with simple text format for readability.
     """
-    config_file = "logging.json" if is_running_in_ecs() else "logging-dev.json"
-    config_path = Path(__file__).parent.parent / config_file
+    log_config = load_logging_config()
 
-    if config_path.exists():
-        with open(config_path) as f:
-            logging.config.dictConfig(json.load(f))
+    if log_config is not None:
+        logging.config.dictConfig(log_config)
     else:
         # Fallback to basic config if file not found
         logging.basicConfig(
@@ -97,11 +111,32 @@ def run_api_server(host: str, port: int) -> None:
     Uses uvicorn as an ASGI server to serve the FastAPI app.
     The API server provides health check and job submission endpoints.
 
+    `log_config` is passed explicitly: without it uvicorn installs its own
+    default config, which re-points `uvicorn`/`uvicorn.error` at a plain-text
+    handler on stderr with `propagate: false`. An unhandled ASGI exception then
+    reaches CDP as ~200 separate stderr documents (one per traceback line, all
+    tagged error, none carrying trace.id) instead of one ECS document with the
+    traceback in `error.stack_trace`. None means "leave logging alone", which is
+    the right behaviour when configure_logging fell back to basicConfig.
+
+    `log_level` is deliberately NOT passed. uvicorn applies it *after*
+    `log_config`, calling setLevel on `uvicorn.error`/`.access`/`.asgi`, so it
+    silently overrides the file we just handed it. The previous "warning"
+    suppressed access logs entirely — which also made logging.json's
+    healthcheck_filter on `uvicorn.access` unreachable, since it exists to drop
+    /health from access logs that were never emitted. Omitting it lets the
+    file's root INFO stand and that filter do its job.
+
     Args:
         host: The host interface to bind (e.g. 127.0.0.1 or 0.0.0.0).
         port: The port to listen on for API requests.
     """
-    uvicorn.run("app.main:app", host=host, port=port, log_level="warning")
+    uvicorn.run(
+        "app.main:app",
+        host=host,
+        port=port,
+        log_config=load_logging_config(),
+    )
 
 
 def _with_visibility_heartbeat(fn, sqs_client, receipt_handle, visibility_timeout):

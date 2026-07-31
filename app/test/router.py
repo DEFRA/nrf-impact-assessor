@@ -504,7 +504,7 @@ def patch_backend(request: PatchBackendRequest) -> PatchBackendResponse:
         api_key=backend_config.api_key,
     )
     url = f"{client.base_url}/quotes/{request.reference}"
-    logger.info("Test PATCH payload → %s payload=%s", url, payload)
+    logger.debug("Test PATCH payload → %s payload=%s", url, payload)
 
     try:
         client.patch_quote(request.reference, payload)
