@@ -1,7 +1,8 @@
 """_find_intersecting_excluded_areas against real PostGIS.
 
-Squares are in EPSG:27700 and sit in the same geography as the committed
-fixture in scripts/make_edp_excluded_areas_fixture.py (600000-601000 etc.).
+Every zone is inserted by the test itself (`_insert_zone`), so nothing here
+reads tests/data/fixtures/edp_excluded_areas.gpkg — the squares are arbitrary
+EPSG:27700 coordinates (600000-601000 etc.) chosen only to be self-consistent.
 """
 
 import geopandas as gpd

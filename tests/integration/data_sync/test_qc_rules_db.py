@@ -20,7 +20,14 @@ from app.data_sync.qc_rules import (
 )
 from app.data_sync.restore import RestoreItem
 
-pytestmark = pytest.mark.integration
+# `clean_reference_tables` is not incidental tidiness: the generated QC SQL's
+# row_count rule reads `public.<table>` to compute the percentage floor, so rows
+# any other integration test committed there decide whether a one-row staging
+# fixture below passes or fails. Without it these tests are order-dependent.
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("clean_reference_tables"),
+]
 
 _VALID_POLYGON_WKT = "SRID=27700;POLYGON((0 0,0 10,10 10,10 0,0 0))"
 _INVALID_POLYGON_WKT = (

@@ -14,6 +14,23 @@ from app.repositories.repository import Repository
 
 CRS_BNG = "EPSG:27700"
 
+# Every reference table an integration test may leave committed rows in.
+# Truncated before each test that declares `clean_reference_tables`.
+REFERENCE_TABLES = (
+    "coefficient_layer",
+    "nn_catchments",
+    "wwtw_catchments",
+    "lpa_boundaries",
+    "subcatchments",
+    "gcn_risk_zones",
+    "gcn_ponds",
+    "edp_edges",
+    "edp_boundary_layer",
+    "edp_excluded_areas",
+    "data_active_version",
+    "lookup_table",
+)
+
 
 @pytest.fixture(scope="session")
 def test_engine() -> Engine:
@@ -103,28 +120,27 @@ def test_engine() -> Engine:
 
 
 @pytest.fixture
-def repository(test_engine: Engine) -> Repository:
-    """Create Repository instance with clean database for each test.
+def clean_reference_tables(test_engine: Engine) -> None:
+    """Truncate every reference table before the test runs.
 
-    Function-scoped fixture that truncates tables before each test to ensure
-    test isolation.
+    Cleaning at setup rather than teardown makes isolation independent of what
+    the previous test did — a test that fails part-way through, or one that
+    simply forgets to tidy up, cannot leak rows into the next one.
+
+    Tests that only read `pg_temp` staging tables still need this: the QC gate's
+    row_count rule compares the staged count against `public.<table>`, so more
+    than `qc._RATIO_MIN_PREV_COUNT` leftover live rows makes a one-row staging
+    fixture fail the percentage floor.
     """
-    # Truncate all tables before each test
     with test_engine.connect() as conn:
         conn.execution_options(isolation_level="AUTOCOMMIT")
-        conn.execute(text("TRUNCATE public.coefficient_layer CASCADE"))
-        conn.execute(text("TRUNCATE public.nn_catchments CASCADE"))
-        conn.execute(text("TRUNCATE public.wwtw_catchments CASCADE"))
-        conn.execute(text("TRUNCATE public.lpa_boundaries CASCADE"))
-        conn.execute(text("TRUNCATE public.subcatchments CASCADE"))
-        conn.execute(text("TRUNCATE public.gcn_risk_zones CASCADE"))
-        conn.execute(text("TRUNCATE public.gcn_ponds CASCADE"))
-        conn.execute(text("TRUNCATE public.edp_edges CASCADE"))
-        conn.execute(text("TRUNCATE public.edp_boundary_layer CASCADE"))
-        conn.execute(text("TRUNCATE public.edp_excluded_areas CASCADE"))
-        conn.execute(text("TRUNCATE public.data_active_version CASCADE"))
-        conn.execute(text("TRUNCATE public.lookup_table CASCADE"))
+        for table in REFERENCE_TABLES:
+            conn.execute(text(f"TRUNCATE public.{table} CASCADE"))  # noqa: S608
 
+
+@pytest.fixture
+def repository(test_engine: Engine, clean_reference_tables: None) -> Repository:
+    """Create Repository instance with clean database for each test."""
     return Repository(test_engine)
 
 

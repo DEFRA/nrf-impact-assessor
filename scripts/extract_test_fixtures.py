@@ -20,7 +20,7 @@ import pandas as pd
 import shapely
 import typer
 from settings import ScriptSettings
-from shapely.geometry import MultiLineString, MultiPolygon
+from shapely.geometry import MultiLineString, MultiPolygon, Polygon
 from shapely.ops import unary_union
 
 _PROJECT_ROOT = Path(__file__).parent.parent
@@ -34,8 +34,8 @@ _CRS_BNG = "EPSG:27700"
 #
 # The GCN layers (gcn_risk_zones, gcn_ponds, edp_edges) are deliberately absent:
 # they sit outside the EDP, so an EDP-derived extent would give them plenty of
-# features but none where their tests read. coefficient_layer is not extracted
-# at all — see the note on the layers list below.
+# features but none where their tests read. coefficient_layer is not clipped at
+# all — it is synthesised instead, see _write_coefficient_blanket.
 _EDP_CLIP_LAYERS = frozenset(
     {
         "wwtw_catchments",
@@ -46,6 +46,41 @@ _EDP_CLIP_LAYERS = frozenset(
         "edp_excluded_areas",
     }
 )
+
+# Slack for floating-point noise when checking the blanket covers its inputs.
+_COVERAGE_TOLERANCE_M2 = 1.0
+
+# Verbatim attributes of coefficient polygon RPA619486299391 — the most common
+# coefficient profile in the layer (RESIDENTIAL URBAN LAND / THE BROADS SAC /
+# YARE, 5,670 of 111,898 polygons). Taking one real row whole keeps the values
+# internally consistent, satisfies the coefficient_ranges and referential checks
+# in app/data_sync/qc_rules.yaml, and keeps the fixture schema identical to the
+# source layer.
+_COEFFICIENT_ATTRIBUTES = {
+    "cromeid": "RPA619486299391",
+    "AvgLuRes": "NA01",
+    "Urban_check": "TRUE",
+    "Urban_open_check": "FALSE",
+    "June_Ag": "Grazing",
+    "RPA_check": "FALSE",
+    "Land_use_cat": "RESIDENTIAL URBAN LAND",
+    "NN_Catchment": "THE BROADS SAC",
+    "SubCatchment": "YARE",
+    "NVZ_check": 0,
+    "major_soilscape": (
+        "Slowly permeable seasonally wet slightly acid but base-rich loamy "
+        "and clayey soils"
+    ),
+    "Soil_category": "DRAINEDARGR",
+    "Rainfall_value": 676.9270088710244,
+    "Rain_Band": "675.1 - 700",
+    "LU_CurrNcoeff": "12.79",
+    "LU_CurrPcoeff": "1.37",
+    "Match_Source": "Land Cover + Rainfall",
+    "ResiRainfallBand": "675.1 - 700",
+    "N_ResiCoeff": "12.79",
+    "P_ResiCoeff": "1.37",
+}
 
 app = typer.Typer(help="Extract test fixture data from reference layers")
 
@@ -192,6 +227,83 @@ def _export_lookups(sqlite_path: Path, output_dir: Path) -> None:
     dst.close()
 
 
+def _fill_holes(geom: MultiPolygon | Polygon) -> MultiPolygon:
+    """Drop interior rings so the blanket has no gaps.
+
+    The EDP boundary carries 12 interior holes; a parcel landing in one would
+    otherwise resolve to no coefficient at all. Filling them can leave parts
+    overlapping — some are islands sitting inside another part's hole — so the
+    filled parts are dissolved back together.
+    """
+    parts = geom.geoms if hasattr(geom, "geoms") else [geom]
+    filled = unary_union([Polygon(part.exterior) for part in parts])
+    return filled if isinstance(filled, MultiPolygon) else MultiPolygon([filled])
+
+
+def _write_coefficient_blanket(output_dir: Path) -> None:
+    """Synthesise coefficient_layer.gpkg as one polygon blanketing the EDP.
+
+    The real coefficient layer is ~5.4M polygons nationally; clipped to the EDP
+    it is still ~563k features (~281MB), too large to commit. This fixture
+    replaces it with a single polygon covering the EDP boundary and the excluded
+    areas, so any test parcel inside the EDP resolves to a coefficient.
+
+    Because coverage is uniform, assessments run against this fixture do not
+    exercise coefficient-to-parcel assignment: every parcel gets the same
+    coefficients wherever it sits.
+
+    Derived from the two EDP fixtures this script has just written rather than
+    from the source layer, so it is built in the same run and lands in the same
+    `output_dir` — a fresh --output-dir gets a complete, loadable fixture set.
+    """
+    boundary_path = output_dir / "edp_boundary_extents.gpkg"
+    excluded_path = output_dir / "edp_excluded_areas.gpkg"
+    missing = [p.name for p in (boundary_path, excluded_path) if not p.exists()]
+    if missing:
+        typer.secho(
+            f"Skipping coefficient_layer: needs {', '.join(missing)}, which "
+            "this run did not write. The fixture set is incomplete — tests "
+            "calling load_coefficient_layer() will fail against it.",
+            fg=typer.colors.YELLOW,
+        )
+        return
+
+    boundary = gpd.read_file(boundary_path)
+    excluded = gpd.read_file(excluded_path)
+
+    # The EDP boundary carries Z; load_data drops it at load time, so drop it
+    # here too and keep the fixture 2D like the geometry it becomes in PostGIS.
+    geometries = [
+        shapely.force_2d(geom)
+        for geom in list(boundary.geometry) + list(excluded.geometry)
+    ]
+    blanket = _fill_holes(unary_union(geometries))
+
+    # Measured as leftover area rather than with covers(): the repaired boundary
+    # makes the predicate report False even where nothing is actually left out.
+    uncovered = sum(geom.difference(blanket).area for geom in geometries)
+    if uncovered > _COVERAGE_TOLERANCE_M2:
+        typer.secho(
+            f"coefficient_layer blanket leaves {uncovered:.3f} m² of input "
+            "geometry uncovered",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    gdf = gpd.GeoDataFrame(
+        [{**_COEFFICIENT_ATTRIBUTES, "geometry": blanket}],
+        crs=_CRS_BNG,
+        geometry="geometry",
+    )
+    # A GeoPackage is SQLite: rewriting the layer in place leaves the old pages
+    # allocated, so the file would keep the size of the layer it replaced.
+    output_path = output_dir / "coefficient_layer.gpkg"
+    output_path.unlink(missing_ok=True)
+    gdf.to_file(output_path, layer="coefficient_layer", driver="GPKG")
+    print(f"  → coefficient_layer.gpkg  (1 feature, {blanket.area / 1e4:.0f} ha)")
+
+
 @app.command()
 def main(
     buffer: float = typer.Option(
@@ -285,9 +397,9 @@ def main(
             settings.edp_excluded_areas_gpkg_path,
             settings.edp_excluded_areas_layer,
         ),
-        # coefficient_layer is deliberately absent: clipped to anything useful it
-        # is far too large to commit, so its fixture is a single blanket polygon.
-        # Extracting it here would overwrite that.
+        # coefficient_layer is deliberately absent: clipped to anything useful
+        # it is far too large to commit. It is synthesised as a single blanket
+        # polygon after this loop instead — see _write_coefficient_blanket.
     ]
 
     for layer_name, source_path, source_layer in layers:
@@ -310,6 +422,9 @@ def main(
             gdf, layer_extent, output_dir / f"{layer_name}.gpkg", layer_name
         )
         print(f"  → {layer_name}.gpkg  ({count} features)")
+
+    print("\nSynthesising coefficient_layer...")
+    _write_coefficient_blanket(output_dir)
 
     print("\nExporting lookup tables...")
     _export_lookups(settings.lookup_database_path, output_dir / "lookups")
