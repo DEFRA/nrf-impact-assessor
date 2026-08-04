@@ -30,6 +30,10 @@
          would have stamped. Rows landing below version 1 stay NULL. -->
 
     <changeSet id="07-data-load-history-row-version-backfill" author="nrf">
+        <!-- This changeSet shipped once, then gained RAISE NOTICE diagnostics.
+             The UPDATE is byte-for-byte the same, so databases that already ran
+             the original keep its checksum rather than being re-run. -->
+        <validCheckSum>9:c0f9745e86e7bc6569608034b19716a5</validCheckSum>
         <sql splitStatements="false">
             DO $backfill$
             DECLARE

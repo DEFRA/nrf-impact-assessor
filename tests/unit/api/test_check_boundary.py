@@ -11,9 +11,10 @@ from unittest.mock import MagicMock, patch
 import geopandas as gpd
 import pytest
 from fastapi.testclient import TestClient
-from shapely.geometry import Polygon
+from shapely.geometry import LineString, Polygon
 
 from app.boundary.router import _find_intersecting_edps
+from app.boundary.validation import validate_geometry
 from app.main import app
 from tests.unit.api.conftest import _make_geojson_bytes
 
@@ -123,6 +124,21 @@ def _post_boundary_file(
         files={"geometry_file": (filename, file_buf, content_type)},
         data=data,
     )
+
+
+def _make_geojson_bytes_of_type(geom_type: str, coordinates: list) -> bytes:
+    """Create a minimal GeoJSON FeatureCollection with an arbitrary geometry type."""
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": geom_type, "coordinates": coordinates},
+                "properties": {"name": "test"},
+            }
+        ],
+    }
+    return json.dumps(geojson).encode()
 
 
 def _make_shapefile_zip_without_crs():
@@ -469,6 +485,32 @@ class TestCheckBoundaryGeometryValidation:
         returned_exterior = geometry["coordinates"][0]
         assert len(returned_exterior) == len(exterior)
         assert returned_exterior[0] == returned_exterior[-1]
+
+    def test_linestring_returns_400_unsupported_geometry_type(self, client):
+        """A boundary must enclose an area, so a LineString is rejected —
+        even one whose first and last points coincide. A closed ring is not
+        a Polygon, and the downstream area/hole checks are undefined for it."""
+        content = _make_geojson_bytes_of_type(
+            "LineString", [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]
+        )
+        response = _post_boundary(client, "line.geojson", content)
+
+        assert response.status_code == 400
+        body = response.json()
+        assert body["error"] == "unsupported_geometry_type"
+        # The boundary is still echoed back so the frontend can show the user
+        # what they uploaded, as it is for the other rejected geometries.
+        geometry = body["boundaryGeometryWgs84"]["features"][0]["geometry"]
+        assert geometry["type"] == "LineString"
+
+    def test_linestring_validate_geometry_returns_failure_code(self):
+        """The rejection lives in validate_geometry, not the endpoint."""
+        gdf = gpd.GeoDataFrame(
+            geometry=[LineString([(0, 0), (1, 0), (1, 1)])],
+            crs="EPSG:27700",
+        )
+
+        assert validate_geometry(gdf) == "unsupported_geometry_type"
 
     def test_missing_crs_returns_422(self, client):
         """A shapefile with no CRS defined should return a missing_crs code."""

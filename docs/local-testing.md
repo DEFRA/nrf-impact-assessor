@@ -19,7 +19,7 @@ Both `/test/*` endpoints are only mounted when `API_TESTING_ENABLED=true` and ar
 
 `compose.yml` provides everything except `nrf-backend` itself:
 
-- `postgres` — PostGIS with reference data (port `5434` on host)
+- `postgres` — PostGIS with reference data (host port `$DB_PORT`, default `5432`)
 - `localstack` — SQS + SNS, gateway remapped to host port `4568`
 - `mongodb` — tile metadata
 - `service` — the impact assessor; runs `python -m app.consumer`, which spawns the API server (`:8085`) as a subprocess and polls SQS in the main process
@@ -30,6 +30,10 @@ Start everything:
 make up                               # brings up all services
 docker compose logs -f service        # watch assessor
 ```
+
+If another local stack already holds `5432`, export `DB_PORT` with a free port before
+`make up` and pass the same value to the `make` targets — `compose.yml` and every
+target read it.
 
 ---
 

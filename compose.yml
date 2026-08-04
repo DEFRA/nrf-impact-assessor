@@ -38,7 +38,7 @@ services:
     # platform: linux/${DOCKER_DEFAULT_PLATFORM:-arm64}
     container_name: nrf-postgis
     ports:
-      - "5434:5432"
+      - "${DB_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: nrf_impact
       POSTGRES_HOST_AUTH_METHOD: trust  # No password for local dev
@@ -53,7 +53,9 @@ services:
       - cdp-tenant
 
   liquibase:
-    image: liquibase/liquibase:4.27-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.liquibase
     networks:
       - cdp-tenant
     depends_on:
@@ -61,7 +63,7 @@ services:
         condition: service_healthy
     volumes:
       - ./changelog:/liquibase/changelog
-    command: --url=jdbc:postgresql://postgres:5432/nrf_impact --username=postgres --changelog-file=changelog/db.changelog.xml --defaultSchemaName=public update
+    command: --search-path=/liquibase --url=jdbc:postgresql://postgres:5432/nrf_impact --username=postgres --changelog-file=changelog/db.changelog.xml --defaultSchemaName=public update
 
 
   service:
