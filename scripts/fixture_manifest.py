@@ -8,7 +8,7 @@ from pathlib import Path
 
 MANIFEST_NAME = "manifest.sha256"
 COMPOSE_LABELS_NAME = "compose.labels"
-COMPOSE_LABEL_KEY = "uk.gov.defra.nrf.fixture-manifest"
+COMPOSE_LABEL_KEY = "nrf.fixture-manifest"
 
 
 class FixtureManifestError(ValueError):

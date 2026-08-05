@@ -37,7 +37,7 @@ def test_validate_fixture_manifest_accepts_generated_manifest(tmp_path: Path):
 
     manifest_digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     assert (tmp_path / "compose.labels").read_text(encoding="utf-8") == (
-        f"uk.gov.defra.nrf.fixture-manifest={manifest_digest}\n"
+        f"nrf.fixture-manifest={manifest_digest}\n"
     )
 
 
@@ -61,7 +61,7 @@ def test_validate_fixture_manifest_rejects_stale_compose_label(tmp_path: Path):
     (tmp_path / "fixture.gpkg").write_bytes(b"fixture")
     write_fixture_manifest(tmp_path)
     (tmp_path / "compose.labels").write_text(
-        "uk.gov.defra.nrf.fixture-manifest=stale\n", encoding="utf-8"
+        "nrf.fixture-manifest=stale\n", encoding="utf-8"
     )
 
     with pytest.raises(FixtureManifestError, match="compose.labels"):
