@@ -39,6 +39,7 @@ import numpy as np
 import pandas as pd
 import shapely
 import typer
+from fixture_manifest import validate_fixture_manifest
 from settings import ScriptSettings
 from sqlalchemy import delete, func, select
 
@@ -153,6 +154,7 @@ class SpatialDataLoader:
         self.sample_limit = 100 if sample_mode else None
 
         if fixtures_dir is not None:
+            validate_fixture_manifest(fixtures_dir)
             # File paths derived from committed fixture directory
             self.coefficient_gpkg = fixtures_dir / "coefficient_layer.gpkg"
             self.coefficient_layer = "coefficient_layer"
