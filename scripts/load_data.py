@@ -290,6 +290,26 @@ class SpatialDataLoader:
             )
         return gdf
 
+    @staticmethod
+    def _check_geometry_validity(gdf: gpd.GeoDataFrame, layer_name: str) -> None:
+        """Reject a layer containing invalid (or missing) geometries.
+
+        An invalid polygon in a reference table makes PostGIS overlays raise
+        a GEOS TopologyException at query time (e.g. a /check-boundary 500),
+        so fail the load loudly rather than insert it.
+        """
+        # is_valid is also False for missing geometries.
+        invalid_mask = ~gdf.geometry.is_valid
+        invalid_count = int(invalid_mask.sum())
+        if invalid_count:
+            examples = gdf.index[invalid_mask][:5].tolist()
+            msg = (
+                f"{layer_name}: {invalid_count} invalid or missing "
+                f"geometries (e.g. rows {examples}); fix the source data — "
+                "loading them would break PostGIS overlay queries"
+            )
+            raise ValueError(msg)
+
     def _apply_sample_mode(self, gdf: gpd.GeoDataFrame) -> tuple[gpd.GeoDataFrame, int]:
         """Apply sample limit if enabled and return (gdf, total_features)."""
         if self.sample_mode and len(gdf) > self.sample_limit:
@@ -370,6 +390,7 @@ class SpatialDataLoader:
 
         gdf = gpd.read_file(self.coefficient_gpkg, layer=self.coefficient_layer)
         gdf = self._normalise_gdf(gdf)
+        self._check_geometry_validity(gdf, "coefficient_layer")
         gdf, total_features = self._apply_sample_mode(gdf)
 
         total_features = len(gdf)
@@ -488,6 +509,7 @@ class SpatialDataLoader:
             gpd.read_file(file_path, layer=layer) if layer else gpd.read_file(file_path)
         )
         gdf = self._normalise_gdf(gdf)
+        self._check_geometry_validity(gdf, layer_name)
         gdf, total_features = self._apply_sample_mode(gdf)
 
         clean_gdf = self._build_base_clean_gdf(gdf, name_column=name_column)

@@ -42,7 +42,7 @@ DUMP_SQL = (
 
 @pytest.fixture
 def s3_localstack(monkeypatch):
-    endpoint = os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4568")
+    endpoint = os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4566")
     region = AWSConfig().region
     monkeypatch.setenv("DATA_SYNC_S3_BUCKET", BUCKET)
     monkeypatch.setenv("DATA_SYNC_S3_PREFIX", "dumps")
