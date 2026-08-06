@@ -1,4 +1,4 @@
-.PHONY: help test test-integration test-regression update-regression-baseline check-migration-parity lint format build up down logs rebuild health monitoring-up monitoring-down monitoring-logs load-data load-data-sample load-data-layer load-data-lookup db-migrate db-rollback db-migrate-liquibase db-rollback-liquibase db-backup db-backup-schema db-backup-globals db-backup-tables db-restore db-restore-tables data-sync-trigger secrets-init _check-secrets sns-publish sqs-send sqs-peek sqs-depth sqs-purge
+.PHONY: help test test-integration test-regression update-regression-baseline check-migration-parity lint format build up down logs rebuild health monitoring-up monitoring-down monitoring-logs load-data load-data-sample load-data-layer load-data-lookup fixture-manifest db-migrate db-rollback db-migrate-liquibase db-rollback-liquibase db-backup db-backup-schema db-backup-globals db-backup-tables db-restore db-restore-tables data-sync-trigger secrets-init _check-secrets sns-publish sqs-send sqs-peek sqs-depth sqs-purge
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -239,6 +239,9 @@ extract-fixtures: ## Clip reference layers to test input extents → tests/data/
 
 load-fixtures: ## Load committed fixture data into nrf_impact DB (no .env.local required)
 	$(LOAD_DATA_ENV) uv run python scripts/load_data.py --fixtures-dir tests/data/fixtures/
+
+fixture-manifest: ## Regenerate checksums after updating committed fixture data
+	uv run python scripts/fixture_manifest.py
 
 # ---------------------------------------------------------------------------
 # Docker

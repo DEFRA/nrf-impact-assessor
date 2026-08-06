@@ -19,6 +19,7 @@ import geopandas as gpd
 import pandas as pd
 import shapely
 import typer
+from fixture_manifest import write_fixture_manifest
 from settings import ScriptSettings
 from shapely.geometry import MultiLineString, MultiPolygon, Polygon
 from shapely.ops import unary_union
@@ -428,6 +429,9 @@ def main(
 
     print("\nExporting lookup tables...")
     _export_lookups(settings.lookup_database_path, output_dir / "lookups")
+
+    manifest_path = write_fixture_manifest(output_dir)
+    print(f"\nFixture checksums written to {manifest_path}")
 
     typer.secho(f"\nFixtures written to {output_dir}", fg=typer.colors.GREEN, bold=True)
     print("\nNext steps:")
