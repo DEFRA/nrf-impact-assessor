@@ -21,24 +21,24 @@ def _gdf(geoms) -> gpd.GeoDataFrame:
 
 
 def test_invalid_geometry_fails_the_load():
+    gdf = _gdf([_square(), _bowtie()])
+
     with pytest.raises(ValueError, match="edp_excluded_areas"):
-        SpatialDataLoader._check_geometry_validity(
-            _gdf([_square(), _bowtie()]), "edp_excluded_areas"
-        )
+        SpatialDataLoader._check_geometry_validity(gdf, "edp_excluded_areas")
 
 
 def test_error_reports_how_many_rows_are_invalid():
+    gdf = _gdf([_bowtie(), _square(), _bowtie()])
+
     with pytest.raises(ValueError, match="2 invalid"):
-        SpatialDataLoader._check_geometry_validity(
-            _gdf([_bowtie(), _square(), _bowtie()]), "nn_catchments"
-        )
+        SpatialDataLoader._check_geometry_validity(gdf, "nn_catchments")
 
 
 def test_null_geometry_counts_as_invalid():
+    gdf = _gdf([_square(), None])
+
     with pytest.raises(ValueError, match="1 invalid"):
-        SpatialDataLoader._check_geometry_validity(
-            _gdf([_square(), None]), "edp_boundary_layer"
-        )
+        SpatialDataLoader._check_geometry_validity(gdf, "edp_boundary_layer")
 
 
 def test_valid_geometries_pass():
