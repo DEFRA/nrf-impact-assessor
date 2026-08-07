@@ -2,7 +2,7 @@ services:
   localstack:
     image: localstack/localstack:4.12.0
     ports:
-      - "4568:4566" # LocalStack Gateway (remapped to avoid conflict with backend and backend-test)
+      - "4566:4566" # LocalStack Gateway (default port)
       - "4710-4759:4510-4559" # external services port range
     env_file:
       - "compose/aws.env"

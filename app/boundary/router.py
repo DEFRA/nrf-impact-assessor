@@ -22,6 +22,7 @@ from geoalchemy2.functions import (
     ST_GeomFromText,
     ST_Intersection,
     ST_Intersects,
+    ST_Relate,
     ST_SetSRID,
     ST_Transform,
 )
@@ -402,9 +403,6 @@ def _find_intersecting_excluded_areas(
     how often the placeholder is needed, they do not make it unnecessary.
     """
     input_geom = ST_SetSRID(ST_GeomFromText(gdf.union_all().wkt), 27700)
-    intersection = ST_CollectionExtract(
-        ST_Intersection(EdpExcludedAreas.geometry, input_geom), 3
-    )
 
     with repository.session() as session:
         version = get_active_version(session, "edp_excluded_areas")
@@ -413,9 +411,10 @@ def _find_intersecting_excluded_areas(
             .where(
                 EdpExcludedAreas.version == version,
                 # ST_Intersects is the index-backed predicate that narrows
-                # candidates; the area test then drops touch-only contact.
+                # candidates; ST_Relate '2********' (interiors share area)
+                # then drops touch-only contact.
                 ST_Intersects(EdpExcludedAreas.geometry, input_geom),
-                ST_Area(intersection) > 0,
+                ST_Relate(EdpExcludedAreas.geometry, input_geom, "2********"),
             )
             .distinct()
         )

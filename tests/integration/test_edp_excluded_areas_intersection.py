@@ -82,6 +82,48 @@ def test_boundary_sharing_only_an_edge_is_not_excluded(repository: Repository):
     assert result == []
 
 
+def test_vertex_poking_just_inside_the_zone_is_excluded(repository: Repository):
+    """A single vertex dipping 1 mm into the zone must still exclude."""
+    from shapely.geometry import Polygon
+
+    _insert_zone(
+        repository,
+        "Yare Broads and Marshes SSSI",
+        box(600000, 300000, 601000, 301000).wkt,
+    )
+
+    # Sits on top of the zone's y=301000 edge; one vertex dips 1 mm below it.
+    poking = Polygon(
+        [
+            (600400, 301000),
+            (600500, 300999.999),
+            (600600, 301000),
+            (600600, 301500),
+            (600400, 301500),
+        ]
+    )
+
+    result = _find_intersecting_excluded_areas(_gdf(poking), repository)
+
+    assert result == ["Yare Broads and Marshes SSSI"]
+
+
+def test_boundary_running_along_the_edge_is_not_excluded(repository: Repository):
+    """Extended zero-width contact along the edge must not exclude."""
+    _insert_zone(
+        repository,
+        "Yare Broads and Marshes SSSI",
+        box(600000, 300000, 601000, 301000).wkt,
+    )
+
+    # Runs along 600 m of the zone's top edge without ever entering it.
+    result = _find_intersecting_excluded_areas(
+        _gdf(box(600200, 301000, 600800, 301500)), repository
+    )
+
+    assert result == []
+
+
 def test_disjoint_boundary_returns_empty(repository: Repository):
     _insert_zone(
         repository,

@@ -214,13 +214,13 @@ def data_sync_env(monkeypatch):
     monkeypatch.setenv("DATA_SYNC_S3_BUCKET", BUCKET)
     monkeypatch.setenv("DATA_SYNC_S3_PREFIX", "dumps")
     monkeypatch.setenv(
-        "AWS_ENDPOINT_URL", os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4568")
+        "AWS_ENDPOINT_URL", os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4566")
     )
 
 
 @pytest.fixture
 def s3_localstack():
-    endpoint = os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4568")
+    endpoint = os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4566")
     region = AWSConfig().region
     client = boto3.client("s3", region_name=region, endpoint_url=endpoint)
     with contextlib.suppress(client.exceptions.BucketAlreadyOwnedByYou):

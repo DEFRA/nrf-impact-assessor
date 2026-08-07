@@ -326,12 +326,12 @@ data-sync-trigger: ## Trigger a reference-data reload: make data-sync-trigger TO
 		--data @$(MANIFEST) | tee /dev/stderr
 
 # ---------------------------------------------------------------------------
-# LocalStack SNS / SQS (host gateway is remapped to 4568 in compose.yml)
+# LocalStack SNS / SQS (host gateway is default 4566 in compose.yml)
 # ---------------------------------------------------------------------------
-LOCALSTACK_URL ?= http://localhost:4568
+LOCALSTACK_URL ?= http://localhost:4566
 AWS_LOCAL       = AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=eu-west-2 aws --endpoint-url=$(LOCALSTACK_URL)
 SNS_TOPIC_ARN   = arn:aws:sns:eu-west-2:000000000000:nrf-quote-estimate-request
-SQS_QUEUE_URL   = http://localhost:4568/000000000000/nrf-impact-assessment-jobs
+SQS_QUEUE_URL   = http://localhost:4566/000000000000/nrf-impact-assessment-jobs
 SAMPLE_PAYLOAD  = scripts/sample_quote_payload.json
 
 sns-publish: ## Publish sample quote payload to SNS (wrapped → SQS). Override: PAYLOAD=path/to.json
