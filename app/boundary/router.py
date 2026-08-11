@@ -52,6 +52,21 @@ _WGS84 = "EPSG:4326"
 # which site caused it.
 _UNNAMED_EXCLUDED_AREA = "Unnamed exclusion area"
 
+# Smallest overlap with an exclusion zone that makes a boundary ineligible.
+#
+# An exact touch between a drawn boundary and a zone edge must not exclude, but
+# floating-point intersection rarely lands exactly: a shared edge can come back
+# with a sliver of area measured in square millimetres. This floor absorbs that
+# arithmetic noise so a boundary drawn deliberately along a zone edge stays
+# eligible.
+#
+# It is a noise floor, not a drawing-error allowance. At 0.001 m² (10 cm², a
+# 1 mm depth across 1 m of zone edge) any real contact clears it — including
+# the hand-drawn slips seen in reports, which run 0.005-0.008 m² at 8-12 cm
+# deep and are therefore excluded. Raising it towards 0.1 m² would forgive
+# those too; that is a policy decision, not a numerical one.
+_MIN_EXCLUSION_OVERLAP_SQM = 0.001
+
 
 router = APIRouter()
 
@@ -388,9 +403,11 @@ def _find_intersecting_excluded_areas(
     must be routed to HRA instead, so the caller treats a non-empty result as
     ineligibility.
 
-    Only positive-area overlap counts: the exclusion zones are already buffered
-    SSSI polygons, so a boundary that merely touches a zone edge lies outside
-    the zone and stays eligible.
+    The overlap must exceed `_MIN_EXCLUSION_OVERLAP_SQM` to count. The exclusion
+    zones are already buffered SSSI polygons, so a boundary that touches a zone
+    edge lies outside the zone; the floor only absorbs the square-millimetre
+    sliver an exact touch can leave behind. Any real entry, down to the
+    centimetre-deep slips seen when drawing by hand, exceeds it and excludes.
 
     Names are deduplicated (one SSSI may be several polygons) and sorted so the
     response is deterministic.
@@ -403,6 +420,9 @@ def _find_intersecting_excluded_areas(
     how often the placeholder is needed, they do not make it unnecessary.
     """
     input_geom = ST_SetSRID(ST_GeomFromText(gdf.union_all().wkt), 27700)
+    overlap_area = ST_Area(
+        ST_CollectionExtract(ST_Intersection(EdpExcludedAreas.geometry, input_geom), 3)
+    )
 
     with repository.session() as session:
         version = get_active_version(session, "edp_excluded_areas")
@@ -410,11 +430,15 @@ def _find_intersecting_excluded_areas(
             select(EdpExcludedAreas.name)
             .where(
                 EdpExcludedAreas.version == version,
-                # ST_Intersects is the index-backed predicate that narrows
-                # candidates; ST_Relate '2********' (interiors share area)
-                # then drops touch-only contact.
+                # Three filters, cheapest first. ST_Intersects is index-backed
+                # and narrows candidates; ST_Relate '2********' (interiors share
+                # area) drops touch-only contact without building a geometry;
+                # only what survives both pays for the intersection the area
+                # threshold needs — on the 31k-vertex Wensum polygon that is
+                # ~93ms against ~12ms, so it must stay off the common path.
                 ST_Intersects(EdpExcludedAreas.geometry, input_geom),
                 ST_Relate(EdpExcludedAreas.geometry, input_geom, "2********"),
+                overlap_area > _MIN_EXCLUSION_OVERLAP_SQM,
             )
             .distinct()
         )
@@ -559,8 +583,8 @@ async def check_boundary(
     A boundary that overlaps an exclusion zone (a buffered SSSI polygon) is not
     eligible for the EDP and must be routed to HRA. Such a response is a normal
     200 with `error: null`: a non-empty `intersectingExcludedAreas` is the
-    signal, and `intersectingEdps` is then always empty. Touching a zone edge
-    without overlapping it does not exclude.
+    signal, and `intersectingEdps` is then always empty. Sharing a zone edge
+    exactly does not exclude; anything past it does, down to a centimetre.
     """
     content = await geometry_file.read(_max_upload_bytes + 1)
     if len(content) > _max_upload_bytes:

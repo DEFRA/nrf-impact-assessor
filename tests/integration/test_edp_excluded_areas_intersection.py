@@ -67,7 +67,7 @@ def test_overlapping_boundary_returns_site_name(repository: Repository):
 
 
 def test_boundary_sharing_only_an_edge_is_not_excluded(repository: Repository):
-    """Touch-only contact must not exclude: the zones are already buffered."""
+    """Exact touch must not exclude: the zones are already buffered."""
     _insert_zone(
         repository,
         "Yare Broads and Marshes SSSI",
@@ -82,8 +82,17 @@ def test_boundary_sharing_only_an_edge_is_not_excluded(repository: Repository):
     assert result == []
 
 
-def test_vertex_poking_just_inside_the_zone_is_excluded(repository: Repository):
-    """A single vertex dipping 1 mm into the zone must still exclude."""
+def test_vertex_poking_a_few_centimetres_inside_is_excluded(
+    repository: Repository,
+):
+    """A centimetre-deep drawing slip still excludes.
+
+    Reproduces a reported boundary that reached 10.8 cm into the River Wensum
+    SSSI over 0.0067 m² — invisible at the zoom it was drawn at, and 0.001% of
+    the site. The floor is a noise floor, set well below this, so the slip is
+    treated as entering the zone. Raising the floor above ~0.007 m² is what
+    would change this, and that is a policy call.
+    """
     from shapely.geometry import Polygon
 
     _insert_zone(
@@ -92,11 +101,14 @@ def test_vertex_poking_just_inside_the_zone_is_excluded(repository: Repository):
         box(600000, 300000, 601000, 301000).wkt,
     )
 
-    # Sits on top of the zone's y=301000 edge; one vertex dips 1 mm below it.
+    # Sits on top of the zone's y=301000 edge, dipping 10.8 cm below it across
+    # 12.6 cm of that edge — the reported geometry, ~0.0068 m².
     poking = Polygon(
         [
             (600400, 301000),
-            (600500, 300999.999),
+            (600500, 301000),
+            (600500.063, 300999.892),
+            (600500.126, 301000),
             (600600, 301000),
             (600600, 301500),
             (600400, 301500),
@@ -104,6 +116,58 @@ def test_vertex_poking_just_inside_the_zone_is_excluded(repository: Repository):
     )
 
     result = _find_intersecting_excluded_areas(_gdf(poking), repository)
+
+    assert result == ["Yare Broads and Marshes SSSI"]
+
+
+def test_overlap_below_the_tolerance_is_not_excluded(repository: Repository):
+    """Just under the floor stays eligible."""
+    _insert_zone(
+        repository,
+        "Yare Broads and Marshes SSSI",
+        box(600000, 300000, 601000, 301000).wkt,
+    )
+
+    # 1 m x 0.9 mm = 0.0009 m^2 inside the zone's northern edge.
+    result = _find_intersecting_excluded_areas(
+        _gdf(box(600400, 300999.9991, 600401, 301500)), repository
+    )
+
+    assert result == []
+
+
+def test_overlap_above_the_tolerance_is_excluded(repository: Repository):
+    """Just over the floor excludes.
+
+    Paired with the test above it, this pins the threshold from both sides:
+    a shift of 0.2 mm in the same edge is the whole difference.
+    """
+    _insert_zone(
+        repository,
+        "Yare Broads and Marshes SSSI",
+        box(600000, 300000, 601000, 301000).wkt,
+    )
+
+    # 1 m x 1.1 mm = 0.0011 m^2 inside the zone's northern edge.
+    result = _find_intersecting_excluded_areas(
+        _gdf(box(600400, 300999.9989, 600401, 301500)), repository
+    )
+
+    assert result == ["Yare Broads and Marshes SSSI"]
+
+
+def test_a_deep_intrusion_over_a_short_edge_is_excluded(repository: Repository):
+    """The floor is on area, not depth: a narrow but deep cut still excludes."""
+    _insert_zone(
+        repository,
+        "Yare Broads and Marshes SSSI",
+        box(600000, 300000, 601000, 301000).wkt,
+    )
+
+    # 5 cm wide but 10 m deep — unmistakably inside the site.
+    result = _find_intersecting_excluded_areas(
+        _gdf(box(600400, 300990, 600400.05, 301500)), repository
+    )
 
     assert result == ["Yare Broads and Marshes SSSI"]
 
