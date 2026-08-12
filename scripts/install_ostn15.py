@@ -53,6 +53,11 @@ def install() -> Path:
 
     destination = Path(pyproj.datadir.get_data_dir()) / GRID_FILENAME
     destination.write_bytes(payload)
+    # Read-only: nothing should ever rewrite the grid in place. This is not a
+    # security boundary -- the build runs as the same unprivileged user that
+    # owns the virtualenv, so that user can still chmod or replace the file.
+    # It guards against accident, not against a determined process.
+    destination.chmod(0o444)
     return destination
 
 

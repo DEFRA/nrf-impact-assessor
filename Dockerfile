@@ -12,7 +12,11 @@ WORKDIR /home/nonroot
 COPY --chown=nonroot:nonroot --chmod=444 pyproject.toml .
 COPY --chown=nonroot:nonroot --chmod=444 uv.lock .
 COPY --chown=nonroot:nonroot --chmod=555 app/ ./app/
-COPY --chown=nonroot:nonroot --chmod=555 scripts/install_ostn15.py ./scripts/
+# root-owned deliberately: a nonroot-owned 555 file is still writable by
+# nonroot, which can chmod its own file. Root ownership makes the mode stick.
+# 555 not 444 -- --chmod also applies to the `scripts/` directory COPY creates,
+# and without the execute bit nonroot could not traverse into it.
+COPY --chown=root:root --chmod=555 scripts/install_ostn15.py ./scripts/
 COPY --chmod=444 .git-has[h] ./
 
 RUN --mount=type=cache,target=/home/nonroot/.cache/uv,uid=1000,gid=1000 \
@@ -53,7 +57,7 @@ COPY --from=development /home/nonroot/pyproject.toml .
 COPY --chown=nonroot:nonroot README.md .
 COPY --from=development /home/nonroot/uv.lock .
 COPY --from=development /home/nonroot/app ./app
-COPY --from=development /home/nonroot/scripts/install_ostn15.py ./scripts/
+COPY --from=development --chown=root:root --chmod=555 /home/nonroot/scripts/install_ostn15.py ./scripts/
 COPY --from=development --chmod=444 /home/nonroot/.git-has[h] ./
 
 COPY logging.json .
