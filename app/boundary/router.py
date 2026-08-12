@@ -17,14 +17,12 @@ from fastapi import APIRouter, Form, UploadFile
 from fastapi.responses import JSONResponse
 from geoalchemy2.functions import (
     ST_Area,
-    ST_AsGeoJSON,
     ST_CollectionExtract,
     ST_GeomFromText,
     ST_Intersection,
     ST_Intersects,
     ST_Relate,
     ST_SetSRID,
-    ST_Transform,
 )
 from pyproj import CRS
 from pyproj.exceptions import CRSError
@@ -455,9 +453,15 @@ def _find_intersecting_excluded_areas(
 
 
 def _find_intersecting_edps(
-    gdf: gpd.GeoDataFrame, repository: Repository, output_srid: int = 4326
+    gdf: gpd.GeoDataFrame, repository: Repository
 ) -> list[dict]:
-    """Query PostGIS for EDP boundary areas that intersect the uploaded geometry."""
+    """Query PostGIS for EDP boundary areas that intersect the uploaded geometry.
+
+    Only the name and overlap measures are returned. The EDP and intersection
+    polygons are deliberately left out: no consumer draws them, and serialising
+    them (an EDP boundary runs to tens of thousands of vertices) dominated both
+    the query cost and the size of the JSON carried through to the quote job.
+    """
     input_union = gdf.union_all()
     input_wkt = input_union.wkt
     input_area_sqm = input_union.area
@@ -474,12 +478,6 @@ def _find_intersecting_edps(
         stmt = select(
             EdpBoundaryLayer.name,
             EdpBoundaryLayer.attributes,
-            ST_AsGeoJSON(ST_Transform(EdpBoundaryLayer.geometry, output_srid)).label(
-                "edp_geojson"
-            ),
-            ST_AsGeoJSON(ST_Transform(intersection, output_srid)).label(
-                "intersection_geojson"
-            ),
             ST_Area(intersection).label("intersection_area_sqm"),
         ).where(
             EdpBoundaryLayer.version == version,
@@ -497,9 +495,6 @@ def _find_intersecting_edps(
         results.append(
             {
                 "label": edp_name,
-                "n2k_site_name": edp_name,
-                "edp_geometry": json.loads(row.edp_geojson),
-                "intersection_geometry": json.loads(row.intersection_geojson),
                 "overlap_area_ha": round(area_sqm / 10000.0, 4),
                 "overlap_area_sqm": round(area_sqm, 2),
                 "overlap_percentage": round((area_sqm / input_area_sqm) * 100, 2)
@@ -681,9 +676,7 @@ def _assess_boundary(gdf: gpd.GeoDataFrame) -> JSONResponse:
     # rather than compute a result the caller must not act on.
     intersecting_excluded_areas = _find_intersecting_excluded_areas(gdf, repository)
     intersecting_edps = (
-        []
-        if intersecting_excluded_areas
-        else _find_intersecting_edps(gdf, repository, output_srid=4326)
+        [] if intersecting_excluded_areas else _find_intersecting_edps(gdf, repository)
     )
 
     # Extract the first Polygon/MultiPolygon geometry, stripping user-supplied
