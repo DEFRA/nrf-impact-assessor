@@ -63,7 +63,15 @@ class ImpactAssessmentJob(BaseModel):
                             ]
                         ],
                     },
-                    "intersectingEdps": [{"label": "River Wensum SAC"}],
+                    "intersectingEdps": [
+                        {
+                            "label": (
+                                "Broads SAC, Broadland Ramsar and River Wensum "
+                                "SAC Environmental Delivery Plan addressing "
+                                "nutrient pollution (2026 to 2036)"
+                            )
+                        }
+                    ],
                 },
                 "developmentTypes": ["housing"],
                 "housingUnits": 25,
