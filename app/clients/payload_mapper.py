@@ -65,8 +65,8 @@ def build_quote_patch_payload(
     One entry per EDP, not per NN catchment. A single EDP spans several NN
     catchments (the Norfolk EDP covers both Broads and Wensum), and the
     per-catchment figures are development-level totals rather than a split, so
-    emitting one entry per catchment named the catchment after an EDP field and
-    repeated the same totals — which nrf-backend's `getLevyAmount` sums.
+    emitting one entry per catchment put a catchment name in an EDP field and
+    repeated the same totals — which nrf-backend's `getLevyAmount` then sums.
 
     Args:
         results: Assessment results (typically one per development).
