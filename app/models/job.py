@@ -64,13 +64,7 @@ class ImpactAssessmentJob(BaseModel):
                         ],
                     },
                     "intersectingEdps": [
-                        {
-                            "label": (
-                                "Broads SAC, Broadland Ramsar and River Wensum "
-                                "SAC Environmental Delivery Plan addressing "
-                                "nutrient pollution (2026 to 2036)"
-                            )
-                        }
+                        {"label": "Broads SAC (Yare & Bure) & Wensum SAC"}
                     ],
                 },
                 "developmentTypes": ["housing"],

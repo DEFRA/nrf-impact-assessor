@@ -365,7 +365,10 @@ class PatchBackendRequest(BaseModel):
         default=1,
         ge=1,
         le=10,
-        description="Number of stub EDP catchments to generate when payload is omitted",
+        description=(
+            "Number of stub NN catchments to generate when payload is omitted. "
+            "They all belong to one EDP, so the payload holds a single entry."
+        ),
     )
 
     model_config = {
@@ -401,8 +404,16 @@ _STUB_CATCHMENTS = [
 ]
 
 
+_STUB_EDP_LABEL = "Broads SAC (Yare & Bure) & Wensum SAC"
+
+
 def _build_stub_patch_payload(stub_edps: int = 1) -> dict:
-    """Build a stub PATCH payload via the real payload_mapper."""
+    """Build a stub PATCH payload via the real payload_mapper.
+
+    The catchments all sit within one stub EDP, so the mapper collapses them to
+    a single entry however many are requested. Use the `payload` override to
+    drive nrf-backend with several EDP rows.
+    """
     catchments = [
         CatchmentImpact(
             catchment_id=cid,
@@ -453,7 +464,7 @@ def _build_stub_patch_payload(stub_edps: int = 1) -> dict:
         total=NutrientImpact(nitrogen_total_kg_yr=0.0, phosphorus_total_kg_yr=0.0),
         catchment_impacts=catchments,
     )
-    return build_quote_patch_payload([stub_result])
+    return build_quote_patch_payload([stub_result], [_STUB_EDP_LABEL])
 
 
 @router.post(
