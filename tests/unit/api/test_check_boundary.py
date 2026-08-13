@@ -24,72 +24,22 @@ def client():
     return TestClient(app)
 
 
-def _mock_no_edp_intersections(gdf, repository, output_srid=4326):
+def _mock_no_edp_intersections(gdf, repository):
     """Mock that returns no intersecting EDPs."""
     return []
 
 
-def _mock_edp_intersections(gdf, repository, output_srid=4326):
+def _mock_edp_intersections(gdf, repository):
     """Mock that returns intersecting EDPs."""
     return [
         {
             "label": "Norfolk EDP 1",
-            "n2k_site_name": "Site A",
-            "edp_geometry": {
-                "type": "Polygon",
-                "coordinates": [
-                    [
-                        [-1.6, 51.9],
-                        [-1.3, 51.9],
-                        [-1.3, 52.2],
-                        [-1.6, 52.2],
-                        [-1.6, 51.9],
-                    ]
-                ],
-            },
-            "intersection_geometry": {
-                "type": "Polygon",
-                "coordinates": [
-                    [
-                        [-1.5, 52.0],
-                        [-1.4, 52.0],
-                        [-1.4, 52.1],
-                        [-1.5, 52.1],
-                        [-1.5, 52.0],
-                    ]
-                ],
-            },
             "overlap_area_ha": 0.5,
             "overlap_area_sqm": 5000.0,
             "overlap_percentage": 25.0,
         },
         {
             "label": "Norfolk EDP 2",
-            "n2k_site_name": "Site B",
-            "edp_geometry": {
-                "type": "Polygon",
-                "coordinates": [
-                    [
-                        [-1.4, 51.9],
-                        [-1.1, 51.9],
-                        [-1.1, 52.2],
-                        [-1.4, 52.2],
-                        [-1.4, 51.9],
-                    ]
-                ],
-            },
-            "intersection_geometry": {
-                "type": "Polygon",
-                "coordinates": [
-                    [
-                        [-1.3, 52.0],
-                        [-1.2, 52.0],
-                        [-1.2, 52.1],
-                        [-1.3, 52.1],
-                        [-1.3, 52.0],
-                    ]
-                ],
-            },
             "overlap_area_ha": 0.3,
             "overlap_area_sqm": 3000.0,
             "overlap_percentage": 15.0,
@@ -772,8 +722,18 @@ class TestCheckBoundaryEdpIntersection:
         assert body["intersectingEdps"][1]["label"] == "Norfolk EDP 2"
         assert body["intersectingEdps"][0]["overlap_area_ha"] == pytest.approx(0.5)
         assert body["intersectingEdps"][0]["overlap_percentage"] == pytest.approx(25.0)
-        assert body["intersectingEdps"][0]["intersection_geometry"]["type"] == "Polygon"
-        assert body["intersectingEdps"][0]["edp_geometry"]["type"] == "Polygon"
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    def test_intersections_omit_geometry(self, client):
+        """The EDP and intersection polygons are not part of the payload."""
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        assert set(response.json()["intersectingEdps"][0]) == {
+            "label",
+            "overlap_area_ha",
+            "overlap_area_sqm",
+            "overlap_percentage",
+        }
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
     def test_response_contains_all_expected_keys(self, client):
@@ -817,8 +777,6 @@ class TestFindIntersectingEdpsMapping:
     def _make_row(self, attributes):
         return SimpleNamespace(
             attributes=attributes,
-            edp_geojson=json.dumps({"type": "Polygon", "coordinates": []}),
-            intersection_geojson=json.dumps({"type": "Polygon", "coordinates": []}),
             intersection_area_sqm=5000.0,
         )
 
@@ -834,7 +792,7 @@ class TestFindIntersectingEdpsMapping:
         )
         return _find_intersecting_edps(gdf, repository)
 
-    def test_label_and_n2k_site_name_come_from_edp_name(self):
+    def test_label_comes_from_edp_name(self):
         rows = [
             self._make_row(
                 {
@@ -849,13 +807,11 @@ class TestFindIntersectingEdpsMapping:
 
         assert len(results) == 1
         assert results[0]["label"] == "Broads SAC (Yare & Bure) & Wensum SAC"
-        assert results[0]["n2k_site_name"] == "Broads SAC (Yare & Bure) & Wensum SAC"
 
     def test_missing_attributes_map_to_none(self):
         results = self._run([self._make_row(None)])
 
         assert results[0]["label"] is None
-        assert results[0]["n2k_site_name"] is None
 
 
 class TestCheckBoundaryExcludedAreas:

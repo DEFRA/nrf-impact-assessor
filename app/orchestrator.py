@@ -272,7 +272,15 @@ class JobOrchestrator:
                 )
                 return
 
-            payload = build_quote_patch_payload(results=results)
+            edp_labels = [
+                edp.label
+                for edp in (
+                    job.boundary_geojson.intersecting_edps
+                    if job.boundary_geojson
+                    else []
+                )
+            ]
+            payload = build_quote_patch_payload(results=results, edp_labels=edp_labels)
             if not payload.get("edps"):
                 logger.error(
                     f"Empty EDP payload for quote {job.reference}, "

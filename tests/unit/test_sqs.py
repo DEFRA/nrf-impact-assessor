@@ -31,9 +31,7 @@ _INNER_JOB = {
                 ]
             ],
         },
-        "intersectingEdps": [
-            {"label": "River Wensum SAC", "n2k_site_name": "River Wensum SAC"}
-        ],
+        "intersectingEdps": [{"label": "Broads SAC (Yare & Bure) & Wensum SAC"}],
     },
     "developmentTypes": ["housing"],
     "housingUnits": 25,

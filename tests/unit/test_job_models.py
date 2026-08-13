@@ -20,9 +20,7 @@ SAMPLE_GEOJSON = {
             ]
         ],
     },
-    "intersectingEdps": [
-        {"label": "River Wensum SAC", "n2k_site_name": "River Wensum SAC"}
-    ],
+    "intersectingEdps": [{"label": "Broads SAC (Yare & Bure) & Wensum SAC"}],
 }
 
 
@@ -45,7 +43,10 @@ def test_quote_payload_from_camel_case():
     assert job.boundary_geojson is not None
     assert job.boundary_geojson.boundary_geometry_original["type"] == "Polygon"
     assert len(job.boundary_geojson.intersecting_edps) == 1
-    assert job.boundary_geojson.intersecting_edps[0].label == "River Wensum SAC"
+    assert (
+        job.boundary_geojson.intersecting_edps[0].label
+        == "Broads SAC (Yare & Bure) & Wensum SAC"
+    )
     assert job.development_types == ["housing"]
     assert job.residential_building_count == 25
     assert job.waste_water_treatment_works_id == "123"
@@ -84,11 +85,29 @@ def test_boundary_geojson_from_alias():
 
     assert bg.boundary_geometry_original["type"] == "Polygon"
     assert len(bg.intersecting_edps) == 1
-    assert bg.intersecting_edps[0].n2k_site_name == "River Wensum SAC"
+    assert bg.intersecting_edps[0].label == "Broads SAC (Yare & Bure) & Wensum SAC"
 
 
 def test_intersecting_edp():
-    """IntersectingEdp model holds label and site name."""
-    edp = IntersectingEdp(label="Test EDP", n2k_site_name="Test Site")
+    """IntersectingEdp model holds the EDP label."""
+    edp = IntersectingEdp(label="Test EDP")
     assert edp.label == "Test EDP"
-    assert edp.n2k_site_name == "Test Site"
+
+
+def test_intersecting_edp_ignores_retired_fields():
+    """Messages queued before the payload was trimmed must still parse.
+
+    `/check-boundary` used to emit `n2k_site_name` and the EDP/intersection
+    polygons; anything still in flight on the queue carries them.
+    """
+    edp = IntersectingEdp.model_validate(
+        {
+            "label": "Test EDP",
+            "n2k_site_name": "Test Site",
+            "edp_geometry": {"type": "Polygon", "coordinates": []},
+            "intersection_geometry": {"type": "Polygon", "coordinates": []},
+        }
+    )
+
+    assert edp.label == "Test EDP"
+    assert not hasattr(edp, "n2k_site_name")

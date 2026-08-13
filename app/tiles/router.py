@@ -17,6 +17,7 @@ from fastapi.responses import Response
 from sqlalchemy import text
 
 from app.config import TileServerConfig
+from app.data_sync.active_version import get_active_version
 from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
 
@@ -35,6 +36,11 @@ TILE_LAYERS: dict[str, str] = {
     "edp_boundaries": "public.edp_boundary_layer",
     "edp_excluded_areas": "public.edp_excluded_areas",
 }
+
+# Names the data version a tile was built from, so a caching proxy in front of
+# this service can key its entries on it and never serve a tile from a version
+# the eligibility check is no longer reading.
+LAYER_VERSION_HEADER = "X-Layer-Version"
 
 # Allow-list mapping for logging: known slug → canonical constant label. Looking
 # the request value up here (rather than logging it) guarantees only a source
@@ -135,7 +141,15 @@ def _get_repository() -> Repository:
 
 
 def _resolve_layer_version(slug: str) -> int:
-    """Return the current max version for the given layer, cached with TTL."""
+    """Return the version reads use for this layer, cached with TTL.
+
+    Resolving through the same active-version pointer as /check-boundary is what
+    keeps the map and the eligibility check on one version. Taking MAX(version)
+    here instead would serve a staged-but-unpromoted load — or, after a
+    rollback, a version no read is using — and the two would then disagree
+    silently: a boundary could sit over an exclusion zone on screen while the
+    check, reading the other version, called it eligible.
+    """
     now = time.monotonic()
 
     with _version_cache_lock:
@@ -144,14 +158,12 @@ def _resolve_layer_version(slug: str) -> int:
             if now < expiry:
                 return version
 
-    table = TILE_LAYERS[slug]
+    # get_active_version qualifies the schema itself.
+    table = TILE_LAYERS[slug].removeprefix("public.")
     repo = _get_repository()
-    with repo.engine.connect() as conn:
-        row = conn.execute(
-            text(f"SELECT MAX(version) FROM {table}"),  # noqa: S608
-        ).fetchone()
+    with repo.session() as session:
+        version = get_active_version(session, table)
 
-    version = row[0] if row and row[0] is not None else 1
     with _version_cache_lock:
         _version_cache[slug] = (version, now + _tile_config.version_ttl_seconds)
     return version
@@ -182,8 +194,15 @@ def _query_tile(
     return bytes(row[0]) if row and row[0] else b""
 
 
-def _get_tile(layer_slug: str, z: int, x: int, y: int) -> tuple[bytes, TileTimings]:
-    """Return tile bytes (with phase timings) from cache, or query PostGIS on a miss."""
+def _get_tile(
+    layer_slug: str, z: int, x: int, y: int
+) -> tuple[bytes, int, TileTimings]:
+    """Return tile bytes, the version they were built from, and phase timings.
+
+    The version travels back with the bytes so callers label the tile with the
+    version it actually came from, rather than re-reading a cache entry that may
+    have expired in between.
+    """
     timings = TileTimings()
     t_start = time.perf_counter()
 
@@ -204,7 +223,7 @@ def _get_tile(layer_slug: str, z: int, x: int, y: int) -> tuple[bytes, TileTimin
                 timings.cache_ms = (time.perf_counter() - t_cache) * 1000
                 timings.size_bytes = len(tile_bytes)
                 timings.total_ms = (time.perf_counter() - t_start) * 1000
-                return tile_bytes, timings
+                return tile_bytes, version, timings
             del _tile_cache[cache_key]
     timings.cache_ms = (time.perf_counter() - t_cache) * 1000
 
@@ -218,7 +237,7 @@ def _get_tile(layer_slug: str, z: int, x: int, y: int) -> tuple[bytes, TileTimin
 
     timings.size_bytes = len(tile_bytes)
     timings.total_ms = (time.perf_counter() - t_start) * 1000
-    return tile_bytes, timings
+    return tile_bytes, version, timings
 
 
 def _log_tile_timing(layer: str, z: int, x: int, y: int, timings: TileTimings) -> None:
@@ -280,27 +299,31 @@ def get_tile(request: Request, layer: str, z: int, x: int, y: int) -> Response:
             ),
         )
 
-    tile_bytes, timings = _get_tile(layer, z, x, y)
+    tile_bytes, version, timings = _get_tile(layer, z, x, y)
     _log_tile_timing(layer, z, x, y, timings)
 
-    version = _version_cache.get(layer, (1, 0.0))[0]
     etag = hashlib.sha256(f"{layer}:{z}:{x}:{y}:{version}".encode()).hexdigest()
     quoted_etag = f'"{etag}"'
 
     server_timing = timings.server_timing_header()
 
+    # Caching proxies key their entries on this so a version change can't be
+    # served from an entry built before it. The ETag alone can't carry that —
+    # it's a hash, so a proxy can't tell which version it stands for.
+    headers = {
+        LAYER_VERSION_HEADER: str(version),
+        "ETag": quoted_etag,
+        "Server-Timing": server_timing,
+    }
+
     if request.headers.get("if-none-match") == quoted_etag:
-        return Response(
-            status_code=304,
-            headers={"ETag": quoted_etag, "Server-Timing": server_timing},
-        )
+        return Response(status_code=304, headers=headers)
 
     return Response(
         content=tile_bytes,
         media_type="application/vnd.mapbox-vector-tile",
         headers={
+            **headers,
             "Cache-Control": "public, max-age=3600",
-            "ETag": quoted_etag,
-            "Server-Timing": server_timing,
         },
     )
