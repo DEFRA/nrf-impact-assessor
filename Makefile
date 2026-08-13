@@ -1,5 +1,17 @@
 .PHONY: help test test-integration test-regression update-regression-baseline check-migration-parity lint format build up down logs rebuild health monitoring-up monitoring-down monitoring-logs load-data load-data-sample load-data-layer load-data-lookup fixture-manifest db-migrate db-rollback db-migrate-liquibase db-rollback-liquibase db-backup db-backup-schema db-backup-globals db-backup-tables db-restore db-restore-tables data-sync-trigger secrets-init _check-secrets sns-publish sqs-send sqs-peek sqs-depth sqs-purge
 
+# ---------------------------------------------------------------------------
+# Shell
+# ---------------------------------------------------------------------------
+# Several recipes below are POSIX shell scripts (if/for/case, pipelines,
+# $$(...) substitution) that cmd.exe cannot run, and make defaults to cmd.exe
+# on Windows. Point it at the sh that ships with Git for Windows / WSL instead;
+# make searches PATH for it, so running from Git Bash or WSL just works.
+ifeq ($(OS),Windows_NT)
+SHELL := sh.exe
+.SHELLFLAGS := -c
+endif
+
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
@@ -9,22 +21,32 @@ help: ## Show this help
 # Host port the compose postgres publishes on; override if it collides with a
 # postgres you already run: make test-integration DB_PORT=5433
 DB_PORT ?= 5432
+DB_HOST ?= localhost
+DB_IAM_AUTHENTICATION ?= false
 
-TEST_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=$(DB_PORT)
+# Exported rather than written as an inline `VAR=value cmd` prefix: that prefix
+# is POSIX shell syntax, so on Windows cmd.exe tries to run "DB_HOST=localhost"
+# as a program instead of setting a variable. `export` is make's own mechanism
+# and reaches the recipe whatever the shell. compose.yml sets its own DB_HOST /
+# DB_IAM_AUTHENTICATION for the service container, so exporting these here does
+# not leak into the containers; DB_PORT it deliberately reads from the env.
+export DB_PORT
+export DB_HOST
+export DB_IAM_AUTHENTICATION
+# The repo root is not an installed package, so scripts/ need it on sys.path.
+export PYTHONPATH := .
 
 test: ## Run unit tests only (integration and regression excluded by default)
-	$(TEST_ENV) uv run pytest tests/ app/ -v
+	uv run pytest tests/ app/ -v
 
 test-integration: ## Run integration tests against the local test_nrf_impact DB
-	$(TEST_ENV) uv run pytest tests/integration/ -v -m integration
-
-REGRESSION_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=$(DB_PORT)
+	uv run pytest tests/integration/ -v -m integration
 
 test-regression: ## Run regression tests against the local production-data DB
-	$(REGRESSION_ENV) uv run pytest tests/regression/ -v -m regression
+	uv run pytest tests/regression/ -v -m regression
 
 update-regression-baseline: ## Regenerate nutrient regression baselines from PostGIS (run then commit the CSVs)
-	$(REGRESSION_ENV) PYTHONPATH=. uv run python scripts/update_regression_baselines.py
+	uv run python scripts/update_regression_baselines.py
 
 check-migration-parity: ## Check every Alembic migration has a matching Liquibase changeset
 	python scripts/check_migration_parity.py
@@ -172,13 +194,11 @@ db-restore-tables: ## Restore per-table backup: apply schema grants then table d
 # ---------------------------------------------------------------------------
 # Database migrations
 # ---------------------------------------------------------------------------
-DB_MIGRATE_ENV = DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=$(DB_PORT)
-
 db-migrate: ## Apply all pending Alembic migrations
-	$(DB_MIGRATE_ENV) uv run alembic upgrade head
+	uv run alembic upgrade head
 
 db-rollback: ## Rollback the last Alembic migration
-	$(DB_MIGRATE_ENV) uv run alembic downgrade -1
+	uv run alembic downgrade -1
 
 db-migrate-liquibase: ## Apply Liquibase changesets against local postgres (requires compose postgres running)
 	docker compose run --rm liquibase
@@ -220,25 +240,23 @@ db-rollback-liquibase: ## Rollback Liquibase changesets: VERSION=1.7 reverses th
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
-LOAD_DATA_ENV = PYTHONPATH=. DB_IAM_AUTHENTICATION=false DB_HOST=localhost DB_PORT=$(DB_PORT)
-
 load-data: ## Load all reference data into PostGIS (destructive)
-	$(LOAD_DATA_ENV) uv run python scripts/load_data.py
+	uv run python scripts/load_data.py
 
 load-data-sample: ## Load sample data only (100 features per layer)
-	$(LOAD_DATA_ENV) uv run python scripts/load_data.py --sample
+	uv run python scripts/load_data.py --sample
 
 load-data-layer: ## Load a specific layer e.g. make load-data-layer LAYER=wwtw_catchments
-	$(LOAD_DATA_ENV) uv run python scripts/load_data.py --layer $(LAYER)
+	uv run python scripts/load_data.py --layer $(LAYER)
 
 load-data-lookup: ## Load a specific lookup e.g. make load-data-lookup LOOKUP=wwtw_lookup
-	$(LOAD_DATA_ENV) uv run python scripts/load_data.py --lookup $(LOOKUP)
+	uv run python scripts/load_data.py --lookup $(LOOKUP)
 
 extract-fixtures: ## Clip reference layers to test input extents → tests/data/fixtures/ (requires .env.local)
-	PYTHONPATH=. uv run python scripts/extract_test_fixtures.py
+	uv run python scripts/extract_test_fixtures.py
 
 load-fixtures: ## Load committed fixture data into nrf_impact DB (no .env.local required)
-	$(LOAD_DATA_ENV) uv run python scripts/load_data.py --fixtures-dir tests/data/fixtures/
+	uv run python scripts/load_data.py --fixtures-dir tests/data/fixtures/
 
 fixture-manifest: ## Regenerate checksums after updating committed fixture data
 	uv run python scripts/fixture_manifest.py
@@ -329,7 +347,13 @@ data-sync-trigger: ## Trigger a reference-data reload: make data-sync-trigger TO
 # LocalStack SNS / SQS (host gateway is default 4566 in compose.yml)
 # ---------------------------------------------------------------------------
 LOCALSTACK_URL ?= http://localhost:4566
-AWS_LOCAL       = AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=eu-west-2 aws --endpoint-url=$(LOCALSTACK_URL)
+AWS_LOCAL       = aws --endpoint-url=$(LOCALSTACK_URL)
+# Dummy credentials LocalStack accepts. Target-specific so they stay scoped to
+# these targets, and exported rather than inline-prefixed for cmd.exe's sake.
+LOCALSTACK_TARGETS = sns-publish sns-publish-real sqs-send sqs-peek sqs-depth sqs-purge
+$(LOCALSTACK_TARGETS): export AWS_ACCESS_KEY_ID := test
+$(LOCALSTACK_TARGETS): export AWS_SECRET_ACCESS_KEY := test
+$(LOCALSTACK_TARGETS): export AWS_DEFAULT_REGION := eu-west-2
 SNS_TOPIC_ARN   = arn:aws:sns:eu-west-2:000000000000:nrf-quote-estimate-request
 SQS_QUEUE_URL   = http://localhost:4566/000000000000/nrf-impact-assessment-jobs
 SAMPLE_PAYLOAD  = scripts/sample_quote_payload.json
