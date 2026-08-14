@@ -17,14 +17,12 @@ from fastapi import APIRouter, Form, UploadFile
 from fastapi.responses import JSONResponse
 from geoalchemy2.functions import (
     ST_Area,
-    ST_AsGeoJSON,
     ST_CollectionExtract,
     ST_GeomFromText,
     ST_Intersection,
     ST_Intersects,
     ST_Relate,
     ST_SetSRID,
-    ST_Transform,
 )
 from pyproj import CRS
 from pyproj.exceptions import CRSError
@@ -51,6 +49,21 @@ _WGS84 = "EPSG:4326"
 # is still ineligible, so the overlap must be reported even when we cannot say
 # which site caused it.
 _UNNAMED_EXCLUDED_AREA = "Unnamed exclusion area"
+
+# Smallest overlap with an exclusion zone that makes a boundary ineligible.
+#
+# An exact touch between a drawn boundary and a zone edge must not exclude, but
+# floating-point intersection rarely lands exactly: a shared edge can come back
+# with a sliver of area measured in square millimetres. This floor absorbs that
+# arithmetic noise so a boundary drawn deliberately along a zone edge stays
+# eligible.
+#
+# It is a noise floor, not a drawing-error allowance. At 0.001 m² (10 cm², a
+# 1 mm depth across 1 m of zone edge) any real contact clears it — including
+# the hand-drawn slips seen in reports, which run 0.005-0.008 m² at 8-12 cm
+# deep and are therefore excluded. Raising it towards 0.1 m² would forgive
+# those too; that is a policy decision, not a numerical one.
+_MIN_EXCLUSION_OVERLAP_SQM = 0.001
 
 
 router = APIRouter()
@@ -388,9 +401,11 @@ def _find_intersecting_excluded_areas(
     must be routed to HRA instead, so the caller treats a non-empty result as
     ineligibility.
 
-    Only positive-area overlap counts: the exclusion zones are already buffered
-    SSSI polygons, so a boundary that merely touches a zone edge lies outside
-    the zone and stays eligible.
+    The overlap must exceed `_MIN_EXCLUSION_OVERLAP_SQM` to count. The exclusion
+    zones are already buffered SSSI polygons, so a boundary that touches a zone
+    edge lies outside the zone; the floor only absorbs the square-millimetre
+    sliver an exact touch can leave behind. Any real entry, down to the
+    centimetre-deep slips seen when drawing by hand, exceeds it and excludes.
 
     Names are deduplicated (one SSSI may be several polygons) and sorted so the
     response is deterministic.
@@ -403,6 +418,9 @@ def _find_intersecting_excluded_areas(
     how often the placeholder is needed, they do not make it unnecessary.
     """
     input_geom = ST_SetSRID(ST_GeomFromText(gdf.union_all().wkt), 27700)
+    overlap_area = ST_Area(
+        ST_CollectionExtract(ST_Intersection(EdpExcludedAreas.geometry, input_geom), 3)
+    )
 
     with repository.session() as session:
         version = get_active_version(session, "edp_excluded_areas")
@@ -410,11 +428,15 @@ def _find_intersecting_excluded_areas(
             select(EdpExcludedAreas.name)
             .where(
                 EdpExcludedAreas.version == version,
-                # ST_Intersects is the index-backed predicate that narrows
-                # candidates; ST_Relate '2********' (interiors share area)
-                # then drops touch-only contact.
+                # Three filters, cheapest first. ST_Intersects is index-backed
+                # and narrows candidates; ST_Relate '2********' (interiors share
+                # area) drops touch-only contact without building a geometry;
+                # only what survives both pays for the intersection the area
+                # threshold needs — on the 31k-vertex Wensum polygon that is
+                # ~93ms against ~12ms, so it must stay off the common path.
                 ST_Intersects(EdpExcludedAreas.geometry, input_geom),
                 ST_Relate(EdpExcludedAreas.geometry, input_geom, "2********"),
+                overlap_area > _MIN_EXCLUSION_OVERLAP_SQM,
             )
             .distinct()
         )
@@ -431,9 +453,15 @@ def _find_intersecting_excluded_areas(
 
 
 def _find_intersecting_edps(
-    gdf: gpd.GeoDataFrame, repository: Repository, output_srid: int = 4326
+    gdf: gpd.GeoDataFrame, repository: Repository
 ) -> list[dict]:
-    """Query PostGIS for EDP boundary areas that intersect the uploaded geometry."""
+    """Query PostGIS for EDP boundary areas that intersect the uploaded geometry.
+
+    Only the name and overlap measures are returned. The EDP and intersection
+    polygons are deliberately left out: no consumer draws them, and serialising
+    them (an EDP boundary runs to tens of thousands of vertices) dominated both
+    the query cost and the size of the JSON carried through to the quote job.
+    """
     input_union = gdf.union_all()
     input_wkt = input_union.wkt
     input_area_sqm = input_union.area
@@ -450,12 +478,6 @@ def _find_intersecting_edps(
         stmt = select(
             EdpBoundaryLayer.name,
             EdpBoundaryLayer.attributes,
-            ST_AsGeoJSON(ST_Transform(EdpBoundaryLayer.geometry, output_srid)).label(
-                "edp_geojson"
-            ),
-            ST_AsGeoJSON(ST_Transform(intersection, output_srid)).label(
-                "intersection_geojson"
-            ),
             ST_Area(intersection).label("intersection_area_sqm"),
         ).where(
             EdpBoundaryLayer.version == version,
@@ -473,9 +495,6 @@ def _find_intersecting_edps(
         results.append(
             {
                 "label": edp_name,
-                "n2k_site_name": edp_name,
-                "edp_geometry": json.loads(row.edp_geojson),
-                "intersection_geometry": json.loads(row.intersection_geojson),
                 "overlap_area_ha": round(area_sqm / 10000.0, 4),
                 "overlap_area_sqm": round(area_sqm, 2),
                 "overlap_percentage": round((area_sqm / input_area_sqm) * 100, 2)
@@ -559,8 +578,8 @@ async def check_boundary(
     A boundary that overlaps an exclusion zone (a buffered SSSI polygon) is not
     eligible for the EDP and must be routed to HRA. Such a response is a normal
     200 with `error: null`: a non-empty `intersectingExcludedAreas` is the
-    signal, and `intersectingEdps` is then always empty. Touching a zone edge
-    without overlapping it does not exclude.
+    signal, and `intersectingEdps` is then always empty. Sharing a zone edge
+    exactly does not exclude; anything past it does, down to a centimetre.
     """
     content = await geometry_file.read(_max_upload_bytes + 1)
     if len(content) > _max_upload_bytes:
@@ -657,9 +676,7 @@ def _assess_boundary(gdf: gpd.GeoDataFrame) -> JSONResponse:
     # rather than compute a result the caller must not act on.
     intersecting_excluded_areas = _find_intersecting_excluded_areas(gdf, repository)
     intersecting_edps = (
-        []
-        if intersecting_excluded_areas
-        else _find_intersecting_edps(gdf, repository, output_srid=4326)
+        [] if intersecting_excluded_areas else _find_intersecting_edps(gdf, repository)
     )
 
     # Extract the first Polygon/MultiPolygon geometry, stripping user-supplied

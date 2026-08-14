@@ -61,7 +61,7 @@ format: ## Format code and auto-fix lint issues
 # ---------------------------------------------------------------------------
 # Database backup / restore
 # ---------------------------------------------------------------------------
-DB_CONTAINER  = nrf-postgis
+DB_CONTAINER  = nrf-solution-postgres-1
 DB_NAME       = nrf_impact
 DB_USER       = postgres
 BACKUP_DIR   ?= ./backups

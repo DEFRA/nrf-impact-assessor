@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 import app.tiles.router as tiles_router_module
 from app.main import app
-from app.tiles.router import TILE_LAYERS
+from app.tiles.router import LAYER_VERSION_HEADER, TILE_LAYERS
 
 MVT_CONTENT_TYPE = "application/vnd.mapbox-vector-tile"
 FAKE_TILE = b"\x1a\x00"  # minimal non-empty bytes
@@ -152,6 +152,44 @@ class TestTilesRouterValidation:
         assert response.headers.get("etag") is not None
 
 
+class TestTilesRouterLayerVersionHeader:
+    """The version header a caching proxy keys its entries on."""
+
+    @patch("app.tiles.router._query_tile", _mock_query_tile)
+    def test_header_reports_the_version_the_tile_was_built_from(self, client):
+        with patch("app.tiles.router._resolve_layer_version", return_value=7):
+            response = client.get("/tiles/edp_excluded_areas/10/507/338.mvt")
+
+        assert response.status_code == 200
+        assert response.headers.get(LAYER_VERSION_HEADER) == "7"
+
+    @patch("app.tiles.router._query_tile", _mock_query_tile)
+    def test_header_follows_a_version_change(self, client):
+        """A promoted or rolled-back version must change what proxies cache."""
+        with patch("app.tiles.router._resolve_layer_version", return_value=1):
+            first = client.get("/tiles/edp_excluded_areas/10/507/338.mvt")
+
+        tiles_router_module._version_cache.clear()
+        with patch("app.tiles.router._resolve_layer_version", return_value=2):
+            second = client.get("/tiles/edp_excluded_areas/10/507/338.mvt")
+
+        assert first.headers[LAYER_VERSION_HEADER] == "1"
+        assert second.headers[LAYER_VERSION_HEADER] == "2"
+
+    @patch("app.tiles.router._query_tile", _mock_query_tile)
+    def test_304_carries_the_version_header(self, client):
+        """A revalidating proxy still needs the version to key its entry."""
+        with patch("app.tiles.router._resolve_layer_version", return_value=7):
+            response = client.get("/tiles/edp_excluded_areas/10/507/338.mvt")
+            response_304 = client.get(
+                "/tiles/edp_excluded_areas/10/507/338.mvt",
+                headers={"If-None-Match": response.headers["etag"]},
+            )
+
+        assert response_304.status_code == 304
+        assert response_304.headers.get(LAYER_VERSION_HEADER) == "7"
+
+
 class TestTilesRouterConditionalRequests:
     @patch("app.tiles.router._resolve_layer_version", _mock_resolve_version)
     @patch("app.tiles.router._query_tile", _mock_query_tile)
@@ -251,13 +289,13 @@ class TestTilesRouterVersionResolution:
         Both EDP layers now go through the shared per-slug cache; there is no
         longer a separate single-table cache for the boundary layer.
         """
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchone.return_value = (1,)
-        mock_conn.__enter__ = lambda _: mock_conn
-        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_session = MagicMock()
+        mock_session.execute.return_value.fetchone.return_value = (1,)
+        mock_session.__enter__ = lambda _: mock_session
+        mock_session.__exit__ = MagicMock(return_value=False)
 
         mock_repo = MagicMock()
-        mock_repo.engine.connect.return_value = mock_conn
+        mock_repo.session.return_value = mock_session
 
         with (
             patch("app.tiles.router._get_repository", return_value=mock_repo),

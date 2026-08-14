@@ -4,10 +4,14 @@ from pydantic import BaseModel, Field
 
 
 class IntersectingEdp(BaseModel):
-    """An EDP that intersects with the development boundary."""
+    """An EDP that intersects with the development boundary.
+
+    `/check-boundary` no longer emits `n2k_site_name` (it duplicated `label`)
+    or the EDP/intersection polygons. Pydantic ignores unknown keys, so
+    messages queued before that change still parse.
+    """
 
     label: str
-    n2k_site_name: str
 
 
 class BoundaryGeojson(BaseModel):
@@ -60,10 +64,7 @@ class ImpactAssessmentJob(BaseModel):
                         ],
                     },
                     "intersectingEdps": [
-                        {
-                            "label": "River Wensum SAC",
-                            "n2k_site_name": "River Wensum SAC",
-                        }
+                        {"label": "Broads SAC (Yare & Bure) & Wensum SAC"}
                     ],
                 },
                 "developmentTypes": ["housing"],
