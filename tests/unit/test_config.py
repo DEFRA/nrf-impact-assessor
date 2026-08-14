@@ -1,6 +1,7 @@
 """Unit tests for configuration."""
 
 import pytest
+from pydantic import ValidationError
 
 
 def test_default_config_values():
@@ -63,3 +64,55 @@ def test_data_sync_config_from_env(monkeypatch):
     assert cfg.s3_bucket == "ref-data"
     assert cfg.s3_prefix == "dumps"
     assert cfg.auth_token == "secret"  # noqa: S105
+
+
+def test_keepalive_interval_defaults_under_pool_recycle():
+    """The keepalive must tick inside pool_recycle."""
+    from app.config import DatabaseSettings
+    from app.repositories.engine import IAM_TOKEN_POOL_RECYCLE_SECONDS
+
+    settings = DatabaseSettings()
+
+    assert settings.keepalive_interval_seconds == 240
+    assert settings.keepalive_interval_seconds < IAM_TOKEN_POOL_RECYCLE_SECONDS
+
+
+def test_keepalive_interval_overridable_from_environment(monkeypatch):
+    from app.config import DatabaseSettings
+
+    monkeypatch.setenv("DB_KEEPALIVE_INTERVAL_SECONDS", "0")
+
+    assert DatabaseSettings().keepalive_interval_seconds == 0
+
+
+@pytest.mark.parametrize("interval", ["600", "900"])
+def test_keepalive_interval_rejected_at_or_past_pool_recycle(monkeypatch, interval):
+    """Ticking slower than pool_recycle silently defeats the keepalive."""
+    from app.config import DatabaseSettings
+
+    monkeypatch.setenv("DB_KEEPALIVE_INTERVAL_SECONDS", interval)
+
+    with pytest.raises(ValidationError, match="pool recycle window"):
+        DatabaseSettings()
+
+
+@pytest.mark.parametrize("slots", ["0", "-1"])
+def test_keepalive_warm_slots_rejected_when_not_positive(monkeypatch, slots):
+    """A non-positive cap makes every tick a no-op while logging it started."""
+    from app.config import DatabaseSettings
+
+    monkeypatch.setenv("DB_KEEPALIVE_WARM_SLOTS", slots)
+
+    with pytest.raises(ValidationError):
+        DatabaseSettings()
+
+
+def test_keepalive_warm_slots_bounded_below_pool_size():
+    """The per-replica connection floor must stay under the pool size."""
+    from app.config import DatabaseSettings
+    from app.repositories.engine import DEFAULT_SHARED_POOL_SIZE
+
+    settings = DatabaseSettings()
+
+    assert settings.keepalive_warm_slots == 3
+    assert settings.keepalive_warm_slots < DEFAULT_SHARED_POOL_SIZE
