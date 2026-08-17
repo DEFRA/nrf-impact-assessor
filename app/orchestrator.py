@@ -4,6 +4,7 @@ import logging
 import time
 
 import geopandas as gpd
+import shapely
 from shapely.geometry import shape
 
 from app.assessments.adapters import nutrient_adapter
@@ -124,6 +125,11 @@ class JobOrchestrator:
         logger.info("Step 1: Loading geometry from SQS message")
         geojson_geom = job.boundary_geojson.boundary_geometry_original
         geom = shape(geojson_geom)
+        if shapely.has_z(geom):
+            # Reference layers are stored 2D (see scripts/load_data.py) and the
+            # PostGIS temp tables use a 2D typmod, so drop any Z ordinate here.
+            logger.info("Inline geometry has a Z dimension; flattening to 2D")
+            geom = shapely.force_2d(geom)
         gdf = gpd.GeoDataFrame(geometry=[geom], crs="EPSG:27700")
 
         logger.info("Step 2: Validating inline geometry")

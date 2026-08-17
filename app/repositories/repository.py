@@ -216,7 +216,7 @@ class Repository:
             session.execute(
                 text(
                     "INSERT INTO _tmp_input_geom (input_id, geom) "
-                    "VALUES (:input_id, ST_SetSRID(ST_GeomFromText(:geom_wkt), 27700))"
+                    "VALUES (:input_id, ST_Force2D(ST_SetSRID(ST_GeomFromText(:geom_wkt), 27700)))"
                 ),
                 insert_values,
             )
@@ -302,7 +302,7 @@ class Repository:
             session.execute(
                 text(
                     "INSERT INTO _tmp_input_geom (input_id, geom) "
-                    "VALUES (:input_id, ST_SetSRID(ST_GeomFromText(:geom_wkt), 27700))"
+                    "VALUES (:input_id, ST_Force2D(ST_SetSRID(ST_GeomFromText(:geom_wkt), 27700)))"
                 ),
                 insert_values,
             )
@@ -473,7 +473,7 @@ class Repository:
                     "INSERT INTO _tmp_rlb "
                     "(rlb_id, dwellings, name, dwelling_category, source, geom) "
                     "VALUES (:rlb_id, :dwellings, :name, :dwelling_category, :source, "
-                    "ST_SetSRID(ST_GeomFromText(:geom_wkt), 27700))"
+                    "ST_Force2D(ST_SetSRID(ST_GeomFromText(:geom_wkt), 27700)))"
                 ),
                 insert_values,
             )
