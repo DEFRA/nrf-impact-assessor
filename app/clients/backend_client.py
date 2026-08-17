@@ -25,15 +25,22 @@ class BackendClient:
         self._client = create_client(request_timeout=timeout)
         self._headers = {"x-api-key": api_key} if api_key else {}
 
-    def patch_quote(self, reference: str, payload: dict) -> None:
+    def patch_quote(self, reference: str, payload: dict) -> httpx.Response:
         """PATCH /quotes/{reference} with assessment results.
 
         Retries on 5xx and transport errors with exponential backoff.
         Does not retry on 400 (bad payload) or 404 (quote not found).
 
+        Success is deliberately not logged here: the caller has the job context
+        (quote reference, EDPs) and logs one line for the whole callback. The
+        response is returned so it can include the status code.
+
         Args:
             reference: Quote reference (e.g. "NRF-000001")
             payload: Request body matching the PATCH schema
+
+        Returns:
+            The successful response.
 
         Raises:
             httpx.HTTPStatusError: On non-retryable HTTP errors (400, 404)
@@ -41,7 +48,6 @@ class BackendClient:
             httpx.TransportError: On transport errors after max retries.
         """
         url = f"{self.base_url}/quotes/{reference}"
-        logger.info(f"Attempting PATCH {url} to backend")
         start = time.monotonic()
         last_exception = None
 
@@ -49,12 +55,7 @@ class BackendClient:
             try:
                 response = self._client.patch(url, json=payload, headers=self._headers)
                 response.raise_for_status()
-                elapsed = time.monotonic() - start
-                logger.info(
-                    f"PATCH {url} succeeded (HTTP {response.status_code}) "
-                    f"in {elapsed:.2f}s"
-                )
-                return
+                return response
             except httpx.HTTPStatusError as e:
                 status = e.response.status_code
                 if status in (400, 404):

@@ -286,12 +286,14 @@ class JobOrchestrator:
                 )
                 return
 
-            self.backend_client.patch_quote(job.reference, payload)
+            start = time.time()
+            response = self.backend_client.patch_quote(job.reference, payload)
             edps = payload["edps"]
             edp_names = ", ".join(e["edpName"] for e in edps)
             logger.info(
                 f"Sent assessment results to nrf-backend for quote {job.reference} "
-                f"({len(edps)} EDP(s): {edp_names})"
+                f"(HTTP {response.status_code} in {time.time() - start:.2f}s, "
+                f"{len(edps)} EDP(s): {edp_names})"
             )
         except Exception:
             logger.exception(

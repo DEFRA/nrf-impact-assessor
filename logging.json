@@ -28,6 +28,9 @@
     }
   },
   "loggers": {
+    "httpx": {
+      "level": "WARNING"
+    },
     "uvicorn.access": {
       "filters": ["healthcheck_filter"]
     }

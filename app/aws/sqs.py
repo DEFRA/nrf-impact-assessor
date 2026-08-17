@@ -154,7 +154,6 @@ class SQSClient:
             )
             return None
 
-        logger.info(f"Received job message: {job_message.reference}")
         return job_message
 
     def change_message_visibility(
@@ -189,7 +188,6 @@ class SQSClient:
             self.sqs.delete_message(
                 QueueUrl=self.queue_url, ReceiptHandle=receipt_handle
             )
-            logger.info("Message deleted from queue")
         except ClientError:
             logger.exception("Failed to delete message")
             raise

@@ -94,7 +94,8 @@ class NutrientAssessment:
             )
 
         logger.info(
-            "Nutrient assessment complete in %.3fs | %s",
+            "Job %s nutrient assessment complete in %.3fs | %s",
+            self.metadata["unique_ref"],
             run_timings.total_seconds,
             run_timings.summary(),
         )
