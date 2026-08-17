@@ -20,6 +20,7 @@ from app.calculators import (
     calculate_land_use_uplift,
     calculate_wastewater_load,
 )
+from app.common import timings
 from app.config import CONSTANTS, AssessmentConfig, DebugConfig, RequiredColumns
 from app.data_sync.active_version import get_active_version
 from app.debug import save_debug_gdf
@@ -69,47 +70,33 @@ class NutrientAssessment:
 
     def run(self) -> dict[str, pd.DataFrame]:
         """Run nutrient impact assessment."""
-        logger.info("Running nutrient impact assessment")
-        t_total = time.perf_counter()
+        with timings.collect() as run_timings:
+            with timings.phase("validate"):
+                rlb_gdf = self._validate_and_prepare_input(self.rlb_gdf)
 
-        t0 = time.perf_counter()
-        rlb_gdf = self._validate_and_prepare_input(self.rlb_gdf)
-        logger.info(
-            f"[timing] validate_and_prepare_input: {time.perf_counter() - t0:.3f}s"
-        )
+            with timings.phase("spatial"):
+                rlb_gdf = self._assign_spatial_features(rlb_gdf)
 
-        t0 = time.perf_counter()
-        rlb_gdf = self._assign_spatial_features(rlb_gdf)
-        logger.info(
-            f"[timing] assign_spatial_features: {time.perf_counter() - t0:.3f}s"
-        )
+            with timings.phase("land_use"):
+                rlb_gdf = self._calculate_land_use_impacts(rlb_gdf)
 
-        t0 = time.perf_counter()
-        rlb_gdf = self._calculate_land_use_impacts(rlb_gdf)
-        logger.info(
-            f"[timing] calculate_land_use_impacts: {time.perf_counter() - t0:.3f}s"
-        )
+            with timings.phase("wastewater"):
+                rlb_gdf = self._calculate_wastewater_impacts(rlb_gdf)
 
-        t0 = time.perf_counter()
-        rlb_gdf = self._calculate_wastewater_impacts(rlb_gdf)
-        logger.info(
-            f"[timing] calculate_wastewater_impacts: {time.perf_counter() - t0:.3f}s"
-        )
+            with timings.phase("totals"):
+                rlb_gdf = self._calculate_totals(rlb_gdf)
 
-        t0 = time.perf_counter()
-        rlb_gdf = self._calculate_totals(rlb_gdf)
-        logger.info(f"[timing] calculate_totals: {time.perf_counter() - t0:.3f}s")
+            with timings.phase("filter_out_of_scope"):
+                rlb_gdf = self._filter_out_of_scope(rlb_gdf)
 
-        t0 = time.perf_counter()
-        rlb_gdf = self._filter_out_of_scope(rlb_gdf)
-        logger.info(f"[timing] filter_out_of_scope: {time.perf_counter() - t0:.3f}s")
-
-        save_debug_gdf(
-            rlb_gdf, "99_final_rlb", self.metadata["unique_ref"], self._debug_config
-        )
+            save_debug_gdf(
+                rlb_gdf, "99_final_rlb", self.metadata["unique_ref"], self._debug_config
+            )
 
         logger.info(
-            f"Nutrient assessment complete in {time.perf_counter() - t_total:.3f}s"
+            "Nutrient assessment complete in %.3fs | %s",
+            run_timings.total_seconds,
+            run_timings.summary(),
         )
 
         return {"impact_summary": rlb_gdf.drop(columns=["geometry"])}
@@ -224,10 +211,6 @@ class NutrientAssessment:
 
     def _assign_spatial_features(self, rlb_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """Assign spatial features via batched majority overlap."""
-        logger.info("Assigning spatial features via batched PostGIS overlap")
-
-        t0 = time.perf_counter()
-
         wwtw_ver = self._resolve_latest_version(WwtwCatchments)
         lpa_ver = self._resolve_latest_version(LpaBoundaries)
         sub_ver = self._resolve_latest_version(Subcatchments)
@@ -293,19 +276,12 @@ class NutrientAssessment:
             self._debug_config,
         )
 
-        elapsed = time.perf_counter() - t0
-        logger.info(
-            f"[timing] spatial: batched PostGIS majority_overlap (3 layers): {elapsed:.3f}s"
-        )
-
         return rlb_gdf
 
     def _calculate_land_use_impacts(
         self, rlb_gdf: gpd.GeoDataFrame
     ) -> gpd.GeoDataFrame:
         """Calculate land use change nutrient impacts."""
-        logger.info("Calculating land use impacts")
-
         nn_version = self._resolve_latest_version(NnCatchments)
         coeff_version = self._resolve_latest_coeff_version()
 
@@ -314,9 +290,7 @@ class NutrientAssessment:
             coeff_version=coeff_version,
             nn_version=nn_version,
         )
-        logger.info(
-            f"PostGIS land use intersection returned {len(land_use_intersections):,} rows"
-        )
+        timings.note("intersection_rows", len(land_use_intersections))
 
         if len(land_use_intersections) == 0:
             logger.info("No 3-way intersections found - no land use impacts")
@@ -406,9 +380,6 @@ class NutrientAssessment:
         self, rlb_gdf: gpd.GeoDataFrame
     ) -> gpd.GeoDataFrame:
         """Calculate wastewater treatment nutrient impacts."""
-        logger.info("Calculating wastewater impacts")
-        t_ww = time.perf_counter()
-
         dupes = rlb_gdf.columns[rlb_gdf.columns.duplicated()].tolist()
         if dupes:
             logger.warning(f"Dropping duplicate columns from rlb_gdf: {dupes}")
@@ -419,9 +390,7 @@ class NutrientAssessment:
         rates_lookup = rates_lookup[
             ["nn_catchment", "occupancy_rate", "water_usage_L_per_person_day"]
         ].drop_duplicates(subset=["nn_catchment"])
-        logger.info(
-            f"[timing] wastewater: load rates_lookup: {time.perf_counter() - t0:.3f}s"
-        )
+        timings.record("rates_lookup", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
         rlb_gdf = rlb_gdf.merge(rates_lookup, how="left", on="nn_catchment")
@@ -445,10 +414,7 @@ class NutrientAssessment:
         rlb_gdf["daily_water_usage_L"] = rlb_gdf["dwellings"] * (
             rlb_gdf["occupancy_rate"] * rlb_gdf["water_usage_L_per_person_day"]
         )
-        elapsed = time.perf_counter() - t0
-        logger.info(
-            f"[timing] wastewater: merge rates + fill + daily_water: {elapsed:.3f}s"
-        )
+        timings.record("merge_rates", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
         wwtw_lookup = self._load_lookup("wwtw_lookup")
@@ -471,9 +437,7 @@ class NutrientAssessment:
         ).astype("Int64")
 
         wwtw_lookup = wwtw_lookup.drop_duplicates(subset=["wwtw_code"])
-        logger.info(
-            f"[timing] wastewater: load wwtw_lookup: {time.perf_counter() - t0:.3f}s"
-        )
+        timings.record("wwtw_lookup", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
         rlb_gdf = rlb_gdf.merge(
@@ -496,10 +460,7 @@ class NutrientAssessment:
             "phosphorus_conc_2030_onwards_mg_L",
         ]
         rlb_gdf[cols_to_float] = rlb_gdf[cols_to_float].astype(float)
-        elapsed = time.perf_counter() - t0
-        logger.info(
-            f"[timing] wastewater: merge wwtw + type conversion: {elapsed:.3f}s"
-        )
+        timings.record("merge_wwtw", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
         _, n_wwtw_temp, p_wwtw_temp = calculate_wastewater_load(
@@ -533,18 +494,12 @@ class NutrientAssessment:
         )
         rlb_gdf["n_wwtw_perm"] = n_wwtw_perm
         rlb_gdf["p_wwtw_perm"] = p_wwtw_perm
-        elapsed = time.perf_counter() - t0
-        logger.info(
-            f"[timing] wastewater: calculate loads (vectorized): {elapsed:.3f}s"
-        )
-        logger.info(f"[timing] wastewater: TOTAL: {time.perf_counter() - t_ww:.3f}s")
+        timings.record("loads", time.perf_counter() - t0)
 
         return rlb_gdf
 
     def _calculate_totals(self, rlb_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """Calculate total impacts with precautionary buffer."""
-        logger.info("Calculating totals with precautionary buffer")
-
         n_total, p_total = apply_buffer(
             nitrogen_land_use_post_suds=rlb_gdf["n_lu_post_suds"].fillna(0),
             phosphorus_land_use_post_suds=rlb_gdf["p_lu_post_suds"].fillna(0),
@@ -568,11 +523,6 @@ class NutrientAssessment:
         ]
         existing_round_cols = [col for col in round_cols if col in rlb_gdf.columns]
         rlb_gdf[existing_round_cols] = rlb_gdf[existing_round_cols].round(2)
-
-        logger.info(
-            "Totals per development:\n%s",
-            rlb_gdf[["rlb_id", *existing_round_cols]].to_string(index=False),
-        )
 
         return rlb_gdf
 

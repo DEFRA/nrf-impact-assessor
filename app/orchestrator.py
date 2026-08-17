@@ -65,7 +65,6 @@ class JobOrchestrator:
         job_id = job.reference or "unknown"
         if job.trace_id:
             ctx_trace_id.set(job.trace_id)
-            logger.info(f"Job {job_id} trace_id present, propagating to callbacks")
         else:
             logger.warning(
                 f"Job {job_id} has no trace_id; PATCH callback will omit the "
@@ -94,10 +93,8 @@ class JobOrchestrator:
 
             processing_time = time.time() - start_time
             logger.info(
-                f"Job {job_id} completed successfully in {processing_time:.2f}s"
-            )
-            logger.info(
-                f"Processed {len(dataframes)} result set(s): {list(dataframes.keys())}"
+                f"Job {job_id} completed successfully in {processing_time:.2f}s | "
+                f"result sets: {list(dataframes.keys())}"
             )
 
             # Callback to nrf-backend if quote reference and EDPs are present
@@ -122,7 +119,6 @@ class JobOrchestrator:
             Dictionary of assessment result DataFrames, or empty dict if validation fails.
         """
         job_id = job.reference or "unknown"
-        logger.info("Step 1: Loading geometry from SQS message")
         geojson_geom = job.boundary_geojson.boundary_geometry_original
         geom = shape(geojson_geom)
         if shapely.has_z(geom):
@@ -132,17 +128,14 @@ class JobOrchestrator:
             geom = shapely.force_2d(geom)
         gdf = gpd.GeoDataFrame(geometry=[geom], crs="EPSG:27700")
 
-        logger.info("Step 2: Validating inline geometry")
         validation_errors = self._validate_geodataframe(gdf)
         if validation_errors:
             error_msg = "; ".join(validation_errors)
             msg = f"Geometry validation failed for job {job_id}: {error_msg}"
             raise JobProcessingError(msg)
 
-        logger.info("Step 3: Injecting job data")
         gdf = self._inject_job_data(gdf, job)
 
-        logger.info(f"Step 4: Running {assessment_type.value} assessment via runner")
         metadata = {"unique_ref": job_id}
         return run_assessment(
             assessment_type=assessment_type.value,
@@ -234,7 +227,6 @@ class JobOrchestrator:
         gdf["source"] = "web_submission"
         gdf["dwellings"] = dwellings
         gdf["shape_area"] = gdf.geometry.area
-        logger.info(f"Injected job data: id: {job_id} {dwellings} {dwelling_type}")
 
         return gdf
 
