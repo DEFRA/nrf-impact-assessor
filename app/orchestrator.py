@@ -70,9 +70,7 @@ class JobOrchestrator:
                 f"Job {job_id} has no trace_id; PATCH callback will omit the "
                 "tracing header (message body missing 'traceId')"
             )
-        logger.info(
-            f"Processing job {job_id} for assessment type: {assessment_type.value}"
-        )
+        logger.info(f"Job {job_id} started (assessment type: {assessment_type.value})")
 
         try:
             if not job.boundary_geojson:
@@ -93,8 +91,7 @@ class JobOrchestrator:
 
             processing_time = time.time() - start_time
             logger.info(
-                f"Job {job_id} completed successfully in {processing_time:.2f}s | "
-                f"result sets: {list(dataframes.keys())}"
+                f"Job {job_id} completed successfully in {processing_time:.2f}s"
             )
 
             # Callback to nrf-backend if quote reference and EDPs are present
@@ -286,12 +283,14 @@ class JobOrchestrator:
                 )
                 return
 
-            self.backend_client.patch_quote(job.reference, payload)
+            start = time.time()
+            response = self.backend_client.patch_quote(job.reference, payload)
             edps = payload["edps"]
             edp_names = ", ".join(e["edpName"] for e in edps)
             logger.info(
                 f"Sent assessment results to nrf-backend for quote {job.reference} "
-                f"({len(edps)} EDP(s): {edp_names})"
+                f"(HTTP {response.status_code} in {time.time() - start:.2f}s, "
+                f"{len(edps)} EDP(s): {edp_names})"
             )
         except Exception:
             logger.exception(

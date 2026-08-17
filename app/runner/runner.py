@@ -42,8 +42,6 @@ def run_assessment(
         KeyError: If assessment type is not registered
         ValueError: If assessment.run() fails or returns invalid data
     """
-    logger.info(f"Running assessment: {assessment_type}")
-
     assessment_class = ASSESSMENT_TYPES.get(assessment_type)
     if assessment_class is None:
         msg = f"Assessment type {assessment_type} not supported"
