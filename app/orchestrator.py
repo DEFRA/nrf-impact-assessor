@@ -4,6 +4,7 @@ import logging
 import time
 
 import geopandas as gpd
+import shapely
 from shapely.geometry import shape
 
 from app.assessments.adapters import nutrient_adapter
@@ -64,15 +65,12 @@ class JobOrchestrator:
         job_id = job.reference or "unknown"
         if job.trace_id:
             ctx_trace_id.set(job.trace_id)
-            logger.info(f"Job {job_id} trace_id present, propagating to callbacks")
         else:
             logger.warning(
                 f"Job {job_id} has no trace_id; PATCH callback will omit the "
                 "tracing header (message body missing 'traceId')"
             )
-        logger.info(
-            f"Processing job {job_id} for assessment type: {assessment_type.value}"
-        )
+        logger.info(f"Job {job_id} started (assessment type: {assessment_type.value})")
 
         try:
             if not job.boundary_geojson:
@@ -94,9 +92,6 @@ class JobOrchestrator:
             processing_time = time.time() - start_time
             logger.info(
                 f"Job {job_id} completed successfully in {processing_time:.2f}s"
-            )
-            logger.info(
-                f"Processed {len(dataframes)} result set(s): {list(dataframes.keys())}"
             )
 
             # Callback to nrf-backend if quote reference and EDPs are present
@@ -121,22 +116,23 @@ class JobOrchestrator:
             Dictionary of assessment result DataFrames, or empty dict if validation fails.
         """
         job_id = job.reference or "unknown"
-        logger.info("Step 1: Loading geometry from SQS message")
         geojson_geom = job.boundary_geojson.boundary_geometry_original
         geom = shape(geojson_geom)
+        if shapely.has_z(geom):
+            # Reference layers are stored 2D (see scripts/load_data.py) and the
+            # PostGIS temp tables use a 2D typmod, so drop any Z ordinate here.
+            logger.info("Inline geometry has a Z dimension; flattening to 2D")
+            geom = shapely.force_2d(geom)
         gdf = gpd.GeoDataFrame(geometry=[geom], crs="EPSG:27700")
 
-        logger.info("Step 2: Validating inline geometry")
         validation_errors = self._validate_geodataframe(gdf)
         if validation_errors:
             error_msg = "; ".join(validation_errors)
             msg = f"Geometry validation failed for job {job_id}: {error_msg}"
             raise JobProcessingError(msg)
 
-        logger.info("Step 3: Injecting job data")
         gdf = self._inject_job_data(gdf, job)
 
-        logger.info(f"Step 4: Running {assessment_type.value} assessment via runner")
         metadata = {"unique_ref": job_id}
         return run_assessment(
             assessment_type=assessment_type.value,
@@ -228,7 +224,6 @@ class JobOrchestrator:
         gdf["source"] = "web_submission"
         gdf["dwellings"] = dwellings
         gdf["shape_area"] = gdf.geometry.area
-        logger.info(f"Injected job data: id: {job_id} {dwellings} {dwelling_type}")
 
         return gdf
 
@@ -288,12 +283,14 @@ class JobOrchestrator:
                 )
                 return
 
-            self.backend_client.patch_quote(job.reference, payload)
+            start = time.time()
+            response = self.backend_client.patch_quote(job.reference, payload)
             edps = payload["edps"]
             edp_names = ", ".join(e["edpName"] for e in edps)
             logger.info(
                 f"Sent assessment results to nrf-backend for quote {job.reference} "
-                f"({len(edps)} EDP(s): {edp_names})"
+                f"(HTTP {response.status_code} in {time.time() - start:.2f}s, "
+                f"{len(edps)} EDP(s): {edp_names})"
             )
         except Exception:
             logger.exception(

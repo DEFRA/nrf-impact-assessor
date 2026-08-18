@@ -280,6 +280,12 @@ class GcnConfig(BaseSettings):
 DEFAULT_GCN_CONFIG = GcnConfig()
 
 
+# Token lifetime is 15 minutes; recycle connections at 10 minutes
+# to ensure fresh tokens before expiry. Lives here so DatabaseSettings can
+# validate the keepalive interval against it without importing the engine.
+IAM_TOKEN_POOL_RECYCLE_SECONDS = 600
+
+
 class DatabaseSettings(BaseSettings):
     """Database connection configuration for PostGIS."""
 
@@ -313,6 +319,36 @@ class DatabaseSettings(BaseSettings):
         default="RDS_ROOT_CA",
         description="Name of TRUSTSTORE_* env var containing RDS CA cert",
     )
+    keepalive_warm_slots: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Maximum idle pool slots the keepalive refreshes per tick. Bounds "
+            "the per-replica connection floor when the service scales out."
+        ),
+    )
+    keepalive_interval_seconds: int = Field(
+        default=240,
+        ge=0,
+        description=(
+            "How often the background keepalive refreshes pooled connections; "
+            "must stay below the pool recycle window. Set to 0 to disable."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _keepalive_must_tick_inside_recycle_window(self) -> DatabaseSettings:
+        # Ticking at or past pool_recycle lets connections age out between
+        # refreshes, so the keepalive logs that it started while a request
+        # still pays the reconnect. Fail at startup instead. 0 disables it.
+        if self.keepalive_interval_seconds >= IAM_TOKEN_POOL_RECYCLE_SECONDS:
+            msg = (
+                f"DB_KEEPALIVE_INTERVAL_SECONDS must be below the "
+                f"{IAM_TOKEN_POOL_RECYCLE_SECONDS}s pool recycle window "
+                f"(got {self.keepalive_interval_seconds}), or 0 to disable"
+            )
+            raise ValueError(msg)
+        return self
 
     @property
     def connection_url(self) -> str:
@@ -448,12 +484,6 @@ class TileServerConfig(BaseSettings):
     version_ttl_seconds: int = Field(default=300)
     min_zoom: int = Field(default=0)
     max_zoom: int = Field(default=22)
-
-    # Timing-log sampling. Cache misses (DB hit) and slow requests are always
-    # logged; cheap cache hits are sampled at 1-in-N to limit log volume during
-    # heavy panning. Set log_sample_n=1 to log every request.
-    log_sample_n: int = Field(default=50)
-    log_slow_ms: float = Field(default=250.0)
 
 
 class DataSyncConfig(BaseSettings):

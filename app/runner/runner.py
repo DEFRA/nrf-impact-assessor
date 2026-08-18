@@ -42,14 +42,11 @@ def run_assessment(
         KeyError: If assessment type is not registered
         ValueError: If assessment.run() fails or returns invalid data
     """
-    logger.info(f"Running assessment: {assessment_type}")
-
     assessment_class = ASSESSMENT_TYPES.get(assessment_type)
     if assessment_class is None:
         msg = f"Assessment type {assessment_type} not supported"
         raise KeyError(msg)
 
-    logger.info(f"Instantiating {assessment_class.__name__}")
     try:
         assessment = assessment_class(rlb_gdf, metadata, repository)
     except Exception as e:
@@ -57,7 +54,6 @@ def run_assessment(
         msg = f"Failed to instantiate assessment '{assessment_type}'"
         raise ValueError(msg) from e
 
-    logger.info(f"Executing {assessment_type}.run()")
     try:
         dataframes = assessment.run()
     except Exception as e:
@@ -79,9 +75,5 @@ def run_assessment(
                 f"expected DataFrame or GeoDataFrame, got {type(value).__name__}"
             )
             raise ValueError(msg)
-
-    logger.info(
-        f"Assessment returned {len(dataframes)} result set(s): {list(dataframes.keys())}"
-    )
 
     return dataframes
