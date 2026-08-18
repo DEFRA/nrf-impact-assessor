@@ -14,8 +14,8 @@ data for each layer type before inserting new data. Always backup important data
 before running this script.
 
 Configuration:
-    File paths are configured via scripts/.env file.
-    Copy scripts/.env.example to scripts/.env and customize as needed.
+    File paths are configured via scripts/.env.local.
+    Copy scripts/.env.example to scripts/.env.local and customize as needed.
 
 Usage:
     # Load all data
@@ -53,10 +53,9 @@ import pandas as pd  # noqa: E402
 import shapely  # noqa: E402
 import typer  # noqa: E402
 from fixture_manifest import validate_fixture_manifest  # noqa: E402
-from settings import ScriptSettings  # noqa: E402
+from settings import ScriptSettings, db_settings  # noqa: E402
 from sqlalchemy import delete, func, select  # noqa: E402
 
-from app.config import DatabaseSettings  # noqa: E402
 from app.models.db import (  # noqa: E402
     CoefficientLayer,
     EdpBoundaryLayer,
@@ -735,8 +734,7 @@ def main(
     _validate_names(lookup, valid_lookups, "lookup")
 
     # Create repository
-    db_settings = DatabaseSettings()
-    engine = create_db_engine(db_settings)
+    engine = create_db_engine(db_settings())
     repository = Repository(engine)
 
     if fixtures_dir is not None:
