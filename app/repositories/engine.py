@@ -12,7 +12,7 @@ import time
 import boto3
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
-from sqlalchemy.pool import NullPool, QueuePool
+from sqlalchemy.pool import QueuePool
 
 from app.common import tls
 from app.config import AWSConfig, DatabaseSettings
@@ -105,13 +105,6 @@ def _generate_iam_auth_token(settings: DatabaseSettings, region: str) -> str:
         raise
 
 
-def _get_password(settings: DatabaseSettings, region: str) -> str:
-    """Get the appropriate password based on authentication mode."""
-    if settings.iam_authentication:
-        return _get_iam_auth_token(settings, region)
-    return settings.local_password
-
-
 def _build_ssl_connect_args(settings: DatabaseSettings, region: str) -> dict:
     """Build SSL connect_args for IAM authentication."""
     connect_args: dict = {"sslmode": settings.ssl_mode, **TCP_KEEPALIVE_CONNECT_ARGS}
@@ -173,18 +166,15 @@ def _create_pooled_engine(
             pool_recycle,
         )
     else:
-        password = settings.local_password
-        if password:
-            url_with_password = base_url.replace(
-                f"{settings.user}@", f"{settings.user}:{password}@"
-            )
-            logger.debug("Using static password for local authentication")
-        else:
-            url_with_password = base_url
-            logger.debug("No password configured (using trust authentication)")
+        # base_url already carries DB_LOCAL_PASSWORD (URL-encoded) when one is
+        # set; with none, it is a trust-auth URL with no password at all.
+        logger.debug(
+            "Using local authentication (%s)",
+            "static password" if settings.local_password else "trust, no password",
+        )
 
         engine = create_engine(
-            url_with_password,
+            base_url,
             poolclass=QueuePool,
             pool_size=pool_size,
             max_overflow=max_overflow,
@@ -208,7 +198,6 @@ def create_db_engine(
     pool_size: int = 5,
     max_overflow: int = 10,
     echo: bool = False,
-    use_null_pool: bool = False,
 ) -> Engine:
     """Create a SQLAlchemy engine from database settings.
 
@@ -239,22 +228,9 @@ def create_db_engine(
         else dict(TCP_KEEPALIVE_CONNECT_ARGS)
     )
 
-    if use_null_pool:
-        logger.info("Generating authentication token for connection check")
-        password = _get_password(settings, region)
-        url_with_password = base_url.replace(
-            f"{settings.user}@", f"{settings.user}:{password}@"
-        )
-        engine = create_engine(
-            url_with_password, poolclass=NullPool, echo=echo, connect_args=connect_args
-        )
-        logger.info("Created engine with NullPool for connection check")
-    else:
-        engine = _create_pooled_engine(
-            settings, region, base_url, connect_args, pool_size, max_overflow, echo
-        )
-
-    return engine
+    return _create_pooled_engine(
+        settings, region, base_url, connect_args, pool_size, max_overflow, echo
+    )
 
 
 def get_shared_engine(
