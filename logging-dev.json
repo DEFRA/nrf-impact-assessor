@@ -20,6 +20,9 @@
     }
   },
   "loggers": {
+    "httpx": {
+      "level": "WARNING"
+    },
     "uvicorn": {
       "level": "INFO",
       "propagate": true

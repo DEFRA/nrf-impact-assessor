@@ -193,11 +193,8 @@ class SqsConsumer:
                 if not results:
                     continue
 
-                logger.info(f"SQS poll received {len(results)} message(s)")
-
                 for job_message, receipt_handle in results:
                     job_id = job_message.reference or "unknown"
-                    logger.info(f"Processing job: {job_id}")
                     try:
                         _with_visibility_heartbeat(
                             lambda msg=job_message: self.orchestrator.process_job(
@@ -216,10 +213,11 @@ class SqsConsumer:
                             "for redelivery / DLQ"
                         )
                         continue
+                    # Terminal per-job status line: the message is gone from the
+                    # queue, so this is the last word on the job either way (the
+                    # failure branch above logs its own).
                     self.sqs_client.delete_message(receipt_handle)
-                    logger.info(
-                        f"Job {job_id} processing complete, message deleted from queue"
-                    )
+                    logger.info(f"Job {job_id} complete, message deleted from queue")
 
             except KeyboardInterrupt:
                 logger.info("Received keyboard interrupt, shutting down...")

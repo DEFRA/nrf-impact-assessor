@@ -18,6 +18,7 @@ from sqlalchemy import Select, func, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.common import timings
 from app.config import SpatialCacheConfig
 from app.models.db import Base, DataLoadHistory
 
@@ -216,7 +217,7 @@ class Repository:
             session.execute(
                 text(
                     "INSERT INTO _tmp_input_geom (input_id, geom) "
-                    "VALUES (:input_id, ST_SetSRID(ST_GeomFromText(:geom_wkt), 27700))"
+                    "VALUES (:input_id, ST_Force2D(ST_SetSRID(ST_GeomFromText(:geom_wkt), 27700)))"
                 ),
                 insert_values,
             )
@@ -302,7 +303,7 @@ class Repository:
             session.execute(
                 text(
                     "INSERT INTO _tmp_input_geom (input_id, geom) "
-                    "VALUES (:input_id, ST_SetSRID(ST_GeomFromText(:geom_wkt), 27700))"
+                    "VALUES (:input_id, ST_Force2D(ST_SetSRID(ST_GeomFromText(:geom_wkt), 27700)))"
                 ),
                 insert_values,
             )
@@ -310,11 +311,8 @@ class Repository:
             session.execute(text("CREATE INDEX ON _tmp_input_geom USING GIST (geom)"))
             session.execute(text("ANALYZE _tmp_input_geom"))
 
-            t_setup = time.perf_counter() - t0
-            logger.info(
-                f"[timing] batch_majority_overlap: temp table setup "
-                f"({len(input_gdf)} features): {t_setup:.3f}s"
-            )
+            timings.record("temp_table", time.perf_counter() - t0)
+            timings.note("features", len(input_gdf))
 
             t_query = time.perf_counter()
 
@@ -382,10 +380,7 @@ class Repository:
 
             rows = session.execute(combined_sql, all_params).fetchall()
 
-            logger.info(
-                f"[timing] batch_majority_overlap: combined query "
-                f"({len(assignments)} laterals): {time.perf_counter() - t_query:.3f}s"
-            )
+            timings.record("overlap_query", time.perf_counter() - t_query)
 
         output_fields = [a["output_field"] for a in assignments]
         all_columns = [input_id_col, *output_fields]
@@ -473,7 +468,7 @@ class Repository:
                     "INSERT INTO _tmp_rlb "
                     "(rlb_id, dwellings, name, dwelling_category, source, geom) "
                     "VALUES (:rlb_id, :dwellings, :name, :dwelling_category, :source, "
-                    "ST_SetSRID(ST_GeomFromText(:geom_wkt), 27700))"
+                    "ST_Force2D(ST_SetSRID(ST_GeomFromText(:geom_wkt), 27700)))"
                 ),
                 insert_values,
             )

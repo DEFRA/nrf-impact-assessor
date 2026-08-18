@@ -15,13 +15,9 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.pool import QueuePool
 
 from app.common import tls
-from app.config import AWSConfig, DatabaseSettings
+from app.config import IAM_TOKEN_POOL_RECYCLE_SECONDS, AWSConfig, DatabaseSettings
 
 logger = logging.getLogger(__name__)
-
-# Token lifetime is 15 minutes; recycle connections at 10 minutes
-# to ensure fresh tokens before expiry
-IAM_TOKEN_POOL_RECYCLE_SECONDS = 600
 
 # Reuse one token across connections for 9 minutes: a token cached for up to
 # 9 minutes still has 6 minutes of validity left when a connection uses it.
@@ -273,3 +269,66 @@ def warm_shared_engine() -> None:
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
     logger.info("Shared DB engine warmed (IAM token cached, connectivity verified)")
+
+
+def _discard_idle_connections(engine: Engine, count: int) -> None:
+    """Drop up to ``count`` idle pooled connections, leaving their slots empty.
+
+    ``invalidate`` closes the underlying DBAPI connection and does not open a
+    replacement — the caller must re-check-out to refill the slot.
+    """
+    connections = []
+    try:
+        for _ in range(count):
+            conn = engine.connect()
+            connections.append(conn)
+            conn.invalidate()
+    finally:
+        for conn in connections:
+            conn.close()
+
+
+def refresh_shared_engine_pool(max_slots: int | None = None) -> None:
+    """Replace up to ``max_slots`` idle pooled connections with fresh ones.
+
+    Pinging alone is not enough: ``pool_recycle`` measures age from creation, so
+    a pinged connection still aged out and reconnected on some later checkout —
+    a request's, if one arrived first. Replacing every tick keeps a warm slot no
+    older than one interval, so it never reaches the recycle threshold.
+
+    Connections are held simultaneously — checking one out and returning it in
+    a loop would reuse the same connection and leave the rest cold. Checked-out
+    slots are skipped: they are warm already, and going past ``pool_size`` would
+    only create overflow connections, which are discarded on return.
+
+    ``pool.size()`` is the configured maximum, not the live connection count, so
+    running uncapped pins ``pool_size`` connections per process — a floor that
+    multiplies by replica count when the service autoscales.
+
+    Every idle connection is discarded, not just the ``max_slots`` replaced:
+    cycling a burst-expanded pool a slice at a time takes 800s at the default
+    10/3/240s settings, past ``pool_recycle``. Dropping the excess holds the
+    pool at the warm-slot floor instead.
+    """
+    engine = get_shared_engine()
+    pool = engine.pool
+    idle_slots = pool.size() - pool.checkedout()
+    if max_slots is not None:
+        idle_slots = min(idle_slots, max_slots)
+    if idle_slots <= 0:
+        logger.debug("DB pool keepalive: pool fully checked out, nothing to do")
+        return
+
+    # Only existing connections need discarding; empty slots are filled below.
+    _discard_idle_connections(engine, pool.checkedin())
+
+    connections = []
+    try:
+        for _ in range(idle_slots):
+            conn = engine.connect()
+            connections.append(conn)
+            conn.execute(text("SELECT 1"))
+        logger.info("DB pool keepalive: refreshed %d connection(s)", len(connections))
+    finally:
+        for conn in connections:
+            conn.close()

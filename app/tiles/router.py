@@ -6,7 +6,6 @@ Serves spatial reference layers as Mapbox Vector Tiles (MVT) via:
 
 import dataclasses
 import hashlib
-import itertools
 import logging
 import threading
 import time
@@ -42,11 +41,6 @@ TILE_LAYERS: dict[str, str] = {
 # the eligibility check is no longer reading.
 LAYER_VERSION_HEADER = "X-Layer-Version"
 
-# Allow-list mapping for logging: known slug → canonical constant label. Looking
-# the request value up here (rather than logging it) guarantees only a source
-# literal is logged, never user-controlled data (CWE-117).
-_LOG_LAYER_LABELS: dict[str, str] = {slug: slug for slug in TILE_LAYERS}
-
 _tile_config = TileServerConfig()
 
 # ---------------------------------------------------------------------------
@@ -60,9 +54,6 @@ _version_cache_lock = threading.Lock()
 # In-process LRU tile cache: (layer_slug, z, x, y, version) → (bytes, expiry)
 _tile_cache: OrderedDict[tuple, tuple[bytes, float]] = OrderedDict()
 _tile_cache_lock = threading.Lock()
-
-# Monotonic request counter for 1-in-N sampling of cheap cache-hit timing logs.
-_log_counter = itertools.count()
 
 # ---------------------------------------------------------------------------
 # Prepared SQL (reusable text() clauses)
@@ -240,33 +231,6 @@ def _get_tile(
     return tile_bytes, version, timings
 
 
-def _log_tile_timing(layer: str, z: int, x: int, y: int, timings: TileTimings) -> None:
-    """Emit phase timings, always for DB misses/slow requests and 1-in-N hits."""
-    is_slow = timings.total_ms >= _tile_config.log_slow_ms
-    is_sampled = next(_log_counter) % _tile_config.log_sample_n == 0
-    if timings.cache_hit and not is_slow and not is_sampled:
-        return
-
-    # Resolve to a canonical constant label via the allow-list map; the request
-    # value is used only as a lookup key, never logged (CWE-117). z/x/y are ints.
-    safe_layer = _LOG_LAYER_LABELS.get(layer, "unknown")
-    logger.info(
-        "tile %s/%d/%d/%d %s total=%.1fms version=%.1fms cache=%.3fms "
-        "connect=%.1fms query=%.1fms size=%dB",
-        safe_layer,
-        int(z),
-        int(x),
-        int(y),
-        "HIT" if timings.cache_hit else "MISS",
-        timings.total_ms,
-        timings.version_ms,
-        timings.cache_ms,
-        timings.connect_ms,
-        timings.query_ms,
-        timings.size_bytes,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Route
 # ---------------------------------------------------------------------------
@@ -300,7 +264,6 @@ def get_tile(request: Request, layer: str, z: int, x: int, y: int) -> Response:
         )
 
     tile_bytes, version, timings = _get_tile(layer, z, x, y)
-    _log_tile_timing(layer, z, x, y, timings)
 
     etag = hashlib.sha256(f"{layer}:{z}:{x}:{y}:{version}".encode()).hexdigest()
     quoted_etag = f'"{etag}"'

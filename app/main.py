@@ -14,10 +14,11 @@ from app.common.auth import require_api_key
 from app.common.mongo import get_mongo_client
 from app.common.tls import cleanup_cert_files, init_custom_certificates
 from app.common.tracing import TraceIdMiddleware
-from app.config import ApiServerConfig, DataSyncConfig, config
+from app.config import ApiServerConfig, DatabaseSettings, DataSyncConfig, config
 from app.data_sync.service import log_startup_table_status
 from app.health.router import router as health_router
 from app.repositories.engine import warm_shared_engine
+from app.repositories.keepalive import start_keepalive, stop_keepalive
 from app.tiles.router import router as tiles_router
 from app.version.router import router as version_router
 from app.wwtw.router import router as wwtw_router
@@ -35,14 +36,27 @@ async def lifespan(_: FastAPI):
         warm_shared_engine()
     except Exception:
         logger.exception("Shared DB engine warmup failed; continuing startup")
+    # Reconnect aged-out pooled connections off the request path.
+    db_settings = DatabaseSettings()
+    keepalive = start_keepalive(
+        db_settings.keepalive_interval_seconds, db_settings.keepalive_warm_slots
+    )
     # Surface an empty reference table at boot, independent of any data-sync run.
     log_startup_table_status()
     yield
     # Shutdown
+    keepalive_stopped = await stop_keepalive(keepalive)
     if client:
         await client.close()
         logger.info("MongoDB client closed")
-    cleanup_cert_files()
+    if keepalive_stopped:
+        cleanup_cert_files()
+    else:
+        # An abandoned refresh thread may still need the certs; teardown
+        # reclaims the temp files either way.
+        logger.warning(
+            "Skipping cert cleanup: a DB keepalive refresh may still be running"
+        )
 
 
 app = FastAPI(title="NRF Impact Assessor API", lifespan=lifespan)
