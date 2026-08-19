@@ -55,7 +55,6 @@ def _get_iam_auth_token(settings: DatabaseSettings, region: str) -> str:
     with _token_cache_lock:
         entry = _token_cache.get(key)
         if entry is not None and now - entry[0] < IAM_TOKEN_CACHE_SECONDS:
-            logger.debug("Reusing cached IAM auth token (age=%.0fs)", now - entry[0])
             return entry[1]
         token = _generate_iam_auth_token(settings, region)
         _token_cache[key] = (now, token)
@@ -64,20 +63,9 @@ def _get_iam_auth_token(settings: DatabaseSettings, region: str) -> str:
 
 def _generate_iam_auth_token(settings: DatabaseSettings, region: str) -> str:
     """Generate a short-lived IAM authentication token for RDS."""
-    logger.info(
-        "Requesting IAM auth token: host=%s, port=%d, user=%s, region=%s",
-        settings.host,
-        settings.port,
-        settings.user,
-        region,
-    )
     try:
         session = boto3.Session(region_name=region)
-        credentials = session.get_credentials()
-
-        if credentials:
-            logger.info("AWS credentials found: method=%s", credentials.method)
-        else:
+        if session.get_credentials() is None:
             logger.warning("No AWS credentials found - token generation may fail")
 
         client = session.client("rds")
@@ -86,9 +74,6 @@ def _generate_iam_auth_token(settings: DatabaseSettings, region: str) -> str:
             Port=settings.port,
             DBUsername=settings.user,
             Region=region,
-        )
-        logger.info(
-            "Successfully generated IAM auth token (length=%d chars)", len(token)
         )
         return token
     except Exception:
@@ -107,18 +92,11 @@ def _build_ssl_connect_args(settings: DatabaseSettings, region: str) -> dict:
     cert_path = tls.get_cert_path(settings.rds_truststore)
     if cert_path:
         connect_args["sslrootcert"] = cert_path
-        logger.info(
-            "SSL enabled: sslmode=%s, sslrootcert=%s (from TRUSTSTORE_%s, region=%s)",
-            settings.ssl_mode,
-            cert_path,
-            settings.rds_truststore,
-            region,
-        )
     else:
-        logger.info(
-            "SSL enabled: sslmode=%s, no TRUSTSTORE_%s cert found (region=%s)",
-            settings.ssl_mode,
+        logger.warning(
+            "No TRUSTSTORE_%s cert found; connecting with sslmode=%s (region=%s)",
             settings.rds_truststore,
+            settings.ssl_mode,
             region,
         )
     return connect_args
@@ -155,20 +133,9 @@ def _create_pooled_engine(
             """Inject a (possibly cached) IAM token before each connection."""
             cparams["password"] = _get_iam_auth_token(settings, region)
 
-        logger.info(
-            "Created engine with IAM authentication: pool_size=%d, max_overflow=%d, pool_recycle=%ds",
-            pool_size,
-            max_overflow,
-            pool_recycle,
-        )
     else:
         # base_url already carries DB_LOCAL_PASSWORD (URL-encoded) when one is
         # set; with none, it is a trust-auth URL with no password at all.
-        logger.debug(
-            "Using local authentication (%s)",
-            "static password" if settings.local_password else "trust, no password",
-        )
-
         engine = create_engine(
             base_url,
             poolclass=QueuePool,
@@ -177,11 +144,6 @@ def _create_pooled_engine(
             pool_pre_ping=True,
             echo=echo,
             connect_args=connect_args,
-        )
-        logger.info(
-            "Created engine with local authentication: pool_size=%d, max_overflow=%d",
-            pool_size,
-            max_overflow,
         )
 
     return engine
@@ -206,15 +168,6 @@ def create_db_engine(
 
     region = (
         aws_config.region if aws_config else os.environ.get("AWS_REGION", "eu-west-2")
-    )
-
-    logger.info(
-        "Configuring database connection: host=%s, port=%d, database=%s, user=%s, iam_auth=%s",
-        settings.host,
-        settings.port,
-        settings.database,
-        settings.user,
-        settings.iam_authentication,
     )
 
     base_url = settings.connection_url
@@ -268,7 +221,6 @@ def warm_shared_engine() -> None:
     engine = get_shared_engine()
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
-    logger.info("Shared DB engine warmed (IAM token cached, connectivity verified)")
 
 
 def _discard_idle_connections(engine: Engine, count: int) -> None:
@@ -316,7 +268,6 @@ def refresh_shared_engine_pool(max_slots: int | None = None) -> None:
     if max_slots is not None:
         idle_slots = min(idle_slots, max_slots)
     if idle_slots <= 0:
-        logger.debug("DB pool keepalive: pool fully checked out, nothing to do")
         return
 
     # Only existing connections need discarding; empty slots are filled below.
@@ -328,7 +279,6 @@ def refresh_shared_engine_pool(max_slots: int | None = None) -> None:
             conn = engine.connect()
             connections.append(conn)
             conn.execute(text("SELECT 1"))
-        logger.info("DB pool keepalive: refreshed %d connection(s)", len(connections))
     finally:
         for conn in connections:
             conn.close()
