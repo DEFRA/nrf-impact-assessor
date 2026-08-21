@@ -73,7 +73,7 @@ def _db_settings(monkeypatch, **env):
         monkeypatch.setenv(var, value)
     from app.config import DatabaseSettings
 
-    return DatabaseSettings()
+    return DatabaseSettings(_env_file=None)
 
 
 def test_database_settings_disables_iam_for_local_host(monkeypatch):
