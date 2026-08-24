@@ -30,7 +30,7 @@ def test_land_use_cache_key_changes_when_data_load_generation_changes():
         {
             "rlb_id": 1,
             "dwellings": 10,
-            "name": "NRF-1",
+            "name": "NRL-1",
             "dwelling_category": "housing",
             "source": "web_submission",
         }

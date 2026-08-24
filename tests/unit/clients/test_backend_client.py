@@ -19,7 +19,7 @@ def mock_http_client():
 def _make_response(status_code, text=""):
     response = httpx.Response(
         status_code=status_code,
-        request=httpx.Request("PATCH", "https://test/quotes/NRF-000001"),
+        request=httpx.Request("PATCH", "https://test/quotes/NRL-000001"),
         text=text,
     )
     return response
@@ -30,10 +30,10 @@ class TestPatchQuote:
         mock_http_client.patch.return_value = _make_response(200)
         client = BackendClient(base_url="https://test", max_retries=0)
 
-        client.patch_quote("NRF-000001", {"edps": []})
+        client.patch_quote("NRL-000001", {"edps": []})
 
         mock_http_client.patch.assert_called_once_with(
-            "https://test/quotes/NRF-000001", json={"edps": []}, headers={}
+            "https://test/quotes/NRL-000001", json={"edps": []}, headers={}
         )
 
     def test_404_not_retried(self, mock_http_client):
@@ -42,7 +42,7 @@ class TestPatchQuote:
         client = BackendClient(base_url="https://test", max_retries=3)
 
         with pytest.raises(httpx.HTTPStatusError):
-            client.patch_quote("NRF-000001", {"edps": []})
+            client.patch_quote("NRL-000001", {"edps": []})
 
         assert mock_http_client.patch.call_count == 1
 
@@ -52,7 +52,7 @@ class TestPatchQuote:
         client = BackendClient(base_url="https://test", max_retries=3)
 
         with pytest.raises(httpx.HTTPStatusError):
-            client.patch_quote("NRF-000001", {"edps": []})
+            client.patch_quote("NRL-000001", {"edps": []})
 
         assert mock_http_client.patch.call_count == 1
 
@@ -64,7 +64,7 @@ class TestPatchQuote:
         ]
 
         client = BackendClient(base_url="https://test", max_retries=3)
-        client.patch_quote("NRF-000001", {"edps": []})
+        client.patch_quote("NRL-000001", {"edps": []})
 
         assert mock_http_client.patch.call_count == 2
         mock_sleep.assert_called_once_with(1)
@@ -77,7 +77,7 @@ class TestPatchQuote:
         ]
 
         client = BackendClient(base_url="https://test", max_retries=3)
-        client.patch_quote("NRF-000001", {"edps": []})
+        client.patch_quote("NRL-000001", {"edps": []})
 
         assert mock_http_client.patch.call_count == 2
 
@@ -88,7 +88,7 @@ class TestPatchQuote:
         client = BackendClient(base_url="https://test", max_retries=2)
 
         with pytest.raises(httpx.HTTPStatusError):
-            client.patch_quote("NRF-000001", {"edps": []})
+            client.patch_quote("NRL-000001", {"edps": []})
 
         # 1 initial + 2 retries = 3 calls
         assert mock_http_client.patch.call_count == 3
@@ -97,10 +97,10 @@ class TestPatchQuote:
         mock_http_client.patch.return_value = _make_response(200)
         client = BackendClient(base_url="https://test/", max_retries=0)
 
-        client.patch_quote("NRF-000001", {"edps": []})
+        client.patch_quote("NRL-000001", {"edps": []})
 
         mock_http_client.patch.assert_called_once_with(
-            "https://test/quotes/NRF-000001", json={"edps": []}, headers={}
+            "https://test/quotes/NRL-000001", json={"edps": []}, headers={}
         )
 
     def test_api_key_sent_in_header(self, mock_http_client):
@@ -109,10 +109,10 @@ class TestPatchQuote:
             base_url="https://test", max_retries=0, api_key="secret-key"
         )
 
-        client.patch_quote("NRF-000001", {"edps": []})
+        client.patch_quote("NRL-000001", {"edps": []})
 
         mock_http_client.patch.assert_called_once_with(
-            "https://test/quotes/NRF-000001",
+            "https://test/quotes/NRL-000001",
             json={"edps": []},
             headers={"x-api-key": "secret-key"},
         )

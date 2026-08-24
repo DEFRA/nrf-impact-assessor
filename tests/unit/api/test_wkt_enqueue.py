@@ -101,8 +101,8 @@ class TestWktEnqueueEndpoint:
         call_kwargs = mock_boto3["sqs"].send_message.call_args.kwargs
         assert call_kwargs["QueueUrl"] == "http://localhost:4566/000000000000/nrf-queue"
         message = json.loads(call_kwargs["MessageBody"])
-        assert message["reference"].startswith("NRF-")
-        assert len(message["reference"]) == 10  # NRF-######
+        assert message["reference"].startswith("NRL-")
+        assert len(message["reference"]) == 10  # NRL-######
         assert message["developmentTypes"] == ["house"]
         assert message["housingUnits"] == 10
 

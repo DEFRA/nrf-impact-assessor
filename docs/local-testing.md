@@ -52,7 +52,7 @@ make sqs-depth                                # visible + in-flight counts
 make sqs-purge                                # clear the queue
 ```
 
-The default payload lives at `scripts/sample_quote_payload.json` and matches the quote schema the real `nrf-backend` publishes: `reference` (`NRF-######`), `boundaryGeojson` (holding `boundaryGeometryOriginal` and `intersectingEdps`), and `housingUnits`. Each `intersectingEdps` entry carries the EDP's `EDP_Name` as `label`; `/check-boundary` also emits `overlap_area_ha`, `overlap_area_sqm` and `overlap_percentage` per entry, which the sample omits since nothing downstream reads them.
+The default payload lives at `scripts/sample_quote_payload.json` and matches the quote schema the real `nrf-backend` publishes: `reference` (`NRL-######`), `boundaryGeojson` (holding `boundaryGeometryOriginal` and `intersectingEdps`), and `housingUnits`. Each `intersectingEdps` entry carries the EDP's `EDP_Name` as `label`; `/check-boundary` also emits `overlap_area_ha`, `overlap_area_sqm` and `overlap_percentage` per entry, which the sample omits since nothing downstream reads them.
 
 > The LocalStack gateway is remapped to host port `4568` to avoid clashing with `nrf-backend`'s own LocalStack. Override with `make sns-publish LOCALSTACK_URL=http://localhost:4566` if needed.
 
@@ -67,15 +67,15 @@ Expected sequence for a successful run:
 
 ```
 SQS consumer started, polling for jobs...
-Received job message: NRF-000001
-Processing job: NRF-000001
+Received job message: NRL-000001
+Processing job: NRL-000001
 Step 1: Loading geometry from SQS message
 Step 2: Validating inline geometry
 Step 3: Injecting job data
 Step 4: Running nutrient assessment via runner
-Job NRF-000001 completed successfully in 2.34s
-Sent assessment results to nrf-backend for quote NRF-000001
-PATCH http://host.docker.internal:3001/quotes/NRF-000001 succeeded (HTTP 200)
+Job NRL-000001 completed successfully in 2.34s
+Sent assessment results to nrf-backend for quote NRL-000001
+PATCH http://host.docker.internal:3001/quotes/NRL-000001 succeeded (HTTP 200)
 ```
 
 ---
@@ -106,7 +106,7 @@ In the service logs:
 docker compose logs -f service | grep 'PATCH http'
 ```
 
-You should see `PATCH .../quotes/NRF-000001 succeeded (HTTP 200)`. A 4xx response is logged with the full error body; retries only happen on 5xx or transport errors.
+You should see `PATCH .../quotes/NRL-000001 succeeded (HTTP 200)`. A 4xx response is logged with the full error body; retries only happen on 5xx or transport errors.
 
 ### Unit-testing the callback
 
@@ -122,7 +122,7 @@ orch = JobOrchestrator(aws_config=..., repository=..., backend_client=backend)
 orch.process_job(job_with_edps, AssessmentType.NUTRIENT)
 
 backend.patch_quote.assert_called_once()
-assert backend.patch_quote.call_args.args[0] == "NRF-000001"
+assert backend.patch_quote.call_args.args[0] == "NRL-000001"
 ```
 
 ---
@@ -155,7 +155,7 @@ uv run python scripts/test_wkt.py assess --example --dwellings 50 --dwelling-typ
 
 ## `/test/enqueue` — WKT-driven SQS push
 
-Takes a WKT polygon, wraps it in an SNS-shaped `ImpactAssessmentJob` (with a generated `NRF-######` reference), and pushes it directly onto the SQS queue — bypassing SNS. The consumer picks it up on its next poll.
+Takes a WKT polygon, wraps it in an SNS-shaped `ImpactAssessmentJob` (with a generated `NRL-######` reference), and pushes it directly onto the SQS queue — bypassing SNS. The consumer picks it up on its next poll.
 
 ```bash
 curl -s -X POST http://localhost:8085/test/enqueue \
@@ -200,7 +200,7 @@ Example polygons:
 |---|---|---|
 | No `SQS consumer started` line in service logs | Container is running `app.main` instead of `app.consumer` | Rebuild: `make rebuild` (the Dockerfile `CMD` should be `-m app.consumer`) |
 | `receive_message` hits empty URL / nothing picked up | `AWS_SQS_QUEUE_URL` not set on the service | Check `docker compose exec service env \| grep AWS_SQS_QUEUE_URL` |
-| `Received job message: None` | Job missing `reference` — pydantic dropped it | Confirm payload matches `^NRF-\d{6}$` |
+| `Received job message: None` | Job missing `reference` — pydantic dropped it | Confirm payload matches `^NRL-\d{6}$` |
 | Job runs but no PATCH is sent | `backend_client` not initialised, `reference` missing, or `edps` empty | Look for `Backend callback enabled:` at startup; check the payload includes `edps` |
 | `PATCH ... failed with HTTP 404` | Path prefix mismatch | Set `BACKEND_BASE_URL=http://host.docker.internal:3001/<prefix>` |
 | `PATCH ... connection refused` | nrf-backend bound to `127.0.0.1` only | Bind to `0.0.0.0` or run nrf-backend inside the same docker network |
