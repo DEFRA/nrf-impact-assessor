@@ -17,7 +17,7 @@ from app.aws.sqs import SQSClient
 # -- Fixtures --
 
 _INNER_JOB = {
-    "reference": "NRF-000001",
+    "reference": "NRL-000001",
     "boundaryGeojson": {
         "boundaryGeometryOriginal": {
             "type": "Polygon",
@@ -158,12 +158,12 @@ class TestUnsupportedCrs:
             {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::27700"}}
         )
         job = _receive_one(sqs_client, body)
-        assert job.reference == "NRF-000001"
+        assert job.reference == "NRL-000001"
 
     def test_no_declared_crs_is_accepted(self, sqs_client):
         """The normal case: geometry omits `crs`. Must remain valid."""
         job = _receive_one(sqs_client, _INNER_JOB)
-        assert job.reference == "NRF-000001"
+        assert job.reference == "NRL-000001"
 
 
 class TestTracePropagation:
@@ -182,5 +182,5 @@ class TestTracePropagation:
         """No traceId in the message body -> job.trace_id stays None."""
         envelope = _sns_envelope(_INNER_JOB)
         job = _receive_one(sqs_client, envelope)
-        assert job.reference == "NRF-000001"
+        assert job.reference == "NRL-000001"
         assert job.trace_id is None

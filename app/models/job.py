@@ -31,7 +31,7 @@ class ImpactAssessmentJob(BaseModel):
     be parsed for logging/DLQ.
     """
 
-    reference: str | None = Field(default=None, pattern=r"^NRF-\d{6}$")
+    reference: str | None = Field(default=None, pattern=r"^NRL-\d{6}$")
     boundary_geojson: BoundaryGeojson | None = Field(
         default=None, alias="boundaryGeojson"
     )
@@ -49,7 +49,7 @@ class ImpactAssessmentJob(BaseModel):
         "populate_by_name": True,
         "json_schema_extra": {
             "example": {
-                "reference": "NRF-000001",
+                "reference": "NRL-000001",
                 "boundaryGeojson": {
                     "boundaryGeometryOriginal": {
                         "type": "Polygon",

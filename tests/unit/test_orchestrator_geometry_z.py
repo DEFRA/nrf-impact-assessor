@@ -23,7 +23,7 @@ _RING_3D = [
 
 def _job() -> ImpactAssessmentJob:
     return ImpactAssessmentJob(
-        reference="NRF-000001",
+        reference="NRL-000001",
         boundary_geojson=BoundaryGeojson(
             boundary_geometry_original={
                 "type": "Polygon",

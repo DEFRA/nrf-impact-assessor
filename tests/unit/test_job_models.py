@@ -30,7 +30,7 @@ SAMPLE_GEOJSON = {
 def test_quote_payload_from_camel_case():
     """Parse a quote payload with camelCase keys as sent by nrf-backend."""
     payload = {
-        "reference": "NRF-000001",
+        "reference": "NRL-000001",
         "boundaryGeojson": SAMPLE_GEOJSON,
         "developmentTypes": ["housing"],
         "housingUnits": 25,
@@ -39,7 +39,7 @@ def test_quote_payload_from_camel_case():
 
     job = ImpactAssessmentJob.model_validate(payload)
 
-    assert job.reference == "NRF-000001"
+    assert job.reference == "NRL-000001"
     assert job.boundary_geojson is not None
     assert job.boundary_geojson.boundary_geometry_original["type"] == "Polygon"
     assert len(job.boundary_geojson.intersecting_edps) == 1
@@ -61,7 +61,7 @@ def test_quote_payload_invalid_reference():
 def test_quote_payload_json_roundtrip():
     """JSON serialization/deserialization preserves quote fields."""
     payload = {
-        "reference": "NRF-000001",
+        "reference": "NRL-000001",
         "boundaryGeojson": SAMPLE_GEOJSON,
         "developmentTypes": ["housing"],
         "housingUnits": 25,
@@ -71,7 +71,7 @@ def test_quote_payload_json_roundtrip():
     json_str = job.model_dump_json(by_alias=True)
     job_restored = ImpactAssessmentJob.model_validate_json(json_str)
 
-    assert job_restored.reference == "NRF-000001"
+    assert job_restored.reference == "NRL-000001"
     assert job_restored.boundary_geojson is not None
     assert job_restored.residential_building_count == 25
 
