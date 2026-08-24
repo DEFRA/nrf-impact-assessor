@@ -8,6 +8,8 @@ from fastapi.exception_handlers import (
 )
 from fastapi.responses import Response
 
+from app.aerial_proxy.router import close_client as close_aerial_client
+from app.aerial_proxy.router import router as aerial_proxy_router
 from app.assess.router import router as assess_router
 from app.boundary.router import router as boundary_router
 from app.common.auth import require_api_key
@@ -46,6 +48,7 @@ async def lifespan(_: FastAPI):
     yield
     # Shutdown
     keepalive_stopped = await stop_keepalive(keepalive)
+    await close_aerial_client()
     if client:
         await client.close()
         logger.info("MongoDB client closed")
@@ -81,6 +84,7 @@ protected_dependencies = [Depends(require_api_key)]
 app.include_router(assess_router, dependencies=protected_dependencies)
 app.include_router(boundary_router, dependencies=protected_dependencies)
 app.include_router(tiles_router, dependencies=protected_dependencies)
+app.include_router(aerial_proxy_router, dependencies=protected_dependencies)
 app.include_router(wwtw_router, dependencies=protected_dependencies)
 
 if ApiServerConfig().testing_enabled:

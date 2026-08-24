@@ -526,6 +526,70 @@ class DataSyncConfig(BaseSettings):
     )
 
 
+class AerialProxyConfig(BaseSettings):
+    """Configuration for the aerial tile proxy endpoint."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AERIAL_PROXY_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    base_url: str = Field(
+        default="",
+        description=(
+            "Upstream WMTS GetTile URL without the tile coordinates, e.g. "
+            "https://tiles.example.com/APGB.wmtsx?SERVICE=WMTS&REQUEST=GetTile"
+            "&VERSION=1.0.0&LAYER=APGB_Latest_UK_250mm&STYLE=Default"
+            "&FORMAT=image%2Fpng&TILEMATRIXSET=GoogleMapsExtended. "
+            "TILEMATRIX/TILEROW/TILECOL are set per request"
+        ),
+    )
+    timeout_seconds: int = Field(
+        default=10, ge=1, description="HTTP timeout for upstream tile requests"
+    )
+    max_tile_bytes: int = Field(
+        default=2 * 1024 * 1024,
+        ge=1,
+        description=(
+            "Maximum accepted size of an upstream tile response body; a 256px "
+            "raster tile is well under this, so anything larger is misbehaviour"
+        ),
+    )
+    cache_max_size: int = Field(
+        default=500, ge=1, description="Max number of cached upstream tiles"
+    )
+    cache_max_bytes: int = Field(
+        default=128 * 1024 * 1024,
+        ge=1,
+        description=(
+            "Total payload budget for the tile cache; caps resident memory per "
+            "worker, which cache_max_size alone cannot"
+        ),
+    )
+    cache_ttl_seconds: int = Field(
+        default=3600, ge=1, description="Cache entry TTL in seconds"
+    )
+    missing_cache_ttl_seconds: int = Field(
+        default=300,
+        ge=1,
+        description=(
+            "How long a 'no imagery here' result is cached, so panning over "
+            "uncovered regions does not re-hit the upstream for every tile"
+        ),
+    )
+    error_cache_ttl_seconds: int = Field(
+        default=15,
+        ge=1,
+        description=(
+            "How long an upstream failure is cached; kept short so the proxy "
+            "recovers quickly once the upstream is healthy again"
+        ),
+    )
+
+
 class DebugConfig:
     """Debug output configuration.
 
