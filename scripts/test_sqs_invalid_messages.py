@@ -61,7 +61,7 @@ _VALID_GEOM = {
 
 def _valid_job(**overrides) -> dict:
     job = {
-        "reference": "NRF-000001",
+        "reference": "NRL-000001",
         "boundaryGeojson": {
             "boundaryGeometryOriginal": json.loads(json.dumps(_VALID_GEOM)),
             "intersectingEdps": [{"label": "Broads SAC (Yare & Bure) & Wensum SAC"}],
