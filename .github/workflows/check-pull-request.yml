@@ -49,3 +49,17 @@ jobs:
 
       - name: Verify git hash in Docker image
         run: docker run --rm --entrypoint cat nrf-impact-assessor .git-hash
+
+  journey-tests:
+    name: Run Journey Tests
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    env:
+      NOTIFY_API_KEY: ${{ secrets.NOTIFY_API_KEY }}
+      OS_API_KEY: ${{ secrets.OS_API_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: nrf-impact-assessor
+      - uses: DEFRA/nrf-journey-tests/run-journey-tests@main
