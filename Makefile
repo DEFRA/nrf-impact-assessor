@@ -61,9 +61,32 @@ format: ## Format code and auto-fix lint issues
 # ---------------------------------------------------------------------------
 # Database backup / restore
 # ---------------------------------------------------------------------------
-DB_CONTAINER  = nrf-solution-postgres-1
-DB_NAME       = nrf_impact
-DB_USER       = postgres
+# These recipes run psql/pg_dump inside the compose postgres container by
+# default. Point them at a postgres installed on the host instead by clearing
+# DB_CONTAINER, either per-invocation or in the environment:
+#
+#   make db-backup DB_CONTAINER=
+#
+# In container mode the client connects over the container's local socket, so
+# DB_HOST/DB_PORT (the *published* port) must NOT be passed; in native mode
+# they are, since the host port is the only way in. Native mode needs the
+# postgres client tools on PATH; prefer a pg_dump matching the server's major
+# version, since a newer pg_dump emits syntax (\restrict, transaction_timeout)
+# that an older psql cannot replay. --no-password stays set so nothing ever
+# blocks on a prompt: export PGPASSWORD or use ~/.pgpass if the server wants
+# a password.
+DB_CONTAINER ?= nrf-postgis
+DB_NAME      ?= nrf_impact
+DB_USER      ?= postgres
+ifeq ($(strip $(DB_CONTAINER)),)
+PG_EXEC   =
+PG_EXEC_I =
+PG_CONN   = -h $(DB_HOST) -p $(DB_PORT)
+else
+PG_EXEC   = docker exec $(DB_CONTAINER)
+PG_EXEC_I = docker exec -i $(DB_CONTAINER)
+PG_CONN   =
+endif
 BACKUP_DIR   ?= ./backups
 TS             = $(shell date +%Y%m%d_%H%M%S)
 BACKUP_FILE  ?= $(BACKUP_DIR)/$(DB_NAME)_$(TS).sql.gz
@@ -88,11 +111,11 @@ DB_TABLES = \
 	public.edp_edges
 
 db-tables: ## List public tables with their exact row counts
-	@docker exec $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -tA -c \
+	@$(PG_EXEC) psql $(PG_CONN) -U $(DB_USER) -d $(DB_NAME) -tA -c \
 		"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename" \
 	| while read t; do \
 		[ -z "$$t" ] && continue; \
-		c=$$(docker exec $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -tAc \
+		c=$$($(PG_EXEC) psql $(PG_CONN) -U $(DB_USER) -d $(DB_NAME) -tAc \
 			"SELECT count(*) FROM public.\"$$t\""); \
 		printf '  %-30s %12s\n' "$$t" "$$c"; \
 	done
@@ -100,25 +123,25 @@ db-tables: ## List public tables with their exact row counts
 db-backup: ## Full backup — schema, data, custom types and grants, split into <100MB parts (.sql.gz.part-*); set SPLIT=0 for a single .sql.gz
 	@mkdir -p $(BACKUP_DIR)
 	@if [ "$(SPLIT)" = "0" ]; then \
-		docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
+		$(PG_EXEC) pg_dump $(PG_CONN) -U $(DB_USER) --format=plain --no-owner \
 			--no-password $(DB_NAME) | gzip > $(BACKUP_FILE); \
 		echo "Backup written to $(BACKUP_FILE)"; \
 	else \
-		docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
+		$(PG_EXEC) pg_dump $(PG_CONN) -U $(DB_USER) --format=plain --no-owner \
 			--no-password $(DB_NAME) | gzip | split -b $(BACKUP_PART_SIZE) - $(BACKUP_FILE).part-; \
 		echo "Backup written to $(BACKUP_FILE).part-*"; \
 	fi
 
 db-backup-schema: ## Schema-only backup — tables, enums, indexes, grants (.sql.gz, no data)
 	@mkdir -p $(BACKUP_DIR)
-	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
+	$(PG_EXEC) pg_dump $(PG_CONN) -U $(DB_USER) --format=plain --no-owner \
 		--schema-only --no-password $(DB_NAME) \
 		| gzip > $(BACKUP_DIR)/$(DB_NAME)_schema_$(TS).sql.gz
 	@echo "Schema backup written to $(BACKUP_DIR)"
 
 db-backup-globals: ## Cluster-level roles and grants (.sql.gz via pg_dumpall)
 	@mkdir -p $(BACKUP_DIR)
-	docker exec $(DB_CONTAINER) pg_dumpall -U $(DB_USER) --globals-only \
+	$(PG_EXEC) pg_dumpall $(PG_CONN) -U $(DB_USER) --globals-only \
 		| gzip > $(BACKUP_DIR)/$(DB_NAME)_globals_$(TS).sql.gz
 	@echo "Globals backup written to $(BACKUP_DIR)"
 
@@ -126,7 +149,7 @@ db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table 
 	@mkdir -p $(BACKUP_DIR)
 	@schema_out="$(BACKUP_DIR)/public_schema_$(TS).sql.gz"; \
 	echo "  public schema → $$schema_out"; \
-	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
+	$(PG_EXEC) pg_dump $(PG_CONN) -U $(DB_USER) --format=plain --no-owner \
 		--no-password --schema-only -n public $(DB_NAME) | gzip > "$$schema_out"; \
 	restore="$(BACKUP_DIR)/restore_commands.txt"; \
 	printf 'gunzip -c %s | psql -U $(RESTORE_USER) -d $(RESTORE_DB) -v ON_ERROR_STOP=1\n\n' \
@@ -137,10 +160,10 @@ db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table 
 		out="$(BACKUP_DIR)/$${name}_$(TS).sql.gz"; \
 		echo "  $$table → $$out"; \
 		if [ "$(SPLIT)" = "0" ]; then \
-			docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
+			$(PG_EXEC) pg_dump $(PG_CONN) -U $(DB_USER) --format=plain --no-owner \
 				--no-password --data-only -t $$table $(DB_NAME) | gzip > "$$out"; \
 		else \
-			docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) --format=plain --no-owner \
+			$(PG_EXEC) pg_dump $(PG_CONN) -U $(DB_USER) --format=plain --no-owner \
 				--no-password --data-only -t $$table $(DB_NAME) | gzip \
 				| split -b $(BACKUP_PART_SIZE) - "$$out.part-"; \
 			if [ ! -e "$$out.part-ab" ]; then \
@@ -161,9 +184,9 @@ db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table 
 db-restore: ## Restore from backup: make db-restore BACKUP_FILE=./backups/foo.sql.gz (whole file or .part-* splits)
 	@test -n "$(BACKUP_FILE)" || (echo "ERROR: set BACKUP_FILE=<path>"; exit 1)
 	@if [ -f "$(BACKUP_FILE)" ]; then \
-		gzip -dc "$(BACKUP_FILE)" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME); \
+		gzip -dc "$(BACKUP_FILE)" | $(PG_EXEC_I) psql $(PG_CONN) -U $(DB_USER) $(DB_NAME); \
 	elif ls $(BACKUP_FILE).part-* >/dev/null 2>&1; then \
-		cat $(BACKUP_FILE).part-* | gzip -dc | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME); \
+		cat $(BACKUP_FILE).part-* | gzip -dc | $(PG_EXEC_I) psql $(PG_CONN) -U $(DB_USER) $(DB_NAME); \
 	else \
 		echo "ERROR: no backup found at $(BACKUP_FILE) or $(BACKUP_FILE).part-*"; exit 1; \
 	fi
@@ -176,7 +199,7 @@ db-restore-tables: ## Restore per-table backup: apply schema grants then table d
 		echo "ERROR: no public_schema_*.sql.gz found in $(BACKUP_DIR)"; exit 1; \
 	fi; \
 	echo "Restoring schema grants from $$schema_file"; \
-	gzip -dc "$$schema_file" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME)
+	gzip -dc "$$schema_file" | $(PG_EXEC_I) psql $(PG_CONN) -U $(DB_USER) $(DB_NAME)
 	@for table in $(DB_TABLES); do \
 		name=$$(echo $$table | tr '.' '_'); \
 		f=$$(ls -t $(BACKUP_DIR)/$${name}_*.sql.gz $(BACKUP_DIR)/$${name}_*.sql.gz.part-aa 2>/dev/null | head -1); \
@@ -184,9 +207,9 @@ db-restore-tables: ## Restore per-table backup: apply schema grants then table d
 		case "$$f" in \
 		*.part-aa) base=$${f%.part-aa}; \
 			echo "  $$table ← $$base.part-*"; \
-			cat "$$base".part-* | gzip -dc | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME);; \
+			cat "$$base".part-* | gzip -dc | $(PG_EXEC_I) psql $(PG_CONN) -U $(DB_USER) $(DB_NAME);; \
 		*) echo "  $$table ← $$f"; \
-			gzip -dc "$$f" | docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) $(DB_NAME);; \
+			gzip -dc "$$f" | $(PG_EXEC_I) psql $(PG_CONN) -U $(DB_USER) $(DB_NAME);; \
 		esac; \
 	done
 	@echo "Per-table restore complete from $(BACKUP_DIR)"

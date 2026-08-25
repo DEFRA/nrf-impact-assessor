@@ -272,6 +272,27 @@ JSONB-based lookup tables.
 
 All backup targets write compressed `.sql.gz` files to `./backups/` by default. The output directory can be overridden with `BACKUP_DIR=<path>`.
 
+### Running against a postgres outside Docker
+
+The backup and restore targets shell into the compose postgres container
+(`DB_CONTAINER`, default `nrf-postgis`). Clear that variable to run the same
+`pg_dump`/`psql` commands directly against a postgres installed on the host:
+
+```bash
+make db-backup DB_CONTAINER=
+make db-restore DB_CONTAINER= BACKUP_FILE=./backups/foo.sql.gz
+export DB_CONTAINER=          # or set it once for the whole shell
+```
+
+Native mode adds `-h $DB_HOST -p $DB_PORT` (container mode must not pass those:
+inside the container the client uses the local socket, and `DB_PORT` is the
+*published* host port). It needs the postgres client tools on `PATH` — prefer a
+`pg_dump` matching the server's major version, because a newer `pg_dump` emits
+syntax (`\restrict`, `transaction_timeout`) that an older `psql` cannot replay.
+Every target passes `--no-password`, so a server that wants a password needs
+`PGPASSWORD` exported or a `~/.pgpass` entry rather than an interactive prompt.
+`DB_NAME` and `DB_USER` are overridable the same way.
+
 ### Per-table backup (recommended before a load)
 
 Produces a schema file (DDL + grants) and one data-only `.sql.gz` file per table
@@ -365,7 +386,7 @@ All files within a single `make` invocation share the same timestamp, making it 
 | `relation "public.nn_catchments" does not exist` | Migrations have not been applied | Run `uv run alembic upgrade head` |
 | Load completes but row count is 0 | Source file is empty or CRS mismatch caused all geometries to be dropped | Open the source file in QGIS to verify it contains data; check CRS |
 | Coefficient load is very slow | ~5.4M polygons is expected to take several minutes | This is normal; use `--sample` for quick tests |
-| `db-backup-tables` produces empty files | Container not running or DB name wrong | Confirm `docker compose up db` is running and `nrf-postgis` is the container name |
+| `db-backup-tables` produces empty files | Container not running or DB name wrong | Confirm `docker compose up db` is running and `nrf-postgis` is the container name (override with `DB_CONTAINER=`, or clear it to use a host postgres) |
 | `zcat: can't stat` on restore | Wrong path passed to `BACKUP_FILE` | Use the full or relative path, e.g. `make db-restore BACKUP_FILE=./backups/foo.sql.gz` |
 | GRANT errors after per-table restore | Used `db-restore` instead of `db-restore-tables` | Use `make db-restore-tables BACKUP_DIR=./backups` — it applies schema grants before data |
 | `no public_schema_*.sql.gz found` | Backup was taken before the schema file was added | Re-take the backup with the current `db-backup-tables`, or manually restore globals + schema first |

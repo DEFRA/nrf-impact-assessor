@@ -30,8 +30,14 @@ logger = getLogger(__name__)
 async def lifespan(_: FastAPI):
     # Startup
     init_custom_certificates()
-    client = await get_mongo_client()
-    logger.info("MongoDB client connected")
+    # MongoDB is a CDP platform dependency the app does not otherwise read or
+    # write; leave MONGO_URI unset to run locally without a mongo container.
+    client = None
+    if config.mongo_uri:
+        client = await get_mongo_client()
+        logger.info("MongoDB client connected")
+    else:
+        logger.info("MONGO_URI unset: skipping MongoDB client")
     try:
         warm_shared_engine()
     except Exception:
