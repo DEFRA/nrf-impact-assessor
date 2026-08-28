@@ -1,7 +1,7 @@
 # Liquibase 5.x no longer bundles JDBC drivers, so the postgres one has to be
 # added to the classpath explicitly or every command fails with
 # "Cannot find database driver: org.postgresql.Driver".
-FROM liquibase/liquibase:5.0.3-alpine
+FROM liquibase/liquibase:5.0.4-alpine
 
 # The base image already defaults to liquibase:liquibase (uid 1001); stating it
 # here keeps the build non-root even if a future base image changes that, and
