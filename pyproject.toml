@@ -9,8 +9,8 @@ dependencies = [
     "alembic-postgresql-enum>=1.10.0",
     "asgi-logger==0.1.0",
     "aws-embedded-metrics==3.5.0",
-    "boto3==1.43.77",
-    "cachetools==7.1.7",
+    "boto3==1.43.78",
+    "cachetools>=5.3.0",
     "dnspython==2.8.0",
     "ecs-logging==2.3.0",
     "email-validator>=2.3.0",
@@ -24,9 +24,9 @@ dependencies = [
     "pymongo[aws,encryption,snappy,zstd]==4.17.0",
     "python-multipart>=0.0.32",
     "pyyaml>=6.0.3",
-    "sqlalchemy==2.0.52",
-    "typer==0.27.1",
-    "uvicorn==0.52.4",
+    "sqlalchemy>=2.0.51",
+    "typer>=0.26.8",
+    "uvicorn==0.52.1",
 ]
 
 [dependency-groups]
@@ -38,9 +38,9 @@ dev = [
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
     "pytest-mock>=3.15.1",
-    "ruff==0.16.4",
+    "ruff==0.16.1",
     "taskipy==1.14.1",
-    "boto3-stubs==1.43.77",
+    "boto3-stubs==1.43.63"
 ]
 
 
