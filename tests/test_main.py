@@ -1,9 +1,11 @@
 from fastapi.testclient import TestClient
 
+from app.config import config
 from app.main import app
 
 
 def test_lifespan(mocker):
+    mocker.patch.object(config, "mongo_uri", "mongodb://localhost:27017/")
     mock_mongo_client = mocker.AsyncMock()
     mock_get_mongo = mocker.patch(
         "app.main.get_mongo_client", return_value=mock_mongo_client
@@ -25,6 +27,22 @@ def test_lifespan(mocker):
     mock_mongo_client.close.assert_awaited_once()  # Shutdown: close called
     mock_cleanup.assert_called_once()  # Shutdown: cert files cleaned up
     mock_stop_keepalive.assert_awaited_once_with(mock_start_keepalive.return_value)
+
+
+def test_lifespan_skips_mongo_when_uri_unset(mocker):
+    """MONGO_URI unset lets the app boot without a mongo container locally."""
+    mocker.patch.object(config, "mongo_uri", None)
+    mock_get_mongo = mocker.patch("app.main.get_mongo_client")
+    mocker.patch("app.main.init_custom_certificates")
+    mocker.patch("app.main.cleanup_cert_files")
+    mocker.patch("app.main.log_startup_table_status")
+    mocker.patch("app.main.start_keepalive")
+    mocker.patch("app.main.stop_keepalive")
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+
+    mock_get_mongo.assert_not_called()
 
 
 def test_lifespan_keeps_certs_when_a_refresh_is_abandoned(mocker):

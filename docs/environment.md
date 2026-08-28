@@ -13,7 +13,7 @@ This document describes all environment variables used by the application and it
 | `HOST` | `127.0.0.1` | Address the server binds to |
 | `PORT` | `8085` | Port the server listens on |
 | `LOG_CONFIG` | `None` | Path to the JSON logging config file |
-| `MONGO_URI` | `None` | MongoDB connection URI |
+| `MONGO_URI` | `None` | MongoDB connection URI. Unset/blank skips the startup connection entirely — the app has no other mongo usage, so local runs need no mongo container |
 | `MONGO_DATABASE` | `nrf-impact-assessor` | MongoDB database name |
 | `MONGO_TRUSTSTORE` | `TRUSTSTORE_CDP_ROOT_CA` | TLS truststore for MongoDB |
 | `AWS_ENDPOINT_URL` | `None` | Override AWS endpoint (set to LocalStack URL locally) |

@@ -1,7 +1,7 @@
 """Settings for development scripts (data loading and testing).
 
-All file paths are configured via environment variables in .env file.
-No defaults are provided - everything must be explicitly configured in .env.
+All file paths are configured via environment variables in scripts/.env.local.
+No defaults are provided - everything must be explicitly configured there.
 """
 
 from pathlib import Path
@@ -11,13 +11,30 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Get the directory where this settings.py file is located
 _SCRIPT_DIR = Path(__file__).parent
+SCRIPT_ENV_FILE = _SCRIPT_DIR / ".env.local"
+
+
+def db_settings():
+    """DatabaseSettings for scripts, including DB_* keys in scripts/.env.local.
+
+    Scripts keep their local, gitignored config in scripts/.env.local, so a
+    developer box needing DB_LOCAL_PASSWORD can set it there. Passing
+    _env_file replaces the ".env" that app.config declares, so it is repeated
+    here to keep that convention working for scripts should a repo-root .env
+    ever be added; none is committed today, and a missing file is ignored.
+    Later files win, and real environment variables override both, so the
+    Makefile and compose keep their say.
+    """
+    from app.config import DatabaseSettings
+
+    return DatabaseSettings(_env_file=(".env", SCRIPT_ENV_FILE))
 
 
 class ScriptSettings(BaseSettings):
     """File path configuration for development scripts.
 
-    All paths are loaded from scripts/.env file with no prefix.
-    No defaults - must be configured in scripts/.env file.
+    All paths are loaded from scripts/.env.local with no prefix.
+    No defaults - must be configured in scripts/.env.local.
     """
 
     model_config = SettingsConfigDict(

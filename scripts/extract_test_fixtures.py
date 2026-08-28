@@ -13,16 +13,24 @@ Usage:
 """
 
 import sqlite3
+import sys
 from pathlib import Path
 
-import geopandas as gpd
-import pandas as pd
-import shapely
-import typer
-from fixture_manifest import write_fixture_manifest
-from settings import ScriptSettings
-from shapely.geometry import MultiLineString, MultiPolygon, Polygon
-from shapely.ops import unary_union
+# This script's directory, for the sibling `settings` / `fixture_manifest`
+# modules. Python normally adds it automatically, but not under -P /
+# PYTHONSAFEPATH, which some launchers set.
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+import geopandas as gpd  # noqa: E402
+import pandas as pd  # noqa: E402
+import shapely  # noqa: E402
+import typer  # noqa: E402
+from fixture_manifest import write_fixture_manifest  # noqa: E402
+from settings import ScriptSettings  # noqa: E402
+from shapely.geometry import MultiLineString, MultiPolygon, Polygon  # noqa: E402
+from shapely.ops import unary_union  # noqa: E402
 
 _PROJECT_ROOT = Path(__file__).parent.parent
 _FIXTURES_DIR = _PROJECT_ROOT / "tests" / "data" / "fixtures"

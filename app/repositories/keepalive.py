@@ -68,13 +68,7 @@ async def keepalive_loop(
 def start_keepalive(interval_seconds: int, warm_slots: int) -> Keepalive | None:
     """Start the keepalive loop, or return None when it is disabled."""
     if interval_seconds <= 0:
-        logger.info("DB pool keepalive disabled (interval=%ds)", interval_seconds)
         return None
-    logger.info(
-        "DB pool keepalive started (interval=%ds, warm_slots=%d)",
-        interval_seconds,
-        warm_slots,
-    )
     stop_signal = asyncio.Event()
     task = asyncio.create_task(
         keepalive_loop(interval_seconds, warm_slots, stop_signal), name=_TASK_NAME
@@ -103,5 +97,4 @@ async def stop_keepalive(keepalive: Keepalive | None) -> bool:
         with contextlib.suppress(asyncio.CancelledError):
             await keepalive.task
         return False
-    logger.info("DB pool keepalive stopped")
     return True

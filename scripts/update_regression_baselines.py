@@ -17,9 +17,9 @@ from sqlalchemy import create_engine
 # Allow imports from the project root
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.config import DatabaseSettings
 from app.repositories.repository import Repository
 from app.runner.runner import run_assessment
+from scripts.settings import db_settings
 from tests.regression.conftest import INTERNAL_TO_BASELINE_COLUMNS
 
 TESTS_DIR = Path(__file__).parent.parent / "tests"
@@ -45,8 +45,7 @@ BASELINES = [
 
 
 def main() -> None:
-    settings = DatabaseSettings()
-    engine = create_engine(settings.connection_url)
+    engine = create_engine(db_settings().connection_url)
     repository = Repository(engine)
 
     for baseline in BASELINES:

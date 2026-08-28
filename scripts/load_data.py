@@ -14,8 +14,8 @@ data for each layer type before inserting new data. Always backup important data
 before running this script.
 
 Configuration:
-    File paths are configured via scripts/.env file.
-    Copy scripts/.env.example to scripts/.env and customize as needed.
+    File paths are configured via scripts/.env.local.
+    Copy scripts/.env.example to scripts/.env.local and customize as needed.
 
 Usage:
     # Load all data
@@ -30,21 +30,33 @@ Usage:
 
 import json
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
 
-import geopandas as gpd
-import numpy as np
-import pandas as pd
-import shapely
-import typer
-from fixture_manifest import validate_fixture_manifest
-from settings import ScriptSettings
-from sqlalchemy import delete, func, select
+# Import paths, made explicit rather than inherited from the caller:
+#   - the repo root, because it is not an installed package, so `app` is only
+#     importable if it is on sys.path (the Makefile used to supply this via a
+#     `PYTHONPATH=. ...` prefix, which no Windows shell honours);
+#   - this script's own directory, for the sibling `settings` /
+#     `fixture_manifest` modules. Python normally adds it automatically, but not
+#     under -P / PYTHONSAFEPATH, which some launchers set.
+_SCRIPT_DIR = Path(__file__).resolve().parent
+for _path in (_SCRIPT_DIR.parent, _SCRIPT_DIR):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
-from app.config import DatabaseSettings
-from app.models.db import (
+import geopandas as gpd  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import shapely  # noqa: E402
+import typer  # noqa: E402
+from fixture_manifest import validate_fixture_manifest  # noqa: E402
+from settings import ScriptSettings, db_settings  # noqa: E402
+from sqlalchemy import delete, func, select  # noqa: E402
+
+from app.models.db import (  # noqa: E402
     CoefficientLayer,
     EdpBoundaryLayer,
     EdpEdges,
@@ -57,8 +69,8 @@ from app.models.db import (
     Subcatchments,
     WwtwCatchments,
 )
-from app.repositories.engine import create_db_engine
-from app.repositories.repository import Repository
+from app.repositories.engine import create_db_engine  # noqa: E402
+from app.repositories.repository import Repository  # noqa: E402
 
 CRS_BRITISH_NATIONAL_GRID = "EPSG:27700"
 _MSG_NO_CRS = f"No CRS found, assuming {CRS_BRITISH_NATIONAL_GRID}"
@@ -722,8 +734,7 @@ def main(
     _validate_names(lookup, valid_lookups, "lookup")
 
     # Create repository
-    db_settings = DatabaseSettings()
-    engine = create_db_engine(db_settings)
+    engine = create_db_engine(db_settings())
     repository = Repository(engine)
 
     if fixtures_dir is not None:

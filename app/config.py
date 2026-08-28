@@ -280,6 +280,8 @@ class GcnConfig(BaseSettings):
 DEFAULT_GCN_CONFIG = GcnConfig()
 
 
+LOCAL_DB_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
 # Token lifetime is 15 minutes; recycle connections at 10 minutes
 # to ensure fresh tokens before expiry. Lives here so DatabaseSettings can
 # validate the keepalive interval against it without importing the engine.
@@ -350,12 +352,32 @@ class DatabaseSettings(BaseSettings):
             raise ValueError(msg)
         return self
 
+    @model_validator(mode="after")
+    def _disable_iam_for_local_hosts(self) -> DatabaseSettings:
+        """Default IAM auth off for a local database.
+
+        IAM tokens are only ever issued for RDS, so a loopback host means local
+        development, where the Makefile/compose would otherwise have to supply
+        DB_IAM_AUTHENTICATION=false. Scripts run directly (no make, no compose)
+        would try to mint a token for localhost and fail on missing AWS
+        credentials. An explicit DB_IAM_AUTHENTICATION still wins.
+        """
+        if (
+            "iam_authentication" not in self.model_fields_set
+            and self.host in LOCAL_DB_HOSTS
+        ):
+            self.iam_authentication = False
+        return self
+
     @property
     def connection_url(self) -> str:
-        from urllib.parse import quote_plus
+        # quote, not quote_plus: URL parsers decode %20 back to a space but
+        # leave a "+" literal, so a password containing a space would arrive
+        # with a "+" in place of it.
+        from urllib.parse import quote
 
         if self.local_password:
-            password = quote_plus(self.local_password)
+            password = quote(self.local_password, safe="")
             return f"postgresql://{self.user}:{password}@{self.host}:{self.port}/{self.database}"
         return f"postgresql://{self.user}@{self.host}:{self.port}/{self.database}"  # NOSONAR - intentional: trust auth for local dev without a password
 
