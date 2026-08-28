@@ -13,7 +13,7 @@ from app.models.enums import AssessmentType
 from app.orchestrator import JobOrchestrator, JobProcessingError
 
 
-def _job(reference: str = "NRF-000001"):
+def _job(reference: str = "NRL-000001"):
     job = MagicMock()
     job.reference = reference
     job.trace_id = None

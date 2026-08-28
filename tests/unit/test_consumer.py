@@ -29,7 +29,7 @@ def _consumer() -> SqsConsumer:
 
 def test_deletes_message_when_processing_succeeds():
     consumer = _consumer()
-    job = MagicMock(reference="NRF-000001")
+    job = MagicMock(reference="NRL-000001")
 
     _drive_once(consumer, [(job, "receipt-1")])
 
@@ -39,7 +39,7 @@ def test_deletes_message_when_processing_succeeds():
 def test_keeps_message_when_processing_raises():
     consumer = _consumer()
     consumer.orchestrator.process_job.side_effect = RuntimeError("assessment failed")
-    job = MagicMock(reference="NRF-000001")
+    job = MagicMock(reference="NRL-000001")
 
     _drive_once(consumer, [(job, "receipt-1")])
 
@@ -49,7 +49,7 @@ def test_keeps_message_when_processing_raises():
 def test_one_failure_does_not_block_the_next_message():
     consumer = _consumer()
     consumer.orchestrator.process_job.side_effect = [RuntimeError("boom"), None]
-    bad, good = MagicMock(reference="NRF-BAD"), MagicMock(reference="NRF-GOOD")
+    bad, good = MagicMock(reference="NRL-BAD"), MagicMock(reference="NRL-GOOD")
 
     _drive_once(consumer, [(bad, "receipt-bad"), (good, "receipt-good")])
 

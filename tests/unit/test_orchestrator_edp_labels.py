@@ -54,7 +54,7 @@ def _result() -> ImpactAssessmentResult:
 
 def _job(labels: list[str]) -> ImpactAssessmentJob:
     return ImpactAssessmentJob(
-        reference="NRF-000001",
+        reference="NRL-000001",
         boundary_geojson=BoundaryGeojson(
             boundary_geometry_original={"type": "Polygon", "coordinates": []},
             intersecting_edps=[IntersectingEdp(label=label) for label in labels],

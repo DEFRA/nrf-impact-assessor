@@ -36,7 +36,7 @@ class BackendClient:
         response is returned so it can include the status code.
 
         Args:
-            reference: Quote reference (e.g. "NRF-000001")
+            reference: Quote reference (e.g. "NRL-000001")
             payload: Request body matching the PATCH schema
 
         Returns:

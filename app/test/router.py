@@ -53,7 +53,7 @@ from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
 from app.runner.runner import run_assessment
 
-_NRF_REFERENCE_PATTERN = re.compile(r"^NRF-\d{6}$")
+_NRF_REFERENCE_PATTERN = re.compile(r"^NRL-\d{6}$")
 
 logger = logging.getLogger(__name__)
 
@@ -300,9 +300,9 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
 
     gdf = _wkt_to_gdf(request.wkt, request.crs)
 
-    # Build an SNS-shaped quote payload. The reference must match ^NRF-\d{6}$.
+    # Build an SNS-shaped quote payload. The reference must match ^NRL-\d{6}$.
     # Cosmetic test identifier in a test-only endpoint (API_TESTING_ENABLED=true); not security-sensitive.
-    reference = f"NRF-{random.randint(0, 999_999):06d}"  # noqa: S311 # NOSONAR
+    reference = f"NRL-{random.randint(0, 999_999):06d}"  # noqa: S311 # NOSONAR
     geometry_dict = mapping(gdf.geometry.iloc[0])
 
     client_kwargs: dict = {"region_name": aws.region}
@@ -359,7 +359,7 @@ def enqueue_to_sqs(request: WktEnqueueRequest) -> WktEnqueueResponse:
 class PatchBackendRequest(BaseModel):
     """Request body for POST /test/patch-backend."""
 
-    reference: str = "NRF-000001"
+    reference: str = "NRL-000001"
     payload: dict | None = None
     stub_edps: int = Field(
         default=1,
@@ -374,7 +374,7 @@ class PatchBackendRequest(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "reference": "NRF-000001",
+                "reference": "NRL-000001",
                 "payload": None,
                 "stub_edps": 1,
             }
@@ -492,7 +492,7 @@ def patch_backend(request: PatchBackendRequest) -> PatchBackendResponse:
     if not _NRF_REFERENCE_PATTERN.match(request.reference):
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid reference '{request.reference}'. Must match ^NRF-\\d{{6}}$",
+            detail=f"Invalid reference '{request.reference}'. Must match ^NRL-\\d{{6}}$",
         )
 
     backend_config = BackendConfig()
