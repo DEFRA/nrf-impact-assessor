@@ -52,7 +52,7 @@ make sqs-depth                                # visible + in-flight counts
 make sqs-purge                                # clear the queue
 ```
 
-The default payload lives at `scripts/sample_quote_payload.json` and matches the quote schema the real `nrf-backend` publishes: `reference` (`NRL-######`), `boundaryGeojson` (holding `boundaryGeometryOriginal` and `intersectingEdps`), and `housingUnits`. Each `intersectingEdps` entry carries the EDP's `EDP_Name` as `label`; `/check-boundary` also emits `overlap_area_ha`, `overlap_area_sqm` and `overlap_percentage` per entry, which the sample omits since nothing downstream reads them.
+The default payload lives at `scripts/sample_quote_payload.json` and matches the quote schema the real `nrf-backend` publishes: `reference` (`NRL-######`), `boundaryGeojson` (holding `boundaryGeometryOriginal` and `intersectingEdps`), and `housingUnits`. Each `intersectingEdps` entry carries the EDP's `EDP_Name` as `label`; `/check-boundary` also emits `overlap_area_ha`, `overlap_area_sqm`, `overlap_percentage` and `catchments` per entry, which the sample omits since nothing downstream reads them. Each `catchments` item is `{"label": <the NN catchment's `N2K_Site_N`>, "catchmentOverlapPercentage": <share of the boundary lying in that catchment, 2dp>}`; the shares sum to 100 only when the catchments cover the whole boundary.
 
 > The LocalStack gateway is remapped to host port `4568` to avoid clashing with `nrf-backend`'s own LocalStack. Override with `make sns-publish LOCALSTACK_URL=http://localhost:4566` if needed.
 

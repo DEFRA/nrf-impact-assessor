@@ -13,7 +13,10 @@ import pytest
 from fastapi.testclient import TestClient
 from shapely.geometry import LineString, Polygon
 
-from app.boundary.router import _find_intersecting_edps
+from app.boundary.router import (
+    _find_intersecting_catchments,
+    _find_intersecting_edps,
+)
 from app.boundary.validation import validate_geometry
 from app.main import app
 from tests.unit.api.conftest import _make_geojson_bytes
@@ -733,6 +736,7 @@ class TestCheckBoundaryEdpIntersection:
             "overlap_area_ha",
             "overlap_area_sqm",
             "overlap_percentage",
+            "catchments",
         }
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
@@ -815,33 +819,50 @@ class TestFindIntersectingEdpsMapping:
 
 
 class TestCheckBoundaryExcludedAreas:
-    """An exclusion-zone overlap makes the boundary ineligible for the EDP."""
+    """An exclusion-zone overlap makes the boundary ineligible for the EDP.
+
+    The zones are clipped SSSI extents lying inside the EDP boundary, so an
+    excluded boundary does intersect the EDP and the overlap is reported.
+    Ineligibility is carried by intersectingExcludedAreas alone.
+    """
 
     @patch(
         "app.boundary.router._find_intersecting_excluded_areas", _mock_excluded_areas
     )
     @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
-    def test_exclusion_hit_returns_names_and_no_edps(self, client):
+    def test_exclusion_hit_returns_names(self, client):
         response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
 
         assert response.status_code == 200
         body = response.json()
         assert body["error"] is None
         assert body["intersectingExcludedAreas"] == ["mid-Norfolk SSSI"]
-        assert body["intersectingEdps"] == []
         assert body["boundaryMetadata"] is not None
         assert body["boundaryGeometryWgs84"] is not None
 
     @patch(
         "app.boundary.router._find_intersecting_excluded_areas", _mock_excluded_areas
     )
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    def test_exclusion_hit_still_reports_the_edp_overlap(self, client):
+        """The zones sit inside the EDP, so an empty list here would be a
+        geometric falsehood. Eligibility is the exclusion list's job."""
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        body = response.json()
+        assert body["intersectingExcludedAreas"] == ["mid-Norfolk SSSI"]
+        assert len(body["intersectingEdps"]) == 2
+
+    @patch(
+        "app.boundary.router._find_intersecting_excluded_areas", _mock_excluded_areas
+    )
     @patch("app.boundary.router._find_intersecting_edps")
-    def test_exclusion_hit_skips_the_edp_query(self, mock_find_edps, client):
-        """Skipping the query is the requirement, not an incidentally empty list."""
+    def test_exclusion_hit_still_runs_the_edp_query(self, mock_find_edps, client):
+        mock_find_edps.return_value = []
         response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
 
         assert response.status_code == 200
-        mock_find_edps.assert_not_called()
+        mock_find_edps.assert_called_once()
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
     def test_no_exclusion_hit_keeps_the_edp_path(self, client):
@@ -855,3 +876,169 @@ class TestCheckBoundaryExcludedAreas:
         body = response.json()
         assert body["intersectingExcludedAreas"] == []
         assert len(body["intersectingEdps"]) == 2
+
+
+class TestFindIntersectingCatchmentsMapping:
+    """Regression tests for the row -> dict mapping in
+    _find_intersecting_catchments.
+
+    Endpoint tests mock the whole function, so they cannot catch a drift in
+    the percentage basis or the label handling. These exercise the real
+    mapping against a stubbed repository session.
+    """
+
+    def _make_row(self, label, overlap_area_sqm):
+        return SimpleNamespace(label=label, overlap_area_sqm=overlap_area_sqm)
+
+    def _run(self, rows):
+        session = MagicMock()
+        session.execute.return_value.fetchall.return_value = rows
+        repository = MagicMock()
+        repository.session.return_value.__enter__.return_value = session
+
+        # 100m x 100m == 10,000 m^2, so an overlap in m^2 maps to a
+        # percentage by dividing by 100.
+        gdf = gpd.GeoDataFrame(
+            geometry=[Polygon([(0, 0), (0, 100), (100, 100), (100, 0)])],
+            crs="EPSG:27700",
+        )
+        return _find_intersecting_catchments(gdf, repository)
+
+    def test_percentage_is_the_share_of_the_boundary(self):
+        results = self._run([self._make_row("Broads SAC", 6740.0)])
+
+        assert results == [{"label": "Broads SAC", "catchmentOverlapPercentage": 67.4}]
+
+    def test_a_boundary_split_across_two_catchments_reports_both_shares(self):
+        rows = [
+            self._make_row("Broads SAC", 6740.0),
+            self._make_row("River Wensum SAC", 3260.0),
+        ]
+
+        results = self._run(rows)
+
+        assert results == [
+            {"label": "Broads SAC", "catchmentOverlapPercentage": 67.4},
+            {"label": "River Wensum SAC", "catchmentOverlapPercentage": 32.6},
+        ]
+
+    def test_percentage_is_rounded_to_two_decimal_places(self):
+        """Matches the rounding of the sibling EDP overlap_percentage."""
+        results = self._run([self._make_row("Broads SAC", 1234.5678)])
+
+        assert results[0]["catchmentOverlapPercentage"] == 12.35
+
+    def test_shares_need_not_sum_to_one_hundred(self):
+        """Part of a boundary can sit outside every catchment. That is signal,
+        not something to normalise away."""
+        results = self._run([self._make_row("Broads SAC", 2500.0)])
+
+        assert results[0]["catchmentOverlapPercentage"] == 25.0
+
+    def test_rows_are_sorted_by_label(self):
+        rows = [
+            self._make_row("River Wensum SAC", 3260.0),
+            self._make_row("Broads SAC", 6740.0),
+        ]
+
+        results = self._run(rows)
+
+        assert [r["label"] for r in results] == ["Broads SAC", "River Wensum SAC"]
+
+    def test_unnamed_catchments_are_dropped(self):
+        """Nothing gates on this list, so a nameless catchment is noise rather
+        than the fail-open risk an unnamed exclusion zone would be."""
+        rows = [
+            self._make_row(None, 2000.0),
+            self._make_row("   ", 1000.0),
+            self._make_row("Broads SAC", 6740.0),
+        ]
+
+        results = self._run(rows)
+
+        assert [r["label"] for r in results] == ["Broads SAC"]
+
+    def test_null_overlap_area_maps_to_zero(self):
+        results = self._run([self._make_row("Broads SAC", None)])
+
+        assert results[0]["catchmentOverlapPercentage"] == 0.0
+
+
+def _mock_no_catchments(gdf, repository):
+    """Mock that returns no intersecting NN catchments."""
+    return []
+
+
+def _mock_catchments(gdf, repository):
+    """Mock that returns two intersecting NN catchments."""
+    return [
+        {"label": "Broads SAC", "catchmentOverlapPercentage": 67.4},
+        {"label": "River Wensum SAC", "catchmentOverlapPercentage": 32.6},
+    ]
+
+
+class TestCheckBoundaryCatchments:
+    """Each intersecting EDP carries the NN catchments the boundary falls in."""
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_catchments", _mock_catchments)
+    def test_every_edp_entry_carries_the_catchments(self, client):
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        assert response.status_code == 200
+        edps = response.json()["intersectingEdps"]
+        assert len(edps) == 2
+        for edp in edps:
+            assert edp["catchments"] == [
+                {"label": "Broads SAC", "catchmentOverlapPercentage": 67.4},
+                {"label": "River Wensum SAC", "catchmentOverlapPercentage": 32.6},
+            ]
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_catchments", _mock_catchments)
+    def test_existing_edp_keys_are_untouched(self, client):
+        """The field is additive; consumers reading the old keys keep working."""
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        edp = response.json()["intersectingEdps"][0]
+        assert edp["label"] == "Norfolk EDP 1"
+        assert edp["overlap_area_ha"] == 0.5
+        assert edp["overlap_area_sqm"] == 5000.0
+        assert edp["overlap_percentage"] == 25.0
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_catchments")
+    def test_no_edp_hit_skips_the_catchment_query(self, mock_find_catchments, client):
+        """With no EDP to attach them to, the catchments are not worth a query."""
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        assert response.status_code == 200
+        mock_find_catchments.assert_not_called()
+
+    @patch(
+        "app.boundary.router._find_intersecting_excluded_areas", _mock_excluded_areas
+    )
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_catchments", _mock_catchments)
+    def test_an_excluded_boundary_still_reports_its_catchments(self, client):
+        """The EDP overlap is reported for an excluded boundary, so the
+        catchments ride along on it and reach the HRA route."""
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["intersectingExcludedAreas"] == ["mid-Norfolk SSSI"]
+        assert body["intersectingEdps"][0]["catchments"] == [
+            {"label": "Broads SAC", "catchmentOverlapPercentage": 67.4},
+            {"label": "River Wensum SAC", "catchmentOverlapPercentage": 32.6},
+        ]
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    @patch("app.boundary.router._find_intersecting_catchments", _mock_no_catchments)
+    def test_edp_hit_with_no_catchments_returns_an_empty_list(self, client):
+        """The key is present on every EDP entry, so consumers never
+        key-check."""
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        for edp in response.json()["intersectingEdps"]:
+            assert edp["catchments"] == []

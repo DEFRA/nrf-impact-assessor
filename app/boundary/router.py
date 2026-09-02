@@ -23,6 +23,7 @@ from geoalchemy2.functions import (
     ST_Intersects,
     ST_Relate,
     ST_SetSRID,
+    ST_Union,
 )
 from pyproj import CRS
 from pyproj.exceptions import CRSError
@@ -35,7 +36,7 @@ from app.boundary.validation import (
 )
 from app.config import ApiServerConfig
 from app.data_sync.active_version import get_active_version
-from app.models.db import EdpBoundaryLayer, EdpExcludedAreas
+from app.models.db import EdpBoundaryLayer, EdpExcludedAreas, NnCatchments
 from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
 from app.spatial.utils import UnsupportedCRSError, ensure_crs
@@ -505,6 +506,85 @@ def _find_intersecting_edps(
     return results
 
 
+def _find_intersecting_catchments(
+    gdf: gpd.GeoDataFrame, repository: Repository
+) -> list[dict]:
+    """Query PostGIS for the NN catchments the uploaded boundary falls in.
+
+    `catchmentOverlapPercentage` is the share of the *boundary* in each
+    catchment, same denominator as the sibling `overlap_percentage`.
+
+    One catchment is several polygons, so grouping happens in SQL: dissolving
+    per name before dividing stops it being reported once per polygon.
+
+    The dissolve is ST_Union, not SUM. Same-name polygons are not guaranteed
+    disjoint — the loaded data has Broads features overlapping by ~257 m2 — and
+    summing their intersections counts the shared strip once per polygon. A
+    boundary lying inside such an overlap would report 200%.
+    """
+    input_union = gdf.union_all()
+    input_area_sqm = input_union.area
+
+    input_geom = ST_SetSRID(ST_GeomFromText(input_union.wkt), 27700)
+    intersection = ST_CollectionExtract(
+        ST_Intersection(NnCatchments.geometry, input_geom), 3
+    )
+    label = NnCatchments.attributes["N2K_Site_N"].astext
+
+    with repository.session() as session:
+        version = get_active_version(session, "nn_catchments")
+        overlap_area = ST_Area(ST_Union(intersection))
+        stmt = (
+            select(
+                label.label("label"),
+                overlap_area.label("overlap_area_sqm"),
+            )
+            .where(
+                NnCatchments.version == version,
+                ST_Intersects(NnCatchments.geometry, input_geom),
+            )
+            .group_by(label)
+            # ST_Intersects is true for an edge-only touch, which has no area.
+            .having(overlap_area > 0)
+        )
+        rows = session.execute(stmt).fetchall()
+
+    results = []
+    for row in rows:
+        if not row.label or not row.label.strip():
+            continue
+        area_sqm = row.overlap_area_sqm or 0.0
+        results.append(
+            {
+                "label": row.label.strip(),
+                "catchmentOverlapPercentage": round(
+                    (area_sqm / input_area_sqm) * 100, 2
+                )
+                if input_area_sqm > 0
+                else 0.0,
+            }
+        )
+    return sorted(results, key=lambda c: c["label"])
+
+
+def _attach_catchments(
+    intersecting_edps: list[dict], gdf: gpd.GeoDataFrame, repository: Repository
+) -> None:
+    """Add the boundary's NN catchments to each EDP entry, in place.
+
+    Kept separate from _find_intersecting_edps: the catchments are a property
+    of the boundary, not of any one EDP, so the same list rides on every entry
+    and neither query needs to know about the other.
+
+    With no EDP there is nothing to attach to, so the query is skipped.
+    """
+    if not intersecting_edps:
+        return
+    catchments = _find_intersecting_catchments(gdf, repository)
+    for edp in intersecting_edps:
+        edp["catchments"] = catchments
+
+
 def _build_invalid_geometry_response(
     gdf: gpd.GeoDataFrame, error_code: str, *, reopen_exterior_ring: bool
 ) -> JSONResponse:
@@ -577,9 +657,15 @@ async def check_boundary(
 
     A boundary that overlaps an exclusion zone (a buffered SSSI polygon) is not
     eligible for the EDP and must be routed to HRA. Such a response is a normal
-    200 with `error: null`: a non-empty `intersectingExcludedAreas` is the
-    signal, and `intersectingEdps` is then always empty. Sharing a zone edge
-    exactly does not exclude; anything past it does, down to a centimetre.
+    200 with `error: null`, and a non-empty `intersectingExcludedAreas` is the
+    *sole* signal of that. Sharing a zone edge exactly does not exclude;
+    anything past it does, down to a centimetre.
+
+    `intersectingEdps` is NOT that signal and must not be read as one. The
+    zones are clipped SSSI extents lying inside the EDP boundary, so an
+    excluded boundary overlaps the EDP too and that overlap is reported like
+    any other. Gating eligibility on a non-empty `intersectingEdps` would route
+    an excluded boundary down the EDP path instead of to HRA.
     """
     content = await geometry_file.read(_max_upload_bytes + 1)
     if len(content) > _max_upload_bytes:
@@ -671,13 +757,13 @@ def _assess_boundary(gdf: gpd.GeoDataFrame) -> JSONResponse:
     """Find EDP/exclusion-zone intersections and build the response for an
     already-validated geometry."""
     repository = _get_repository()
-    # A boundary overlapping any exclusion zone is ineligible for the EDP
-    # and goes to HRA instead, so its EDP overlap is moot — skip that query
-    # rather than compute a result the caller must not act on.
     intersecting_excluded_areas = _find_intersecting_excluded_areas(gdf, repository)
-    intersecting_edps = (
-        [] if intersecting_excluded_areas else _find_intersecting_edps(gdf, repository)
-    )
+    # Reported even when the boundary is excluded. The zones are clipped SSSI
+    # extents lying inside the EDP, so an excluded boundary really does overlap
+    # it and an empty list here would be a geometric falsehood. Ineligibility
+    # is carried by intersecting_excluded_areas alone.
+    intersecting_edps = _find_intersecting_edps(gdf, repository)
+    _attach_catchments(intersecting_edps, gdf, repository)
 
     # Extract the first Polygon/MultiPolygon geometry, stripping user-supplied
     # properties to avoid processing Personal Identifiable Information (PII).

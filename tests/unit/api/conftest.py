@@ -21,6 +21,19 @@ def _no_excluded_areas():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _no_catchments():
+    """Default every endpoint test to "no NN catchments hit".
+
+    /check-boundary queries catchments whenever an EDP is returned, so without
+    this each test that mocks a non-empty EDP result would fall through to a
+    real PostGIS connection. Catchment-specific tests override it with their
+    own @patch, which takes precedence over this fixture.
+    """
+    with patch("app.boundary.router._find_intersecting_catchments", return_value=[]):
+        yield
+
+
 def _make_geojson_bytes(
     coordinates: list | None = None,
     crs: str | None = None,
