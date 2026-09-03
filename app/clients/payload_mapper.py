@@ -52,7 +52,12 @@ def _edp_entry(label: str, result: ImpactAssessmentResult) -> dict:
             result.total.phosphorus_total_kg_yr,
         ),
         # TODO: replace with real levy once finance calculation in place
-        "levyGbp": {"min": 999, "max": 999},
+        "levyGbp": {
+            "amountExcludingVat": 999,
+            "amountInflationAdjusted": 999,
+            "baseAmount": 999,
+            "modelVersion": 1,
+        },
     }
 
 
