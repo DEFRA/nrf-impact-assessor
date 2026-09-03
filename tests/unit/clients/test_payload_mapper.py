@@ -102,8 +102,10 @@ def test_build_payload_derives_edp_from_result():
     assert edp_out["impact"]["phosphorusTotal"]["amount"] == 2.30  # NOSONAR
     assert edp_out["impact"]["phosphorusTotal"]["unit"] == "mg/I TP"
     assert edp_out["impact"]["phosphorusTotal"]["band"] == {"min": 3, "max": 3}
-    assert edp_out["levyGbp"]["min"] == 999
-    assert edp_out["levyGbp"]["max"] == 999
+    assert edp_out["levyGbp"]["amountExcludingVat"] == 999
+    assert edp_out["levyGbp"]["amountInflationAdjusted"] == 999
+    assert edp_out["levyGbp"]["baseAmount"] == 999
+    assert edp_out["levyGbp"]["modelVersion"] == 1
 
 
 def test_build_payload_excludes_top_level_totals():
