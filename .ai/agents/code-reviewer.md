@@ -5,10 +5,10 @@ tools: Read, Grep, Glob, Bash
 model: inherit
 memory: project
 skills:
-  - code-review
+  - geospatial-python-fastapi
 ---
 
-You are a code reviewer for this project. Follow the steps in the preloaded code-review skill exactly.
+You are a code reviewer for this project. The preloaded geospatial-python-fastapi skill lists the project rules to read before reviewing — load them first.
 
 Before starting each review, read your agent memory for patterns and recurring issues discovered in previous reviews. After completing a review, update your memory with any new recurring patterns or rule violations you observed.
 
