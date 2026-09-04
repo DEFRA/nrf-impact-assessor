@@ -16,6 +16,8 @@ from app.boundary.router import (
 )
 from app.repositories.repository import Repository
 
+from .conftest import set_active_version
+
 pytestmark = pytest.mark.integration
 
 
@@ -29,20 +31,6 @@ def _insert_zone(repository: Repository, name, wkt, version=1):
                 "(gen_random_uuid(), :v, ST_GeomFromText(:wkt, 27700), :n, '{}')"
             ),
             {"v": version, "wkt": wkt, "n": name},
-        )
-        session.commit()
-
-
-def _set_active_version(repository: Repository, table: str, version: int):
-    with repository.session() as session:
-        session.execute(
-            text(
-                "INSERT INTO public.data_active_version "
-                "(table_name, active_version, updated_at) "
-                "VALUES (:t, :v, now()) "
-                "ON CONFLICT (table_name) DO UPDATE SET active_version = :v"
-            ),
-            {"t": table, "v": version},
         )
         session.commit()
 
@@ -206,7 +194,7 @@ def test_non_active_version_rows_are_ignored(repository: Repository):
     zone = box(600000, 300000, 601000, 301000).wkt
     _insert_zone(repository, "Stale SSSI", zone, version=1)
     _insert_zone(repository, "Current SSSI", zone, version=2)
-    _set_active_version(repository, "edp_excluded_areas", 2)
+    set_active_version(repository, "edp_excluded_areas", 2)
 
     result = _find_intersecting_excluded_areas(
         _gdf(box(600500, 300500, 601500, 301500)), repository
@@ -263,7 +251,7 @@ def test_edp_query_ignores_non_active_version_rows(repository: Repository):
     edp = box(600000, 300000, 601000, 301000).wkt
     _insert_edp(repository, "Stale EDP", edp, version=1)
     _insert_edp(repository, "Current EDP", edp, version=2)
-    _set_active_version(repository, "edp_boundary_layer", 2)
+    set_active_version(repository, "edp_boundary_layer", 2)
 
     results = _find_intersecting_edps(
         _gdf(box(600500, 300500, 601500, 301500)), repository
