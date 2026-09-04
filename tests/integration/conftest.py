@@ -491,3 +491,23 @@ def test_data_dir() -> Path:
         Path to tests/data directory
     """
     return Path(__file__).parent.parent / "data"
+
+
+def set_active_version(repository: Repository, table: str, version: int) -> None:
+    """Point `table` at `version` in data_active_version.
+
+    Shared because the spatial-intersection tests each seed their own rows at a
+    chosen version and then have to make that version the active one; the query
+    under test filters on it.
+    """
+    with repository.session() as session:
+        session.execute(
+            text(
+                "INSERT INTO public.data_active_version "
+                "(table_name, active_version, updated_at) "
+                "VALUES (:t, :v, now()) "
+                "ON CONFLICT (table_name) DO UPDATE SET active_version = :v"
+            ),
+            {"t": table, "v": version},
+        )
+        session.commit()

@@ -15,14 +15,26 @@ from sqlalchemy import text
 from app.boundary.router import _find_intersecting_catchments
 from app.repositories.repository import Repository
 
+from .conftest import set_active_version
+
 pytestmark = pytest.mark.integration
 
 _BOUNDARY = box(600000, 300000, 601000, 301000)
 
+# Sentinel: "site_name defaults to name". None is a real, tested value here.
+_SAME = object()
 
-def _insert_catchment(repository: Repository, name, wkt, version=1):
-    """Insert one catchment polygon. `name` becomes attributes->>'N2K_Site_N'
-    and may be None to test NULL handling."""
+
+def _insert_catchment(repository: Repository, name, wkt, version=1, site_name=_SAME):
+    """Insert one catchment polygon.
+
+    `site_name` becomes attributes->>'N2K_Site_N' — the field the query
+    actually labels from — and defaults to `name` so callers that do not care
+    about the distinction can pass one value. It may be None to test NULL
+    handling. `name` is the separate top-level column, only ever set here so a
+    test can prove the label does not come from it."""
+    if site_name is _SAME:
+        site_name = name
     with repository.session() as session:
         session.execute(
             text(
@@ -31,21 +43,7 @@ def _insert_catchment(repository: Repository, name, wkt, version=1):
                 "(gen_random_uuid(), :v, ST_GeomFromText(:wkt, 27700), :n, "
                 "jsonb_build_object('N2K_Site_N', cast(:site_name as text)))"
             ),
-            {"v": version, "wkt": wkt, "n": name, "site_name": name},
-        )
-        session.commit()
-
-
-def _set_active_version(repository: Repository, table: str, version: int):
-    with repository.session() as session:
-        session.execute(
-            text(
-                "INSERT INTO public.data_active_version "
-                "(table_name, active_version, updated_at) "
-                "VALUES (:t, :v, now()) "
-                "ON CONFLICT (table_name) DO UPDATE SET active_version = :v"
-            ),
-            {"t": table, "v": version},
+            {"v": version, "wkt": wkt, "n": name, "site_name": site_name},
         )
         session.commit()
 
@@ -55,8 +53,15 @@ def _gdf(geom):
 
 
 def test_label_comes_from_the_n2k_site_name_attribute(repository: Repository):
-    _insert_catchment(repository, "Broads SAC", box(600000, 300000, 601000, 301000).wkt)
-    _set_active_version(repository, "nn_catchments", 1)
+    """The `name` column differs from the attribute here so a query that
+    labelled from the column instead would fail rather than coincide."""
+    _insert_catchment(
+        repository,
+        "not-the-label",
+        box(600000, 300000, 601000, 301000).wkt,
+        site_name="Broads SAC",
+    )
+    set_active_version(repository, "nn_catchments", 1)
 
     result = _find_intersecting_catchments(_gdf(_BOUNDARY), repository)
 
@@ -70,7 +75,7 @@ def test_boundary_split_across_two_catchments_reports_both_shares(
     _insert_catchment(
         repository, "River Wensum SAC", box(600700, 300000, 601000, 301000).wkt
     )
-    _set_active_version(repository, "nn_catchments", 1)
+    set_active_version(repository, "nn_catchments", 1)
 
     result = _find_intersecting_catchments(_gdf(_BOUNDARY), repository)
 
@@ -85,7 +90,7 @@ def test_a_multi_polygon_catchment_is_reported_once(repository: Repository):
     stops it being reported once per polygon."""
     _insert_catchment(repository, "Broads SAC", box(600000, 300000, 600400, 301000).wkt)
     _insert_catchment(repository, "Broads SAC", box(600500, 300000, 600800, 301000).wkt)
-    _set_active_version(repository, "nn_catchments", 1)
+    set_active_version(repository, "nn_catchments", 1)
 
     result = _find_intersecting_catchments(_gdf(_BOUNDARY), repository)
 
@@ -101,7 +106,7 @@ def test_overlapping_polygons_of_one_catchment_are_not_double_counted(
     """
     _insert_catchment(repository, "Broads SAC", box(600000, 300000, 600600, 301000).wkt)
     _insert_catchment(repository, "Broads SAC", box(600400, 300000, 601000, 301000).wkt)
-    _set_active_version(repository, "nn_catchments", 1)
+    set_active_version(repository, "nn_catchments", 1)
 
     result = _find_intersecting_catchments(_gdf(_BOUNDARY), repository)
 
@@ -117,7 +122,7 @@ def test_a_boundary_inside_an_overlap_does_not_exceed_one_hundred(
     otherwise report 200%."""
     _insert_catchment(repository, "Broads SAC", box(600000, 300000, 600600, 301000).wkt)
     _insert_catchment(repository, "Broads SAC", box(600400, 300000, 601000, 301000).wkt)
-    _set_active_version(repository, "nn_catchments", 1)
+    set_active_version(repository, "nn_catchments", 1)
 
     inside_the_overlap = box(600450, 300400, 600550, 300600)
 
@@ -134,7 +139,7 @@ def test_only_the_active_version_is_counted(repository: Repository):
     _insert_catchment(
         repository, "Broads SAC", box(600000, 300000, 600700, 301000).wkt, version=2
     )
-    _set_active_version(repository, "nn_catchments", 1)
+    set_active_version(repository, "nn_catchments", 1)
 
     result = _find_intersecting_catchments(_gdf(_BOUNDARY), repository)
 
@@ -144,7 +149,7 @@ def test_only_the_active_version_is_counted(repository: Repository):
 def test_a_catchment_sharing_only_an_edge_is_not_reported(repository: Repository):
     """Touching contributes no area, so reporting it at 0.00% would be noise."""
     _insert_catchment(repository, "Broads SAC", box(601000, 300000, 602000, 301000).wkt)
-    _set_active_version(repository, "nn_catchments", 1)
+    set_active_version(repository, "nn_catchments", 1)
 
     result = _find_intersecting_catchments(_gdf(_BOUNDARY), repository)
 
@@ -153,7 +158,7 @@ def test_a_catchment_sharing_only_an_edge_is_not_reported(repository: Repository
 
 def test_a_disjoint_catchment_is_not_reported(repository: Repository):
     _insert_catchment(repository, "Broads SAC", box(700000, 400000, 701000, 401000).wkt)
-    _set_active_version(repository, "nn_catchments", 1)
+    set_active_version(repository, "nn_catchments", 1)
 
     result = _find_intersecting_catchments(_gdf(_BOUNDARY), repository)
 
@@ -163,7 +168,7 @@ def test_a_disjoint_catchment_is_not_reported(repository: Repository):
 def test_shares_need_not_sum_to_one_hundred(repository: Repository):
     """Part of the boundary can sit outside every catchment."""
     _insert_catchment(repository, "Broads SAC", box(600000, 300000, 600250, 301000).wkt)
-    _set_active_version(repository, "nn_catchments", 1)
+    set_active_version(repository, "nn_catchments", 1)
 
     result = _find_intersecting_catchments(_gdf(_BOUNDARY), repository)
 
@@ -173,7 +178,7 @@ def test_shares_need_not_sum_to_one_hundred(repository: Repository):
 def test_an_unnamed_catchment_is_dropped(repository: Repository):
     _insert_catchment(repository, None, box(600000, 300000, 600700, 301000).wkt)
     _insert_catchment(repository, "Broads SAC", box(600700, 300000, 601000, 301000).wkt)
-    _set_active_version(repository, "nn_catchments", 1)
+    set_active_version(repository, "nn_catchments", 1)
 
     result = _find_intersecting_catchments(_gdf(_BOUNDARY), repository)
 

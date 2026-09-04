@@ -50,6 +50,19 @@ def _mock_edp_intersections(gdf, repository):
     ]
 
 
+def _mock_no_catchments(gdf, repository):
+    """Mock that returns no intersecting NN catchments."""
+    return []
+
+
+def _mock_catchments(gdf, repository):
+    """Mock that returns two intersecting NN catchments."""
+    return [
+        {"label": "Broads SAC", "catchmentOverlapPercentage": 67.4},
+        {"label": "River Wensum SAC", "catchmentOverlapPercentage": 32.6},
+    ]
+
+
 def _mock_excluded_areas(gdf, repository):
     """Mock that returns one intersecting exclusion zone."""
     return ["mid-Norfolk SSSI"]
@@ -962,19 +975,6 @@ class TestFindIntersectingCatchmentsMapping:
         results = self._run([self._make_row("Broads SAC", None)])
 
         assert results[0]["catchmentOverlapPercentage"] == 0.0
-
-
-def _mock_no_catchments(gdf, repository):
-    """Mock that returns no intersecting NN catchments."""
-    return []
-
-
-def _mock_catchments(gdf, repository):
-    """Mock that returns two intersecting NN catchments."""
-    return [
-        {"label": "Broads SAC", "catchmentOverlapPercentage": 67.4},
-        {"label": "River Wensum SAC", "catchmentOverlapPercentage": 32.6},
-    ]
 
 
 class TestCheckBoundaryCatchments:

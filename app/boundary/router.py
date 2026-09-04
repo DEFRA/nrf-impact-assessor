@@ -4,6 +4,7 @@ Accepts a geometry file (.geojson, .kml, or .zip containing shapefile components
 and checks whether the uploaded geometry intersects with EDP areas.
 """
 
+import asyncio
 import json
 import logging
 import tempfile
@@ -25,6 +26,7 @@ from geoalchemy2.functions import (
     ST_SetSRID,
     ST_Union,
 )
+from pydantic import BaseModel, ConfigDict, Field
 from pyproj import CRS
 from pyproj.exceptions import CRSError
 from sqlalchemy import select
@@ -87,6 +89,130 @@ _WGS84_EXTENSIONS = frozenset({_EXT_GEOJSON, _EXT_JSON, _EXT_KML})
 _SUPPORTED_EXTENSIONS = frozenset({_EXT_ZIP, _EXT_GEOJSON, _EXT_JSON, _EXT_KML})
 
 
+class GeoJsonCrs(BaseModel):
+    """The named-CRS member carried on the original-CRS geometry."""
+
+    type: str
+    properties: dict[str, str]
+
+
+class BoundaryGeometryOriginal(BaseModel):
+    """The uploaded polygon in its own CRS, which the `crs` member names."""
+
+    type: str
+    coordinates: list[list[list[float]]]
+    crs: GeoJsonCrs
+
+
+class BoundaryGeometryWgs84(BaseModel):
+    """The uploaded polygon reprojected to WGS84.
+
+    No `crs` member: RFC 7946 mandates WGS84, so naming it would be noise. The
+    field is absent from the model, not optional, to keep it off the wire.
+    """
+
+    type: str
+    coordinates: list[list[list[float]]]
+
+
+class GeoJsonFeatureCollection(BaseModel):
+    """A rejected geometry, previewed as `GeoDataFrame.to_json()` emits it.
+
+    The 400 invalid-geometry path puts a whole FeatureCollection in the
+    `boundaryGeometryWgs84` field where the 200 path puts a bare Polygon. That
+    asymmetry predates these models and the frontend preview depends on it, so
+    it is modelled as-is rather than normalised away.
+
+    Features stay plain dicts on purpose: what gets rejected may be a
+    LineString, an empty polygon, or a geometry that is missing entirely, so
+    constraining them here would turn a preview into a 500.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    features: list[dict]
+
+
+class BoundaryArea(BaseModel):
+    hectares: float
+    acres: float
+
+
+class BoundaryPerimeter(BaseModel):
+    kilometres: float
+    miles: float
+
+
+class BoundaryBounds(BaseModel):
+    """Corners of the WGS84 bounding box, each an [lon, lat] pair."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    top_left: list[float] = Field(alias="topLeft")
+    top_right: list[float] = Field(alias="topRight")
+    bottom_right: list[float] = Field(alias="bottomRight")
+    bottom_left: list[float] = Field(alias="bottomLeft")
+
+
+class BoundaryMetadata(BaseModel):
+    """Derived measurements the frontend uses to label and frame the boundary."""
+
+    area: BoundaryArea
+    perimeter: BoundaryPerimeter
+    centre: list[float]
+    bounds: BoundaryBounds
+
+
+class IntersectingCatchment(BaseModel):
+    """One nutrient-neutrality catchment the boundary falls in."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    label: str
+    catchment_overlap_percentage: float = Field(alias="catchmentOverlapPercentage")
+
+
+class IntersectingEdp(BaseModel):
+    """One EDP area the boundary overlaps.
+
+    `catchments` is a property of the boundary rather than of this EDP; it is
+    repeated on each entry so a consumer reading a single EDP has it to hand.
+    """
+
+    label: str | None
+    overlap_area_ha: float
+    overlap_area_sqm: float
+    overlap_percentage: float
+    catchments: list[IntersectingCatchment] = Field(default_factory=list)
+
+
+class CheckBoundaryResponse(BaseModel):
+    """The /check-boundary body, returned on success and on every error.
+
+    A non-empty `intersecting_excluded_areas` is the sole signal that a
+    boundary is ineligible for an EDP; `intersecting_edps` is not, and is
+    populated even for an excluded boundary. See the endpoint docstring.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    boundary_geometry_original: BoundaryGeometryOriginal | None = Field(
+        None, alias="boundaryGeometryOriginal"
+    )
+    boundary_geometry_wgs84: BoundaryGeometryWgs84 | GeoJsonFeatureCollection | None = (
+        Field(None, alias="boundaryGeometryWgs84")
+    )
+    intersecting_edps: list[IntersectingEdp] = Field(
+        default_factory=list, alias="intersectingEdps"
+    )
+    intersecting_excluded_areas: list[str] = Field(
+        default_factory=list, alias="intersectingExcludedAreas"
+    )
+    boundary_metadata: BoundaryMetadata | None = Field(None, alias="boundaryMetadata")
+    error: str | None = None
+
+
 def _compute_boundary_metadata(
     geom_projected,  # Shapely geometry in a metric CRS (e.g. BNG/EPSG:27700)
     geom_wgs84,  # Shapely geometry in WGS84
@@ -127,17 +253,27 @@ def _make_response(
     boundary_metadata: dict | None = None,
     error: str | None = None,
 ) -> JSONResponse:
-    """Build a consistent JSON response for the check-boundary endpoint."""
-    return JSONResponse(
-        status_code=status_code,
-        content={
+    """Build a consistent JSON response for the check-boundary endpoint.
+
+    Validating through CheckBoundaryResponse here, rather than letting FastAPI
+    do it, is deliberate: the handler returns JSONResponse so it can set the
+    status code on error paths, and FastAPI skips response_model validation for
+    an explicit Response. Building the model by hand keeps the declared schema
+    enforced on every response instead of only documented.
+    """
+    payload = CheckBoundaryResponse.model_validate(
+        {
             "boundaryGeometryOriginal": boundary_geometry_original,
             "boundaryGeometryWgs84": boundary_geometry_wgs84,
             "intersectingEdps": intersecting_edps or [],
             "intersectingExcludedAreas": intersecting_excluded_areas or [],
             "boundaryMetadata": boundary_metadata,
             "error": error,
-        },
+        }
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content=payload.model_dump(by_alias=True),
     )
 
 
@@ -629,6 +765,8 @@ def _build_invalid_geometry_response(
 
 @router.post(
     "/check-boundary",
+    response_model=CheckBoundaryResponse,
+    response_model_by_alias=True,
     responses={
         400: {"description": "Invalid or unreadable geometry file"},
         413: {"description": "File too large"},
@@ -638,7 +776,7 @@ def _build_invalid_geometry_response(
 async def check_boundary(
     geometry_file: UploadFile,
     boundary_filename: Annotated[str | None, Form()] = None,
-):
+) -> JSONResponse:
     """Check whether an uploaded geometry intersects with EDP areas.
 
     Supported formats:
@@ -681,8 +819,15 @@ async def check_boundary(
 
     content, exterior_was_unclosed = _close_unclosed_rings(content, ext)
 
+    # Both halves below are fully synchronous and slow enough to matter:
+    # parsing writes the upload to disk and hands it to GDAL, and assessment
+    # makes three PostGIS round-trips through SQLAlchemy. Called directly from
+    # this async handler they would block the event loop for the whole request.
+    # The awaits sit inside the `with`, so the temporary directory outlives the
+    # worker thread that reads from it.
     with tempfile.TemporaryDirectory() as tmpdir:
-        gdf, error_response = _load_and_validate_geometry(
+        gdf, error_response = await asyncio.to_thread(
+            _load_and_validate_geometry,
             content,
             filename,
             ext,
@@ -693,7 +838,7 @@ async def check_boundary(
         if error_response is not None:
             return error_response
 
-        return _assess_boundary(gdf)
+        return await asyncio.to_thread(_assess_boundary, gdf)
 
 
 def _load_and_validate_geometry(
