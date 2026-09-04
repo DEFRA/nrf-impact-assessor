@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AppConfig(BaseSettings):
-    model_config = SettingsConfigDict()
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     python_env: str | None = None
     host: str = "127.0.0.1"
     port: int = 8086
