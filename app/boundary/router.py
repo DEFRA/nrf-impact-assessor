@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Annotated
 
 import geopandas as gpd
-from fastapi import APIRouter, Form, UploadFile
+from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 from geoalchemy2.functions import (
     ST_Area,
@@ -180,18 +180,20 @@ class IntersectingEdp(BaseModel):
     repeated on each entry so a consumer reading a single EDP has it to hand.
     """
 
+    model_config = ConfigDict(populate_by_name=True)
+
     label: str | None
-    overlap_area_ha: float
-    overlap_area_sqm: float
-    overlap_percentage: float
+    overlap_area_ha: float = Field(alias="overlapAreaHa")
+    overlap_area_sqm: float = Field(alias="overlapAreaSqm")
+    overlap_percentage: float = Field(alias="overlapPercentage")
     catchments: list[IntersectingCatchment] = Field(default_factory=list)
 
 
 class CheckBoundaryResponse(BaseModel):
     """The /check-boundary body, returned on success and on every error.
 
-    A non-empty `intersecting_excluded_areas` is the sole signal that a
-    boundary is ineligible for an EDP; `intersecting_edps` is not, and is
+    A non-empty `intersectingExcludedAreas` is the sole signal that a
+    boundary is ineligible for an EDP; `intersectingEdps` is not, and is
     populated even for an excluded boundary. See the endpoint docstring.
     """
 
@@ -632,9 +634,9 @@ def _find_intersecting_edps(
         results.append(
             {
                 "label": edp_name,
-                "overlap_area_ha": round(area_sqm / 10000.0, 4),
-                "overlap_area_sqm": round(area_sqm, 2),
-                "overlap_percentage": round((area_sqm / input_area_sqm) * 100, 2)
+                "overlapAreaHa": round(area_sqm / 10000.0, 4),
+                "overlapAreaSqm": round(area_sqm, 2),
+                "overlapPercentage": round((area_sqm / input_area_sqm) * 100, 2)
                 if input_area_sqm > 0
                 else 0.0,
             }
@@ -648,7 +650,7 @@ def _find_intersecting_catchments(
     """Query PostGIS for the NN catchments the uploaded boundary falls in.
 
     `catchmentOverlapPercentage` is the share of the *boundary* in each
-    catchment, same denominator as the sibling `overlap_percentage`.
+    catchment, same denominator as the sibling `overlapPercentage`.
 
     One catchment is several polygons, so grouping happens in SQL: dissolving
     per name before dividing stops it being reported once per polygon.
@@ -774,8 +776,8 @@ def _build_invalid_geometry_response(
     },
 )
 async def check_boundary(
-    geometry_file: UploadFile,
-    boundary_filename: Annotated[str | None, Form()] = None,
+    geometry_file: Annotated[UploadFile, File(alias="geometryFile")],
+    boundary_filename: Annotated[str | None, Form(alias="boundaryFilename")] = None,
 ) -> JSONResponse:
     """Check whether an uploaded geometry intersects with EDP areas.
 
@@ -784,7 +786,7 @@ async def check_boundary(
     - .geojson or .json
     - .kml
 
-    For zip uploads the caller (the backend service) passes `boundary_filename`:
+    For zip uploads the caller (the backend service) passes `boundaryFilename`:
     the bare filename of the entry that was selected during the backend's
     zip-safety validation step — today always a .shp, but the contract is
     format-agnostic. This service then opens that specific file rather than

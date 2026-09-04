@@ -37,15 +37,15 @@ def _mock_edp_intersections(gdf, repository):
     return [
         {
             "label": "Norfolk EDP 1",
-            "overlap_area_ha": 0.5,
-            "overlap_area_sqm": 5000.0,
-            "overlap_percentage": 25.0,
+            "overlapAreaHa": 0.5,
+            "overlapAreaSqm": 5000.0,
+            "overlapPercentage": 25.0,
         },
         {
             "label": "Norfolk EDP 2",
-            "overlap_area_ha": 0.3,
-            "overlap_area_sqm": 3000.0,
-            "overlap_percentage": 15.0,
+            "overlapAreaHa": 0.3,
+            "overlapAreaSqm": 3000.0,
+            "overlapPercentage": 15.0,
         },
     ]
 
@@ -72,7 +72,7 @@ def _post_boundary(client, filename, content, content_type="application/json"):
     """Post a file to the /check-boundary endpoint."""
     return client.post(
         "/check-boundary",
-        files={"geometry_file": (filename, BytesIO(content), content_type)},
+        files={"geometryFile": (filename, BytesIO(content), content_type)},
     )
 
 
@@ -81,13 +81,13 @@ def _post_boundary_file(
 ):
     """Post a file buffer to the /check-boundary endpoint."""
     data = (
-        {"boundary_filename": boundary_filename}
+        {"boundaryFilename": boundary_filename}
         if boundary_filename is not None
         else None
     )
     return client.post(
         "/check-boundary",
-        files={"geometry_file": (filename, file_buf, content_type)},
+        files={"geometryFile": (filename, file_buf, content_type)},
         data=data,
     )
 
@@ -736,8 +736,8 @@ class TestCheckBoundaryEdpIntersection:
         assert len(body["intersectingEdps"]) == 2
         assert body["intersectingEdps"][0]["label"] == "Norfolk EDP 1"
         assert body["intersectingEdps"][1]["label"] == "Norfolk EDP 2"
-        assert body["intersectingEdps"][0]["overlap_area_ha"] == pytest.approx(0.5)
-        assert body["intersectingEdps"][0]["overlap_percentage"] == pytest.approx(25.0)
+        assert body["intersectingEdps"][0]["overlapAreaHa"] == pytest.approx(0.5)
+        assert body["intersectingEdps"][0]["overlapPercentage"] == pytest.approx(25.0)
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
     def test_intersections_omit_geometry(self, client):
@@ -746,9 +746,9 @@ class TestCheckBoundaryEdpIntersection:
 
         assert set(response.json()["intersectingEdps"][0]) == {
             "label",
-            "overlap_area_ha",
-            "overlap_area_sqm",
-            "overlap_percentage",
+            "overlapAreaHa",
+            "overlapAreaSqm",
+            "overlapPercentage",
             "catchments",
         }
 
@@ -936,7 +936,7 @@ class TestFindIntersectingCatchmentsMapping:
         ]
 
     def test_percentage_is_rounded_to_two_decimal_places(self):
-        """Matches the rounding of the sibling EDP overlap_percentage."""
+        """Matches the rounding of the sibling EDP overlapPercentage."""
         results = self._run([self._make_row("Broads SAC", 1234.5678)])
 
         assert results[0]["catchmentOverlapPercentage"] == 12.35
@@ -1002,9 +1002,9 @@ class TestCheckBoundaryCatchments:
 
         edp = response.json()["intersectingEdps"][0]
         assert edp["label"] == "Norfolk EDP 1"
-        assert edp["overlap_area_ha"] == 0.5
-        assert edp["overlap_area_sqm"] == 5000.0
-        assert edp["overlap_percentage"] == 25.0
+        assert edp["overlapAreaHa"] == 0.5
+        assert edp["overlapAreaSqm"] == 5000.0
+        assert edp["overlapPercentage"] == 25.0
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     @patch("app.boundary.router._find_intersecting_catchments")
