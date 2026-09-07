@@ -72,7 +72,7 @@ def _post_boundary(client, filename, content, content_type="application/json"):
     """Post a file to the /check-boundary endpoint."""
     return client.post(
         "/check-boundary",
-        files={"geometryFile": (filename, BytesIO(content), content_type)},
+        files={"geometry_file": (filename, BytesIO(content), content_type)},
     )
 
 
@@ -81,13 +81,13 @@ def _post_boundary_file(
 ):
     """Post a file buffer to the /check-boundary endpoint."""
     data = (
-        {"boundaryFilename": boundary_filename}
+        {"boundary_filename": boundary_filename}
         if boundary_filename is not None
         else None
     )
     return client.post(
         "/check-boundary",
-        files={"geometryFile": (filename, file_buf, content_type)},
+        files={"geometry_file": (filename, file_buf, content_type)},
         data=data,
     )
 

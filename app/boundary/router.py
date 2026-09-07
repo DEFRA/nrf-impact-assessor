@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Annotated
 
 import geopandas as gpd
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, Form, UploadFile
 from fastapi.responses import JSONResponse
 from geoalchemy2.functions import (
     ST_Area,
@@ -775,8 +775,8 @@ def _build_invalid_geometry_response(
     },
 )
 async def check_boundary(
-    geometry_file: Annotated[UploadFile, File(alias="geometryFile")],
-    boundary_filename: Annotated[str | None, Form(alias="boundaryFilename")] = None,
+    geometry_file: UploadFile,
+    boundary_filename: Annotated[str | None, Form()] = None,
 ) -> JSONResponse:
     """Check whether an uploaded geometry intersects with EDP areas.
 
@@ -785,7 +785,7 @@ async def check_boundary(
     - .geojson or .json
     - .kml
 
-    For zip uploads the caller (the backend service) passes `boundaryFilename`:
+    For zip uploads the caller (the backend service) passes `boundary_filename`:
     the bare filename of the entry that was selected during the backend's
     zip-safety validation step — today always a .shp, but the contract is
     format-agnostic. This service then opens that specific file rather than
