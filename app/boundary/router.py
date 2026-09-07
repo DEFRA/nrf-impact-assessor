@@ -27,6 +27,7 @@ from geoalchemy2.functions import (
     ST_Union,
 )
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 from pyproj import CRS
 from pyproj.exceptions import CRSError
 from sqlalchemy import select
@@ -89,14 +90,26 @@ _WGS84_EXTENSIONS = frozenset({_EXT_GEOJSON, _EXT_JSON, _EXT_KML})
 _SUPPORTED_EXTENSIONS = frozenset({_EXT_ZIP, _EXT_GEOJSON, _EXT_JSON, _EXT_KML})
 
 
-class GeoJsonCrs(BaseModel):
+class _WireModel(BaseModel):
+    """Base for every model on the /check-boundary wire contract.
+
+    Fields stay snake_case in Python and serialise as camelCase via the alias
+    generator, so no field needs to spell its own alias. `populate_by_name`
+    keeps construction by field name working for the handlers that build these
+    models directly.
+    """
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+
+class GeoJsonCrs(_WireModel):
     """The named-CRS member carried on the original-CRS geometry."""
 
     type: str
     properties: dict[str, str]
 
 
-class BoundaryGeometryOriginal(BaseModel):
+class BoundaryGeometryOriginal(_WireModel):
     """The uploaded polygon in its own CRS, which the `crs` member names."""
 
     type: str
@@ -104,7 +117,7 @@ class BoundaryGeometryOriginal(BaseModel):
     crs: GeoJsonCrs
 
 
-class BoundaryGeometryWgs84(BaseModel):
+class BoundaryGeometryWgs84(_WireModel):
     """The uploaded polygon reprojected to WGS84.
 
     No `crs` member: RFC 7946 mandates WGS84, so naming it would be noise. The
@@ -115,7 +128,7 @@ class BoundaryGeometryWgs84(BaseModel):
     coordinates: list[list[list[float]]]
 
 
-class GeoJsonFeatureCollection(BaseModel):
+class GeoJsonFeatureCollection(_WireModel):
     """A rejected geometry, previewed as `GeoDataFrame.to_json()` emits it.
 
     The 400 invalid-geometry path puts a whole FeatureCollection in the
@@ -134,28 +147,26 @@ class GeoJsonFeatureCollection(BaseModel):
     features: list[dict]
 
 
-class BoundaryArea(BaseModel):
+class BoundaryArea(_WireModel):
     hectares: float
     acres: float
 
 
-class BoundaryPerimeter(BaseModel):
+class BoundaryPerimeter(_WireModel):
     kilometres: float
     miles: float
 
 
-class BoundaryBounds(BaseModel):
+class BoundaryBounds(_WireModel):
     """Corners of the WGS84 bounding box, each an [lon, lat] pair."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
-    top_left: list[float] = Field(alias="topLeft")
-    top_right: list[float] = Field(alias="topRight")
-    bottom_right: list[float] = Field(alias="bottomRight")
-    bottom_left: list[float] = Field(alias="bottomLeft")
+    top_left: list[float]
+    top_right: list[float]
+    bottom_right: list[float]
+    bottom_left: list[float]
 
 
-class BoundaryMetadata(BaseModel):
+class BoundaryMetadata(_WireModel):
     """Derived measurements the frontend uses to label and frame the boundary."""
 
     area: BoundaryArea
@@ -164,16 +175,14 @@ class BoundaryMetadata(BaseModel):
     bounds: BoundaryBounds
 
 
-class IntersectingCatchment(BaseModel):
+class IntersectingCatchment(_WireModel):
     """One nutrient-neutrality catchment the boundary falls in."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
     label: str
-    catchment_overlap_percentage: float = Field(alias="catchmentOverlapPercentage")
+    catchment_overlap_percentage: float
 
 
-class IntersectingEdp(BaseModel):
+class IntersectingEdp(_WireModel):
     """One EDP area the boundary overlaps.
 
     `catchments` is a property of the boundary rather than of this EDP; it is
@@ -187,29 +196,21 @@ class IntersectingEdp(BaseModel):
     catchments: list[IntersectingCatchment] = Field(default_factory=list)
 
 
-class CheckBoundaryResponse(BaseModel):
+class CheckBoundaryResponse(_WireModel):
     """The /check-boundary body, returned on success and on every error.
 
-    A non-empty `intersecting_excluded_areas` is the sole signal that a
-    boundary is ineligible for an EDP; `intersecting_edps` is not, and is
+    A non-empty `intersectingExcludedAreas` is the sole signal that a
+    boundary is ineligible for an EDP; `intersectingEdps` is not, and is
     populated even for an excluded boundary. See the endpoint docstring.
     """
 
-    model_config = ConfigDict(populate_by_name=True)
-
-    boundary_geometry_original: BoundaryGeometryOriginal | None = Field(
-        None, alias="boundaryGeometryOriginal"
-    )
+    boundary_geometry_original: BoundaryGeometryOriginal | None = None
     boundary_geometry_wgs84: BoundaryGeometryWgs84 | GeoJsonFeatureCollection | None = (
-        Field(None, alias="boundaryGeometryWgs84")
+        None
     )
-    intersecting_edps: list[IntersectingEdp] = Field(
-        default_factory=list, alias="intersectingEdps"
-    )
-    intersecting_excluded_areas: list[str] = Field(
-        default_factory=list, alias="intersectingExcludedAreas"
-    )
-    boundary_metadata: BoundaryMetadata | None = Field(None, alias="boundaryMetadata")
+    intersecting_edps: list[IntersectingEdp] = Field(default_factory=list)
+    intersecting_excluded_areas: list[str] = Field(default_factory=list)
+    boundary_metadata: BoundaryMetadata | None = None
     error: str | None = None
 
 
@@ -632,9 +633,9 @@ def _find_intersecting_edps(
         results.append(
             {
                 "label": edp_name,
-                "overlap_area_ha": round(area_sqm / 10000.0, 4),
-                "overlap_area_sqm": round(area_sqm, 2),
-                "overlap_percentage": round((area_sqm / input_area_sqm) * 100, 2)
+                "overlapAreaHa": round(area_sqm / 10000.0, 4),
+                "overlapAreaSqm": round(area_sqm, 2),
+                "overlapPercentage": round((area_sqm / input_area_sqm) * 100, 2)
                 if input_area_sqm > 0
                 else 0.0,
             }
@@ -648,7 +649,7 @@ def _find_intersecting_catchments(
     """Query PostGIS for the NN catchments the uploaded boundary falls in.
 
     `catchmentOverlapPercentage` is the share of the *boundary* in each
-    catchment, same denominator as the sibling `overlap_percentage`.
+    catchment, same denominator as the sibling `overlapPercentage`.
 
     One catchment is several polygons, so grouping happens in SQL: dissolving
     per name before dividing stops it being reported once per polygon.
