@@ -3,7 +3,11 @@
 import pytest
 from pydantic import ValidationError
 
-from app.models.job import BoundaryGeojson, ImpactAssessmentJob, IntersectingEdp
+from app.models.job import (
+    BoundaryGeojson,
+    ImpactAssessmentJob,
+    IntersectingEdp,
+)
 
 # -- Fixtures --
 
@@ -111,3 +115,20 @@ def test_intersecting_edp_ignores_retired_fields():
 
     assert edp.label == "Test EDP"
     assert not hasattr(edp, "n2k_site_name")
+
+
+# -- Catchments on the intersecting EDPs --
+
+
+def test_catchments_on_the_job_are_ignored():
+    """The backend still sends them; the callback recomputes instead, so the
+    model must tolerate the key without carrying it."""
+    edp = IntersectingEdp.model_validate(
+        {
+            "label": "Norfolk Fens east",
+            "catchments": [{"label": "Broads SAC", "catchmentId": "1042"}],
+        }
+    )
+
+    assert edp.label == "Norfolk Fens east"
+    assert not hasattr(edp, "catchments")

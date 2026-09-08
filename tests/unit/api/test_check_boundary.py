@@ -16,6 +16,7 @@ from shapely.geometry import LineString, Polygon
 from app.boundary.router import (
     _find_intersecting_catchments,
     _find_intersecting_edps,
+    _make_response,
 )
 from app.boundary.validation import validate_geometry
 from app.main import app
@@ -58,8 +59,16 @@ def _mock_no_catchments(gdf, repository):
 def _mock_catchments(gdf, repository):
     """Mock that returns two intersecting NN catchments."""
     return [
-        {"label": "Broads SAC", "catchmentOverlapPercentage": 67.4},
-        {"label": "River Wensum SAC", "catchmentOverlapPercentage": 32.6},
+        {
+            "label": "Broads SAC",
+            "catchmentOverlapPercentage": 67.4,
+            "catchmentId": "1042",
+        },
+        {
+            "label": "River Wensum SAC",
+            "catchmentOverlapPercentage": 32.6,
+            "catchmentId": "2001",
+        },
     ]
 
 
@@ -891,6 +900,46 @@ class TestCheckBoundaryExcludedAreas:
         assert len(body["intersectingEdps"]) == 2
 
 
+class TestCatchmentWireContract:
+    """The response is validated through CheckBoundaryResponse by hand, so a
+    field missing from the wire model is dropped silently. These go through
+    _make_response rather than asserting on the query result, which is where
+    catchmentId was lost once already."""
+
+    def _catchments_in_response(self, catchment):
+        response = _make_response(
+            200,
+            intersecting_edps=[
+                {
+                    "label": "Norfolk EDP",
+                    "overlapAreaHa": 1.0,
+                    "overlapAreaSqm": 10000.0,
+                    "overlapPercentage": 100.0,
+                    "catchments": [catchment],
+                }
+            ],
+        )
+        return json.loads(response.body)["intersectingEdps"][0]["catchments"][0]
+
+    def test_catchment_id_survives_the_wire_model(self):
+        got = self._catchments_in_response(
+            {
+                "label": "Broads SAC",
+                "catchmentOverlapPercentage": 67.4,
+                "catchmentId": "1042",
+            }
+        )
+
+        assert got["catchmentId"] == "1042"
+
+    def test_a_catchment_without_an_id_serialises_as_null(self):
+        got = self._catchments_in_response(
+            {"label": "Broads SAC", "catchmentOverlapPercentage": 67.4}
+        )
+
+        assert got["catchmentId"] is None
+
+
 class TestFindIntersectingCatchmentsMapping:
     """Regression tests for the row -> dict mapping in
     _find_intersecting_catchments.
@@ -900,8 +949,12 @@ class TestFindIntersectingCatchmentsMapping:
     mapping against a stubbed repository session.
     """
 
-    def _make_row(self, label, overlap_area_sqm):
-        return SimpleNamespace(label=label, overlap_area_sqm=overlap_area_sqm)
+    def _make_row(self, label, overlap_area_sqm, catchment_id=None):
+        return SimpleNamespace(
+            label=label,
+            overlap_area_sqm=overlap_area_sqm,
+            catchment_id=catchment_id,
+        )
 
     def _run(self, rows):
         session = MagicMock()
@@ -920,7 +973,13 @@ class TestFindIntersectingCatchmentsMapping:
     def test_percentage_is_the_share_of_the_boundary(self):
         results = self._run([self._make_row("Broads SAC", 6740.0)])
 
-        assert results == [{"label": "Broads SAC", "catchmentOverlapPercentage": 67.4}]
+        assert results == [
+            {
+                "label": "Broads SAC",
+                "catchmentOverlapPercentage": 67.4,
+                "catchmentId": None,
+            }
+        ]
 
     def test_a_boundary_split_across_two_catchments_reports_both_shares(self):
         rows = [
@@ -931,8 +990,16 @@ class TestFindIntersectingCatchmentsMapping:
         results = self._run(rows)
 
         assert results == [
-            {"label": "Broads SAC", "catchmentOverlapPercentage": 67.4},
-            {"label": "River Wensum SAC", "catchmentOverlapPercentage": 32.6},
+            {
+                "label": "Broads SAC",
+                "catchmentOverlapPercentage": 67.4,
+                "catchmentId": None,
+            },
+            {
+                "label": "River Wensum SAC",
+                "catchmentOverlapPercentage": 32.6,
+                "catchmentId": None,
+            },
         ]
 
     def test_percentage_is_rounded_to_two_decimal_places(self):
@@ -947,6 +1014,11 @@ class TestFindIntersectingCatchmentsMapping:
         results = self._run([self._make_row("Broads SAC", 2500.0)])
 
         assert results[0]["catchmentOverlapPercentage"] == 25.0
+
+    def test_the_catchment_id_is_passed_through(self):
+        results = self._run([self._make_row("Broads SAC", 6740.0, "1042")])
+
+        assert results[0]["catchmentId"] == "1042"
 
     def test_rows_are_sorted_by_label(self):
         rows = [
@@ -990,8 +1062,16 @@ class TestCheckBoundaryCatchments:
         assert len(edps) == 2
         for edp in edps:
             assert edp["catchments"] == [
-                {"label": "Broads SAC", "catchmentOverlapPercentage": 67.4},
-                {"label": "River Wensum SAC", "catchmentOverlapPercentage": 32.6},
+                {
+                    "label": "Broads SAC",
+                    "catchmentOverlapPercentage": 67.4,
+                    "catchmentId": "1042",
+                },
+                {
+                    "label": "River Wensum SAC",
+                    "catchmentOverlapPercentage": 32.6,
+                    "catchmentId": "2001",
+                },
             ]
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
@@ -1029,8 +1109,16 @@ class TestCheckBoundaryCatchments:
         body = response.json()
         assert body["intersectingExcludedAreas"] == ["mid-Norfolk SSSI"]
         assert body["intersectingEdps"][0]["catchments"] == [
-            {"label": "Broads SAC", "catchmentOverlapPercentage": 67.4},
-            {"label": "River Wensum SAC", "catchmentOverlapPercentage": 32.6},
+            {
+                "label": "Broads SAC",
+                "catchmentOverlapPercentage": 67.4,
+                "catchmentId": "1042",
+            },
+            {
+                "label": "River Wensum SAC",
+                "catchmentOverlapPercentage": 32.6,
+                "catchmentId": "2001",
+            },
         ]
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
