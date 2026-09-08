@@ -5,6 +5,7 @@ import logging
 from app.clients.bands import get_band
 from app.models.domain import CatchmentImpact, ImpactAssessmentResult
 from app.models.enums import EdpType
+from app.models.job import IntersectingEdp
 
 logger = logging.getLogger(__name__)
 
@@ -42,15 +43,18 @@ def _provisional_edp_id(catchments: list[CatchmentImpact]) -> str:
     return min(ids)
 
 
-def _edp_entry(label: str, result: ImpactAssessmentResult) -> dict:
+def _edp_entry(
+    job_edp: IntersectingEdp, result: ImpactAssessmentResult, catchments: list[dict]
+) -> dict:
     return {
         "edpId": _provisional_edp_id(result.catchment_impacts),
-        "edpName": label,
+        "edpName": job_edp.label,
         "edpType": EdpType.NUTRIENT,
         "impact": _impact_block(
             result.total.nitrogen_total_kg_yr,
             result.total.phosphorus_total_kg_yr,
         ),
+        "catchments": catchments,
         # TODO: replace with real levy once finance calculation in place
         "levyGbp": {
             "amountExcludingVat": 999,
@@ -63,7 +67,8 @@ def _edp_entry(label: str, result: ImpactAssessmentResult) -> dict:
 
 def build_quote_patch_payload(
     results: list[ImpactAssessmentResult],
-    edp_labels: list[str],
+    intersecting_edps: list[IntersectingEdp],
+    catchments: list[dict] | None = None,
 ) -> dict:
     """Build the PATCH body for nrf-backend from assessment results.
 
@@ -75,8 +80,11 @@ def build_quote_patch_payload(
 
     Args:
         results: Assessment results (typically one per development).
-        edp_labels: EDP_Name values for the EDPs the boundary intersects,
-            taken from the job's `intersectingEdps`.
+        intersecting_edps: The EDPs the boundary intersects, taken from the
+            job's `intersectingEdps`.
+        catchments: The boundary's NN catchments, as computed by
+            find_intersecting_catchments against the same data version the
+            assessment ran on.
 
     Returns:
         Dict matching the nrf-backend PATCH /quotes/{reference} schema.
@@ -90,19 +98,20 @@ def build_quote_patch_payload(
     if not result.catchment_impacts:
         return {"edps": []}
 
-    if not edp_labels:
+    if not intersecting_edps:
         logger.error("No intersecting EDPs on the job, cannot name the EDP entry")
         return {"edps": []}
 
-    if len(edp_labels) > 1:
+    if len(intersecting_edps) > 1:
         # The totals are per development, so they cannot be divided between
         # EDPs, and there is no per-EDP id to keep the entries distinct.
         # Sending them all the full figures would over-report and, once the
         # levy calculation is real, over-charge.
+        labels = ", ".join(edp.label for edp in intersecting_edps)
         logger.error(
-            f"Boundary intersects {len(edp_labels)} EDPs ({', '.join(edp_labels)}); "
+            f"Boundary intersects {len(intersecting_edps)} EDPs ({labels}); "
             "impacts cannot be attributed per EDP, skipping callback payload"
         )
         return {"edps": []}
 
-    return {"edps": [_edp_entry(edp_labels[0], result)]}
+    return {"edps": [_edp_entry(intersecting_edps[0], result, catchments or [])]}

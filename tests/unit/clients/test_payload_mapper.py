@@ -11,6 +11,7 @@ from app.models.domain import (
     WastewaterImpact,
 )
 from app.models.enums import EdpType
+from app.models.job import IntersectingEdp
 
 
 def _make_catchment_impact(
@@ -85,11 +86,24 @@ def _make_result(
 EDP_LABEL = "Broads SAC (Yare & Bure) & Wensum SAC"
 
 
+def _job_edp(label=EDP_LABEL):
+    return IntersectingEdp(label=label)
+
+
+CATCHMENTS = [
+    {
+        "label": "Broads SAC",
+        "catchmentId": "1042",
+        "catchmentOverlapPercentage": 67.4,
+    }
+]
+
+
 def test_build_payload_derives_edp_from_result():
     """Single catchment produces one EDP named for the EDP, not the catchment."""
     result = _make_result(n_total=10.505, p_total=2.304)
 
-    payload = build_quote_patch_payload([result], [EDP_LABEL])
+    payload = build_quote_patch_payload([result], [_job_edp()])
 
     assert len(payload["edps"]) == 1
     edp_out = payload["edps"][0]
@@ -112,7 +126,7 @@ def test_build_payload_excludes_top_level_totals():
     """Payload must not include totalNitrogen/totalPhosphorus (rejected by backend)."""
     result = _make_result(n_total=10.505, p_total=2.304)
 
-    payload = build_quote_patch_payload([result], [EDP_LABEL])
+    payload = build_quote_patch_payload([result], [_job_edp()])
 
     assert "totalNitrogen" not in payload
     assert "totalPhosphorus" not in payload
@@ -149,7 +163,7 @@ def test_build_payload_multiple_catchments_one_edp():
     entry per catchment duplicated them and made nrf-backend's levy sum
     double-count.
     """
-    payload = build_quote_patch_payload([_two_catchment_result()], [EDP_LABEL])
+    payload = build_quote_patch_payload([_two_catchment_result()], [_job_edp()])
 
     assert len(payload["edps"]) == 1
     edp_out = payload["edps"][0]
@@ -161,7 +175,7 @@ def test_build_payload_multiple_catchments_one_edp():
 
 def test_build_payload_edp_id_is_lowest_catchment_id():
     """edpId stays provisional (lowest catchment OID) but must be deterministic."""
-    payload = build_quote_patch_payload([_two_catchment_result()], [EDP_LABEL])
+    payload = build_quote_patch_payload([_two_catchment_result()], [_job_edp()])
 
     assert payload["edps"][0]["edpId"] == "10"
 
@@ -179,21 +193,23 @@ def test_build_payload_multiple_edp_labels():
     """Two EDPs cannot be attributed: totals are per development, not per EDP."""
     result = _make_result()
 
-    payload = build_quote_patch_payload([result], [EDP_LABEL, "Norfolk EDP 2"])
+    payload = build_quote_patch_payload(
+        [result], [_job_edp(), _job_edp(label="Norfolk EDP 2")]
+    )
 
     assert payload == {"edps": []}
 
 
 def test_build_payload_empty_results():
     """Empty results list returns empty edps with no top-level totals."""
-    payload = build_quote_patch_payload([], [EDP_LABEL])
+    payload = build_quote_patch_payload([], [_job_edp()])
     assert payload == {"edps": []}
 
 
 def test_build_payload_no_nn_catchment():
     """Result with no catchment_impacts returns empty edps."""
     result = _make_result(catchment_impacts=[])
-    payload = build_quote_patch_payload([result], [EDP_LABEL])
+    payload = build_quote_patch_payload([result], [_job_edp()])
     assert payload == {"edps": []}
 
 
@@ -201,7 +217,29 @@ def test_build_payload_rounds_to_two_decimals():
     """Amounts in EDPs and top-level totals are rounded to 2 decimal places."""
     result = _make_result(n_total=10.999, p_total=0.001)
 
-    payload = build_quote_patch_payload([result], [EDP_LABEL])
+    payload = build_quote_patch_payload([result], [_job_edp()])
 
     assert payload["edps"][0]["impact"]["nitrogenTotal"]["amount"] == 11.0  # NOSONAR
     assert payload["edps"][0]["impact"]["phosphorusTotal"]["amount"] == 0.0  # NOSONAR
+
+
+# -- Catchments block --
+
+
+def test_catchments_are_carried_onto_the_edp_entry():
+    """The mapper does not compute them; the orchestrator queries PostGIS and
+    passes them in, so the mapper stays a pure function of its arguments."""
+    result = _make_result()
+
+    payload = build_quote_patch_payload([result], [_job_edp()], CATCHMENTS)
+
+    assert payload["edps"][0]["catchments"] == CATCHMENTS
+
+
+def test_catchments_default_to_empty_when_not_supplied():
+    """A failed catchment query must not cost the assessment its callback."""
+    result = _make_result()
+
+    payload = build_quote_patch_payload([result], [_job_edp()])
+
+    assert payload["edps"][0]["catchments"] == []

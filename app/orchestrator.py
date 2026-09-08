@@ -9,6 +9,7 @@ from shapely.geometry import shape
 
 from app.assessments.adapters import nutrient_adapter
 from app.assessments.reference_data import assert_reference_data_present
+from app.boundary.catchments import find_intersecting_catchments
 from app.clients.backend_client import BackendClient
 from app.clients.payload_mapper import build_quote_patch_payload
 from app.common.tracing import ctx_trace_id
@@ -227,6 +228,27 @@ class JobOrchestrator:
 
         return gdf
 
+    def _boundary_catchments(self, job: ImpactAssessmentJob) -> list[dict]:
+        """The NN catchments the job's boundary falls in.
+
+        Failures are swallowed: the catchments decorate a callback whose reason
+        to exist is the assessment, so losing them must not lose the results.
+        """
+        if not job.boundary_geojson:
+            return []
+        try:
+            geom = shape(job.boundary_geojson.boundary_geometry_original)
+            if shapely.has_z(geom):
+                geom = shapely.force_2d(geom)
+            gdf = gpd.GeoDataFrame(geometry=[geom], crs="EPSG:27700")
+            return find_intersecting_catchments(gdf, self.repository)
+        except Exception:
+            logger.exception(
+                f"Could not resolve catchments for quote {job.reference}; "
+                "sending the callback without them"
+            )
+            return []
+
     def _send_results_callback(
         self, job: ImpactAssessmentJob, dataframes: dict
     ) -> None:
@@ -267,15 +289,18 @@ class JobOrchestrator:
                 )
                 return
 
-            edp_labels = [
-                edp.label
-                for edp in (
-                    job.boundary_geojson.intersecting_edps
-                    if job.boundary_geojson
-                    else []
-                )
-            ]
-            payload = build_quote_patch_payload(results=results, edp_labels=edp_labels)
+            intersecting_edps = (
+                job.boundary_geojson.intersecting_edps if job.boundary_geojson else []
+            )
+            # Recomputed, not taken off the job: the backend's copy was made
+            # when the boundary was checked, which may be an older
+            # nn_catchments version than the one just assessed against.
+            catchments = self._boundary_catchments(job)
+            payload = build_quote_patch_payload(
+                results=results,
+                intersecting_edps=intersecting_edps,
+                catchments=catchments,
+            )
             if not payload.get("edps"):
                 logger.error(
                     f"Empty EDP payload for quote {job.reference}, "

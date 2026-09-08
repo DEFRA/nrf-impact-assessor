@@ -62,7 +62,7 @@ def _job(labels: list[str]) -> ImpactAssessmentJob:
     )
 
 
-def _run_callback(job: ImpactAssessmentJob) -> MagicMock:
+def _run_callback(job: ImpactAssessmentJob, catchments=None) -> MagicMock:
     orch = JobOrchestrator.__new__(JobOrchestrator)
     orch.repository = MagicMock()
     orch.backend_client = MagicMock()
@@ -70,6 +70,10 @@ def _run_callback(job: ImpactAssessmentJob) -> MagicMock:
     with (
         patch("app.orchestrator.resolve_active_provenance", return_value=None),
         patch("app.orchestrator.nutrient_adapter") as adapter,
+        patch(
+            "app.orchestrator.find_intersecting_catchments",
+            return_value=catchments if catchments is not None else [],
+        ),
     ):
         adapter.to_domain_models.return_value = {"assessment_results": [_result()]}
         orch._send_results_callback(job, {"impact_summary": MagicMock()})
@@ -89,3 +93,40 @@ def test_callback_skipped_when_job_has_no_edps():
     client = _run_callback(_job([]))
 
     client.patch_quote.assert_not_called()
+
+
+CATCHMENTS = [
+    {
+        "label": "River Wensum SAC",
+        "catchmentId": "10",
+        "catchmentOverlapPercentage": 32.6,
+    }
+]
+
+
+def test_callback_carries_the_recomputed_catchments():
+    client = _run_callback(_job([EDP_LABEL]), catchments=CATCHMENTS)
+
+    payload = client.patch_quote.call_args.args[1]
+    assert payload["edps"][0]["catchments"] == CATCHMENTS
+
+
+def test_callback_is_still_sent_when_the_catchment_query_fails():
+    """The assessment is the payload's reason to exist; catchments decorate it."""
+    orch = JobOrchestrator.__new__(JobOrchestrator)
+    orch.repository = MagicMock()
+    orch.backend_client = MagicMock()
+
+    with (
+        patch("app.orchestrator.resolve_active_provenance", return_value=None),
+        patch("app.orchestrator.nutrient_adapter") as adapter,
+        patch(
+            "app.orchestrator.find_intersecting_catchments",
+            side_effect=RuntimeError("PostGIS is down"),
+        ),
+    ):
+        adapter.to_domain_models.return_value = {"assessment_results": [_result()]}
+        orch._send_results_callback(_job([EDP_LABEL]), {"impact_summary": MagicMock()})
+
+    payload = orch.backend_client.patch_quote.call_args.args[1]
+    assert payload["edps"][0]["catchments"] == []

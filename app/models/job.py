@@ -8,7 +8,9 @@ class IntersectingEdp(BaseModel):
 
     `/check-boundary` no longer emits `n2k_site_name` (it duplicated `label`)
     or the EDP/intersection polygons. Pydantic ignores unknown keys, so
-    messages queued before that change still parse.
+    messages queued before that change still parse — and so the catchments the
+    backend sends alongside the label are ignored here: the callback recomputes
+    them rather than echoing them back.
     """
 
     label: str
