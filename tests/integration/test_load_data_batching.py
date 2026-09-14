@@ -80,8 +80,9 @@ def test_invalid_geometry_in_a_later_batch_rolls_back_the_whole_load(
     bad = _write_gpkg(
         tmp_path / "bad.gpkg", [_square(0), _square(1), _square(2), _bowtie(3)]
     )
+    loader = _loader(repository, batch_size=2)
     with pytest.raises(ValueError, match="invalid or missing"):
-        _load(_loader(repository, batch_size=2), bad)
+        _load(loader, bad)
 
     # The previous load's rows survive: the DELETE rolled back with the inserts.
     with repository.session() as session:
