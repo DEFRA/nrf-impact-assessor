@@ -22,16 +22,26 @@ Usage:
     # GCN assessment type:
     uv run python scripts/test_wkt.py assess --example --type gcn
 
-    # Point at a different server:
-    uv run python scripts/test_wkt.py assess --example --base-url http://localhost:8085
+    # Point at a different server (or set TEST_API_BASE_URL):
+    uv run python scripts/test_wkt.py assess --example --base-url http://localhost:8086
+
+The /test/* endpoints require the x-api-key header. The key is read from
+IMPACT_ASSESSOR_API_KEY (or .env) unless --api-key is given.
 """
 
 import json
 import logging
 import sys
+from pathlib import Path
 
 import httpx
 import typer
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+from app.config import config  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -53,11 +63,39 @@ _EXAMPLE_WKT = (
     "))"
 )
 
+
+class _ScriptApiSettings(BaseSettings):
+    """Where the script points by default, overridable per-run by --base-url.
+
+    Read from TEST_API_BASE_URL in the environment, the repo-root .env, or
+    scripts/.env.local (later files win, real env vars override both), matching
+    how scripts/settings.py layers its config.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=(".env", str(_SCRIPT_DIR / ".env.local")),
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # `fastapi dev` serves on 8000; the consumer's embedded server uses 8086.
+    test_api_base_url: str = "http://127.0.0.1:8000"
+
+
+_DEFAULT_BASE_URL = _ScriptApiSettings().test_api_base_url
+
 _WKT_HELP = "WKT polygon string in the CRS specified by --crs."
 _EXAMPLE_HELP = "Use the built-in example polygon (Norfolk Broads area, EPSG:27700)."
 _TYPE_HELP = "Assessment type: 'nutrient' or 'gcn'."
 _CRS_HELP = "Coordinate reference system of the WKT (default: EPSG:27700)."
-_BASE_URL_HELP = "Base URL of the running API server."
+_BASE_URL_HELP = (
+    "Base URL of the running API server (default: TEST_API_BASE_URL, or .env)."
+)
+_API_KEY_HELP = (
+    "x-api-key value for the /test/* endpoints "
+    "(default: IMPACT_ASSESSOR_API_KEY, or .env)."
+)
 
 
 def _resolve_wkt(wkt: str | None, example: bool) -> str:
@@ -68,6 +106,18 @@ def _resolve_wkt(wkt: str | None, example: bool) -> str:
         typer.echo("Error: provide --wkt or --example.", err=True)
         raise typer.Exit(1)
     return wkt
+
+
+def _auth_headers(api_key: str | None) -> dict[str, str]:
+    key = api_key or config.impact_assessor_api_key
+    if not key:
+        typer.echo(
+            "Error: no API key. Set IMPACT_ASSESSOR_API_KEY (or .env), "
+            "or pass --api-key.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    return {"x-api-key": key}
 
 
 def _print_json(data: dict) -> None:
@@ -83,9 +133,8 @@ def assess(
     dwelling_type: str = typer.Option("house", "--dwelling-type", "-d"),
     dwellings: int = typer.Option(10, "--dwellings", "-n", min=1),
     name: str = typer.Option("Test Development", "--name"),
-    base_url: str = typer.Option(
-        "http://localhost:8086", "--base-url", help=_BASE_URL_HELP
-    ),
+    base_url: str = typer.Option(_DEFAULT_BASE_URL, "--base-url", help=_BASE_URL_HELP),
+    api_key: str | None = typer.Option(None, "--api-key", help=_API_KEY_HELP),
 ):
     """Run an assessment directly and print results as JSON.
 
@@ -109,7 +158,9 @@ def assess(
     )
 
     try:
-        response = httpx.post(url, json=payload, timeout=120)
+        response = httpx.post(
+            url, json=payload, headers=_auth_headers(api_key), timeout=120
+        )
     except httpx.ConnectError as exc:
         typer.echo(
             f"Error: could not connect to {base_url}. "
@@ -141,9 +192,8 @@ def enqueue(
     dwellings: int = typer.Option(10, "--dwellings", "-n", min=1),
     name: str = typer.Option("Test Development", "--name"),
     developer_email: str = typer.Option("test@example.com", "--email"),
-    base_url: str = typer.Option(
-        "http://localhost:8086", "--base-url", help=_BASE_URL_HELP
-    ),
+    base_url: str = typer.Option(_DEFAULT_BASE_URL, "--base-url", help=_BASE_URL_HELP),
+    api_key: str | None = typer.Option(None, "--api-key", help=_API_KEY_HELP),
 ):
     """Enqueue an SQS job message with the geometry embedded in the body.
 
@@ -169,7 +219,9 @@ def enqueue(
     )
 
     try:
-        response = httpx.post(url, json=payload, timeout=30)
+        response = httpx.post(
+            url, json=payload, headers=_auth_headers(api_key), timeout=30
+        )
     except httpx.ConnectError as exc:
         typer.echo(
             f"Error: could not connect to {base_url}. "

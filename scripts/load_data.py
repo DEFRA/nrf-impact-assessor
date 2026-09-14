@@ -26,11 +26,15 @@ Usage:
 
     # Load sample data only (smaller subset for testing)
     uv run python scripts/load_data.py --sample
+
+    # Load in smaller batches when memory is tight (default 100000 features)
+    uv run python scripts/load_data.py --layer coefficients --batch-size 25000
 """
 
 import json
 import sqlite3
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
@@ -50,6 +54,7 @@ for _path in (_SCRIPT_DIR.parent, _SCRIPT_DIR):
 import geopandas as gpd  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
+import pyogrio  # noqa: E402
 import shapely  # noqa: E402
 import typer  # noqa: E402
 from fixture_manifest import validate_fixture_manifest  # noqa: E402
@@ -73,6 +78,11 @@ from app.repositories.engine import create_db_engine  # noqa: E402
 from app.repositories.repository import Repository  # noqa: E402
 
 CRS_BRITISH_NATIONAL_GRID = "EPSG:27700"
+
+# Features read into memory at a time. The coefficient layer is 5.4M polygons,
+# far more than fits in one GeoDataFrame on a developer machine, so every layer
+# is read and written in batches of this size.
+DEFAULT_BATCH_SIZE = 100_000
 _MSG_NO_CRS = f"No CRS found, assuming {CRS_BRITISH_NATIONAL_GRID}"
 _MSG_CONVERT_3D = "Converting 3D geometries to 2D"
 
@@ -149,6 +159,7 @@ class SpatialDataLoader:
         settings: ScriptSettings | None = None,
         sample_mode: bool = False,
         fixtures_dir: Path | None = None,
+        batch_size: int = DEFAULT_BATCH_SIZE,
     ):
         """Initialize loader.
 
@@ -159,11 +170,14 @@ class SpatialDataLoader:
             sample_mode: If True, load only small sample of data for testing
             fixtures_dir: When set, load from committed fixture GeoPackages in
                 this directory instead of the paths in settings.
+            batch_size: Features read and written at a time; 0 loads each layer
+                in a single read, as this script did before batching.
         """
         self.repository = repository
         self.settings = settings
         self.sample_mode = sample_mode
         self.sample_limit = 100 if sample_mode else None
+        self.batch_size = batch_size
 
         if fixtures_dir is not None:
             validate_fixture_manifest(fixtures_dir)
@@ -279,12 +293,20 @@ class SpatialDataLoader:
             )
 
     @staticmethod
-    def _clean_coeff_columns(gdf: gpd.GeoDataFrame, coeff_columns: list[str]) -> None:
-        """Convert coefficient columns to numeric, coercing errors to NaN (SQL NULL)."""
+    def _clean_coeff_columns(
+        gdf: gpd.GeoDataFrame, coeff_columns: list[str]
+    ) -> dict[str, int]:
+        """Convert coefficient columns to numeric, coercing errors to NaN (SQL NULL).
+
+        Returns the number of nulls left in each column present in gdf, so a
+        batched load can total them once rather than print per batch.
+        """
+        null_counts = {}
         for col in coeff_columns:
             if col in gdf.columns:
                 gdf[col] = pd.to_numeric(gdf[col], errors="coerce")
-                print(f"  {col}: {gdf[col].isna().sum()} null values after cleaning")
+                null_counts[col] = int(gdf[col].isna().sum())
+        return null_counts
 
     @staticmethod
     def _normalise_gdf(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -322,14 +344,65 @@ class SpatialDataLoader:
             )
             raise ValueError(msg)
 
-    def _apply_sample_mode(self, gdf: gpd.GeoDataFrame) -> tuple[gpd.GeoDataFrame, int]:
-        """Apply sample limit if enabled and return (gdf, total_features)."""
-        if self.sample_mode and len(gdf) > self.sample_limit:
-            print(f"Sample mode: using {self.sample_limit} of {len(gdf)} features")
-            gdf = gdf.head(self.sample_limit)
-        total_features = len(gdf)
-        print(f"Loaded {total_features} features")
-        return gdf, total_features
+    @staticmethod
+    def _count_features(file_path: Path, layer: str | None = None) -> int:
+        """Return the layer's feature count without reading its geometries."""
+        info = (
+            pyogrio.read_info(file_path, layer=layer)
+            if layer
+            else pyogrio.read_info(file_path)
+        )
+        return int(info["features"])
+
+    @staticmethod
+    def _read_batches(
+        file_path: Path,
+        layer: str | None = None,
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        limit: int | None = None,
+    ) -> Iterator[gpd.GeoDataFrame]:
+        """Yield the layer as GeoDataFrames of at most batch_size features.
+
+        Args:
+            file_path: Shapefile or GeoPackage to read
+            layer: Layer name within a GeoPackage/GDB (None for a shapefile)
+            batch_size: Features per batch; 0 reads the whole layer at once
+            limit: Stop after this many features (sample mode). Reading stops
+                early rather than reading everything and truncating after.
+        """
+        read_kwargs: dict[str, Any] = {"layer": layer} if layer else {}
+
+        if not batch_size:
+            if limit is not None:
+                read_kwargs["rows"] = limit
+            yield gpd.read_file(file_path, **read_kwargs)
+            return
+
+        offset = 0
+        while True:
+            size = batch_size if limit is None else min(batch_size, limit - offset)
+            if size <= 0:
+                return
+            gdf = gpd.read_file(
+                file_path, rows=slice(offset, offset + size), **read_kwargs
+            )
+            if gdf.empty:
+                return
+            yield gdf
+            offset += len(gdf)
+            if len(gdf) < size:
+                return
+
+    def _features_to_load(self, file_path: Path, layer: str | None = None) -> int:
+        """Return how many features this load will write, honouring sample mode."""
+        total_features = self._count_features(file_path, layer)
+        if self.sample_mode and total_features > self.sample_limit:
+            print(
+                f"Sample mode: using {self.sample_limit} of {total_features} features"
+            )
+            total_features = self.sample_limit
+        print(f"Loading {total_features} features")
+        return total_features
 
     @staticmethod
     def _build_base_clean_gdf(
@@ -363,135 +436,147 @@ class SpatialDataLoader:
 
     def _clear_load_verify(
         self,
-        gdf: gpd.GeoDataFrame,
+        batches: Iterator[gpd.GeoDataFrame],
         table_name: str,
         total_features: int,
         delete_stmt: Any,
         count_stmt: Any,
         chunksize: int = 5000,
     ) -> None:
-        """Delete existing rows, load gdf to PostGIS, then verify the row count."""
-        with self.repository.session() as session:
-            deleted = session.execute(delete_stmt)
-            session.commit()
+        """Delete existing rows and stream batches to PostGIS, then verify.
+
+        The DELETE and every batch share one transaction, so a batch that
+        fails validation leaves the table exactly as it was rather than
+        half-loaded.
+        """
+        print(f"Loading {total_features} features to PostGIS...")
+        written = 0
+        with self.repository.engine.begin() as connection:
+            deleted = connection.execute(delete_stmt)
             if deleted.rowcount > 0:
                 print(f"Deleted {deleted.rowcount} existing records")
 
-        print(f"Loading {total_features} features to PostGIS...")
-        gdf.to_postgis(
-            name=table_name,
-            con=self.repository.engine,
-            schema="public",
-            if_exists="append",
-            index=False,
-            chunksize=chunksize,
-        )
-        print(f"Successfully loaded {total_features} records")
+            for batch_number, batch in enumerate(batches, start=1):
+                batch.to_postgis(
+                    name=table_name,
+                    con=connection,
+                    schema="public",
+                    if_exists="append",
+                    index=False,
+                    chunksize=chunksize,
+                )
+                written += len(batch)
+                print(f"  batch {batch_number}: {written}/{total_features} features")
+
+        print(f"Successfully loaded {written} records")
 
         with self.repository.session() as session:
             count = session.scalar(count_stmt)
             print(f"Verified {count} records in database")
 
+    # Source column names in the coefficient GeoPackage -> model column names.
+    _COEFFICIENT_COLUMN_MAPPING = {
+        "Land_use_cat": "land_use_cat",
+        "NN_Catchment": "nn_catchment",
+        "SubCatchment": "subcatchment",
+        "LU_CurrNcoeff": "lu_curr_n_coeff",
+        "LU_CurrPcoeff": "lu_curr_p_coeff",
+        "N_ResiCoeff": "n_resi_coeff",
+        "P_ResiCoeff": "p_resi_coeff",
+        "cromeid": "crome_id",  # Normalize to snake_case
+    }
+    _COEFFICIENT_COLUMNS = (
+        "crome_id",
+        "land_use_cat",
+        "nn_catchment",
+        "subcatchment",
+        "lu_curr_n_coeff",
+        "lu_curr_p_coeff",
+        "n_resi_coeff",
+        "p_resi_coeff",
+        "geometry",
+    )
+    _COEFFICIENT_NUMERIC_COLUMNS = (
+        "lu_curr_n_coeff",
+        "lu_curr_p_coeff",
+        "n_resi_coeff",
+        "p_resi_coeff",
+    )
+
+    def _prepare_coefficient_batch(
+        self, gdf: gpd.GeoDataFrame, null_totals: dict[str, int]
+    ) -> gpd.GeoDataFrame:
+        """Map source columns to the CoefficientLayer model and clean values.
+
+        Null counts from cleaning accumulate into null_totals rather than being
+        printed, so a 55-batch load reports them once.
+        """
+        gdf = gdf.rename(columns=self._COEFFICIENT_COLUMN_MAPPING)
+
+        available_columns = [c for c in self._COEFFICIENT_COLUMNS if c in gdf.columns]
+        missing_columns = [
+            c
+            for c in self._COEFFICIENT_COLUMNS
+            if c not in available_columns and c != "geometry"
+        ]
+        if missing_columns:
+            msg = f"Missing expected columns: {missing_columns}"
+            raise ValueError(msg)
+
+        gdf = gdf[available_columns]
+        for col, nulls in self._clean_coeff_columns(
+            gdf, list(self._COEFFICIENT_NUMERIC_COLUMNS)
+        ).items():
+            null_totals[col] = null_totals.get(col, 0) + nulls
+
+        gdf["id"] = [uuid4() for _ in range(len(gdf))]
+        gdf["version"] = 1
+        return gdf
+
     def load_coefficient_layer(self) -> None:
-        """Load coefficient layer (5.4M polygons) using to_postgis() method."""
+        """Load the coefficient layer (5.4M polygons) in batches."""
         if not self.coefficient_gpkg.exists():
             print(f"Skipping coefficients: File not found at {self.coefficient_gpkg}")
             return
 
         print(f"Loading coefficients from {self.coefficient_gpkg.name}...")
+        total_features = self._features_to_load(
+            self.coefficient_gpkg, self.coefficient_layer
+        )
 
-        gdf = gpd.read_file(self.coefficient_gpkg, layer=self.coefficient_layer)
-        gdf = self._normalise_gdf(gdf)
-        self._check_geometry_validity(gdf, "coefficient_layer")
-        gdf, total_features = self._apply_sample_mode(gdf)
+        null_totals: dict[str, int] = {}
+        batches = (
+            self._prepare_coefficient_batch(gdf, null_totals)
+            for gdf in self._prepared_batches(
+                self.coefficient_gpkg, "coefficient_layer", self.coefficient_layer
+            )
+        )
 
-        total_features = len(gdf)
-        # Prepare DataFrame for CoefficientLayer model
-        # Keep only columns that match the model fields
-        expected_columns = [
-            "crome_id",
-            "land_use_cat",
-            "nn_catchment",
-            "subcatchment",
-            "lu_curr_n_coeff",
-            "lu_curr_p_coeff",
-            "n_resi_coeff",
-            "p_resi_coeff",
-            "geometry",
-        ]
-
-        # Map source columns to model columns
-        # Direct mapping for coefficient columns with known source names
-        column_mapping = {
-            "Land_use_cat": "land_use_cat",
-            "NN_Catchment": "nn_catchment",
-            "SubCatchment": "subcatchment",
-            "LU_CurrNcoeff": "lu_curr_n_coeff",
-            "LU_CurrPcoeff": "lu_curr_p_coeff",
-            "N_ResiCoeff": "n_resi_coeff",
-            "P_ResiCoeff": "p_resi_coeff",
-            "cromeid": "crome_id",  # Normalize to snake_case
-        }
-
-        # Apply column mapping
-        print(f"Mapping columns: {column_mapping}")
-        gdf = gdf.rename(columns=column_mapping)
-
-        # Keep only expected columns that exist
-        available_columns = [col for col in expected_columns if col in gdf.columns]
-        missing_columns = [
-            col
-            for col in expected_columns
-            if col not in available_columns and col != "geometry"
-        ]
-
-        print(f"Available columns: {available_columns}")
-        if missing_columns:
-            error_msg = f"Missing expected columns: {missing_columns}"
-            print(f"ERROR: {error_msg}")
-            raise ValueError(error_msg)
-
-        gdf = gdf[available_columns]
-
-        # Clean coefficient columns - convert non-numeric values to None
-        coeff_columns = [
-            "lu_curr_n_coeff",
-            "lu_curr_p_coeff",
-            "n_resi_coeff",
-            "p_resi_coeff",
-        ]
-        self._clean_coeff_columns(gdf, coeff_columns)
-
-        # Add UUID and version columns
-        gdf["id"] = [uuid4() for _ in range(len(gdf))]
-        gdf["version"] = 1
-
-        # Clear existing coefficient data
-        with self.repository.session() as session:
-            deleted = session.execute(delete(CoefficientLayer))
-            session.commit()
-            if deleted.rowcount > 0:
-                print(f"Deleted {deleted.rowcount} existing coefficient records")
-
-        # Load to PostGIS using fast to_postgis()
-        print(f"Loading {total_features} coefficient features to PostGIS...")
-        engine = self.repository.engine
-
-        gdf.to_postgis(
-            name="coefficient_layer",
-            con=engine,
-            schema="public",
-            if_exists="append",
-            index=False,
+        self._clear_load_verify(
+            batches,
+            "coefficient_layer",
+            total_features,
+            delete(CoefficientLayer),
+            select(func.count()).select_from(CoefficientLayer),
             chunksize=10000,
         )
 
-        print(f"Successfully loaded {total_features} coefficient records")
+        for col, nulls in null_totals.items():
+            print(f"  {col}: {nulls} null values after cleaning")
 
-        # Verify insertion
-        with self.repository.session() as session:
-            count = session.scalar(select(func.count()).select_from(CoefficientLayer))
-            print(f"Verified {count} coefficient records in database")
+    def _prepared_batches(
+        self, file_path: Path, layer_name: str, layer: str | None = None
+    ) -> Iterator[gpd.GeoDataFrame]:
+        """Yield normalised, validated batches of a layer, one at a time."""
+        for gdf in self._read_batches(
+            file_path,
+            layer=layer,
+            batch_size=self.batch_size,
+            limit=self.sample_limit,
+        ):
+            gdf = self._normalise_gdf(gdf)
+            self._check_geometry_validity(gdf, layer_name)
+            yield gdf
 
     def _load_spatial_layer(
         self,
@@ -516,18 +601,15 @@ class SpatialDataLoader:
             return
 
         print(f"Loading {layer_name} from {file_path.name}...")
+        total_features = self._features_to_load(file_path, layer)
 
-        gdf = (
-            gpd.read_file(file_path, layer=layer) if layer else gpd.read_file(file_path)
+        batches = (
+            self._build_base_clean_gdf(gdf, name_column=name_column)
+            for gdf in self._prepared_batches(file_path, layer_name, layer)
         )
-        gdf = self._normalise_gdf(gdf)
-        self._check_geometry_validity(gdf, layer_name)
-        gdf, total_features = self._apply_sample_mode(gdf)
-
-        clean_gdf = self._build_base_clean_gdf(gdf, name_column=name_column)
 
         self._clear_load_verify(
-            clean_gdf,
+            batches,
             model.__tablename__,
             total_features,
             delete(model),
@@ -666,6 +748,7 @@ def _print_load_summary(
     layer: list[str] | None,
     lookup: list[str] | None,
     sample: bool,
+    batch_size: int,
 ) -> None:
     """Print a destructive-operation warning and summary of what will be loaded."""
     typer.secho(
@@ -682,6 +765,12 @@ def _print_load_summary(
     )
     typer.secho(
         f"Lookups to load: {', '.join(lookup)}" if lookup else "Lookups to load: ALL",
+        fg=typer.colors.CYAN,
+    )
+    typer.secho(
+        f"Batch size: {batch_size} features"
+        if batch_size
+        else "Batch size: whole layer in one read",
         fg=typer.colors.CYAN,
     )
     if sample:
@@ -716,6 +805,14 @@ def main(
             "Use with CI: python scripts/load_data.py --fixtures-dir tests/data/fixtures/"
         ),
     ] = None,
+    batch_size: Annotated[
+        int,
+        typer.Option(
+            help="Features read and written at a time. Keeps memory bounded on "
+            "large layers such as the 5.4M-polygon coefficient layer. "
+            "Use 0 to load each layer in a single read."
+        ),
+    ] = DEFAULT_BATCH_SIZE,
     yes: Annotated[
         bool,
         typer.Option("--yes", "-y", help="Skip the confirmation prompt"),
@@ -739,14 +836,18 @@ def main(
 
     if fixtures_dir is not None:
         # CI mode: load from committed fixtures, no .env required
-        loader = SpatialDataLoader(repository, fixtures_dir=fixtures_dir)
+        loader = SpatialDataLoader(
+            repository, fixtures_dir=fixtures_dir, batch_size=batch_size
+        )
         typer.secho(f"\nLoading from fixtures: {fixtures_dir}", fg=typer.colors.CYAN)
         auto_confirm = True
     else:
         # Interactive mode: load from .env-configured paths
         settings = ScriptSettings()
-        loader = SpatialDataLoader(repository, settings, sample_mode=sample)
-        _print_load_summary(settings, layer, lookup, sample)
+        loader = SpatialDataLoader(
+            repository, settings, sample_mode=sample, batch_size=batch_size
+        )
+        _print_load_summary(settings, layer, lookup, sample, batch_size)
         auto_confirm = yes
 
     if not auto_confirm:
