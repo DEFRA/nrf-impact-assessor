@@ -29,8 +29,11 @@ Usage:
 """
 
 import json
+import shutil
 import sqlite3
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
@@ -77,6 +80,29 @@ _MSG_NO_CRS = f"No CRS found, assuming {CRS_BRITISH_NATIONAL_GRID}"
 _MSG_CONVERT_3D = "Converting 3D geometries to 2D"
 
 app = typer.Typer(help="Load spatial data into PostGIS database")
+
+
+@contextmanager
+def _gdal_readonly(path: Path):
+    """Yield a private scratch copy of a GeoPackage for GDAL to read.
+
+    GDAL's GeoPackage driver can rewrite internal caches (e.g. the
+    ``gpkg_ogr_contents`` row-count cache) on a plain read, mutating the
+    committed fixture file on disk. Since fixture directories are watched by
+    Tilt's ``load-IA-data`` resource, that self-inflicted write re-triggers
+    the load, which mutates the file again -- an infinite loop.
+
+    Copying to a scratch file (rather than chmod-ing the shared fixture
+    read-only) also keeps concurrent readers safe: stripping write
+    permission on the shared file races with any other process reading it
+    at the same time (e.g. Tilt's own retry firing while a developer
+    manually re-runs the load), and GDAL can silently drop or corrupt
+    geometries when it hits a permission error mid-read.
+    """
+    with tempfile.TemporaryDirectory() as scratch_dir:
+        scratch_path = Path(scratch_dir) / path.name
+        shutil.copy2(path, scratch_path)
+        yield scratch_path
 
 
 def clean_nan_values(obj: Any) -> Any:
@@ -400,7 +426,8 @@ class SpatialDataLoader:
 
         print(f"Loading coefficients from {self.coefficient_gpkg.name}...")
 
-        gdf = gpd.read_file(self.coefficient_gpkg, layer=self.coefficient_layer)
+        with _gdal_readonly(self.coefficient_gpkg) as scratch_path:
+            gdf = gpd.read_file(scratch_path, layer=self.coefficient_layer)
         gdf = self._normalise_gdf(gdf)
         self._check_geometry_validity(gdf, "coefficient_layer")
         gdf, total_features = self._apply_sample_mode(gdf)
@@ -517,9 +544,12 @@ class SpatialDataLoader:
 
         print(f"Loading {layer_name} from {file_path.name}...")
 
-        gdf = (
-            gpd.read_file(file_path, layer=layer) if layer else gpd.read_file(file_path)
-        )
+        with _gdal_readonly(file_path) as scratch_path:
+            gdf = (
+                gpd.read_file(scratch_path, layer=layer)
+                if layer
+                else gpd.read_file(scratch_path)
+            )
         gdf = self._normalise_gdf(gdf)
         self._check_geometry_validity(gdf, layer_name)
         gdf, total_features = self._apply_sample_mode(gdf)
