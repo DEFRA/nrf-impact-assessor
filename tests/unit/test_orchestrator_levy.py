@@ -88,22 +88,26 @@ def test_success_returns_calculation_and_logs_audit_record(orch, lookups, caplog
 
 
 def test_no_housing_units_raises(orch, lookups):
+    job = _job(units=None)
+
     with pytest.raises(LevyChargeUnavailableError, match="no housing units"):
-        orch._calculate_levy(_job(units=None))
+        orch._calculate_levy(job)
 
 
 def test_no_edp_id_raises(orch, lookups):
     lookups["resolve"].return_value = None
+    job = _job()
 
     with pytest.raises(LevyChargeUnavailableError, match="no EDP_id"):
-        orch._calculate_levy(_job())
+        orch._calculate_levy(job)
 
 
 def test_no_charge_row_raises(orch, lookups):
     lookups["charge"].return_value = None
+    job = _job()
 
     with pytest.raises(LevyChargeUnavailableError, match="no charge"):
-        orch._calculate_levy(_job())
+        orch._calculate_levy(job)
 
 
 def test_applies_inflation_index_when_calculation_year_differs(orch, lookups):
@@ -123,22 +127,27 @@ def test_no_inflation_index_raises(orch, lookups):
     charge.edp_start_date = date(2020, 1, 1)
     lookups["charge"].return_value = charge
     lookups["index"].return_value = None
+    job = _job()
 
     with pytest.raises(LevyChargeUnavailableError, match="RICS CIL index"):
-        orch._calculate_levy(_job())
+        orch._calculate_levy(job)
     lookups["record"].assert_not_called()
 
 
 def test_zero_edps_raises_without_lookups(orch, lookups):
+    job = _job(labels=())
+
     with pytest.raises(LevyChargeUnavailableError, match="no EDP"):
-        orch._calculate_levy(_job(labels=()))
+        orch._calculate_levy(job)
     lookups["resolve"].assert_not_called()
     lookups["record"].assert_not_called()
 
 
 def test_multiple_edps_raises_without_lookups(orch, lookups):
+    job = _job(labels=(EDP_LABEL, "Other EDP"))
+
     with pytest.raises(LevyChargeUnavailableError, match="multiple EDPs"):
-        orch._calculate_levy(_job(labels=(EDP_LABEL, "Other EDP")))
+        orch._calculate_levy(job)
     lookups["resolve"].assert_not_called()
     lookups["record"].assert_not_called()
 
@@ -152,9 +161,10 @@ def test_missing_boundary_returns_none(orch, lookups):
 
 def test_failure_does_not_record_an_audit_row(orch, lookups):
     lookups["charge"].return_value = None
+    job = _job()
 
     with pytest.raises(LevyChargeUnavailableError):
-        orch._calculate_levy(_job())
+        orch._calculate_levy(job)
 
     lookups["record"].assert_not_called()
 
@@ -164,12 +174,13 @@ def test_process_job_fails_before_anything_else_runs(orch, lookups, mocker, capl
     guard = mocker.patch("app.orchestrator.assert_reference_data_present")
     run = mocker.patch.object(JobOrchestrator, "_process_inline_geometry")
     callback = mocker.patch.object(JobOrchestrator, "_send_results_callback")
+    job = _job()
 
     with (
         caplog.at_level(logging.ERROR, logger="app.orchestrator"),
         pytest.raises(LevyChargeUnavailableError),
     ):
-        orch.process_job(_job(), AssessmentType.NUTRIENT)
+        orch.process_job(job, AssessmentType.NUTRIENT)
 
     guard.assert_not_called()
     run.assert_not_called()

@@ -44,6 +44,7 @@ depends_on: str | Sequence[str] | None = None
 CHARGES_TABLE = "levy_charges"
 CALCULATIONS_TABLE = "levy_calculations"
 INFLATION_INDEX_TABLE = "levy_inflation_index"
+NOW_SQL = "now()"
 
 # RICS CIL Index factor vs the 2026 base (raw index / raw 2026 index),
 # charging year -> factor.
@@ -83,7 +84,7 @@ def upgrade() -> None:
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
+            server_default=sa.text(NOW_SQL),
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
@@ -113,7 +114,7 @@ def upgrade() -> None:
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
+            server_default=sa.text(NOW_SQL),
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
@@ -134,7 +135,7 @@ def upgrade() -> None:
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
+            server_default=sa.text(NOW_SQL),
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),

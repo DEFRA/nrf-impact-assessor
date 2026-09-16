@@ -15,6 +15,7 @@ from app.calculators.levy import (
 )
 
 CALC_DATE = date(2026, 9, 14)
+EARLIER_CALC_DATE = date(2022, 6, 1)  # an earlier charging year than the EDP start
 
 
 def _charge(price: str) -> SimpleNamespace:
@@ -86,7 +87,7 @@ def test_applies_index_ratio_when_calculation_year_differs():
     result = calculate_levy(
         charge,
         units=10,
-        calculation_date=date(2022, 6, 1),
+        calculation_date=EARLIER_CALC_DATE,
         edp_start_year_index=Decimal("1.0000"),  # 2026 factor
         calculation_year_index=Decimal("0.8300"),  # 2022 factor
     )
@@ -100,7 +101,7 @@ def test_raises_when_calculation_year_differs_and_index_missing():
     charge = _charge("2193.6649")
 
     with pytest.raises(LevyChargeUnavailableError, match="inflation index"):
-        calculate_levy(charge, units=10, calculation_date=date(2022, 6, 1))
+        calculate_levy(charge, units=10, calculation_date=EARLIER_CALC_DATE)
 
 
 def test_carries_audit_fields():
@@ -117,5 +118,7 @@ def test_carries_audit_fields():
 
 @pytest.mark.parametrize("units", [0, -1])
 def test_rejects_non_positive_units(units):
+    charge = _charge("2193.6649")
+
     with pytest.raises(ValueError, match="units"):
-        calculate_levy(_charge("2193.6649"), units=units, calculation_date=CALC_DATE)
+        calculate_levy(charge, units=units, calculation_date=CALC_DATE)

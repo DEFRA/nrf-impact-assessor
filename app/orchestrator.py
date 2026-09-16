@@ -137,7 +137,9 @@ class JobOrchestrator:
             # Named reason without a traceback, because the reason is the whole
             # story. The consumer logs its own line with the traceback when it
             # leaves the message on the queue, so this one stays terse.
-            logger.error(f"Job {job_id} not started, levy unavailable: {e}")
+            logger.error(  # NOSONAR - intentional: no traceback, see above
+                f"Job {job_id} not started, levy unavailable: {e}"
+            )
             raise
         except Exception:
             logger.exception(f"Job {job_id} failed with exception")
