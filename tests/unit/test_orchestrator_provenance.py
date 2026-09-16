@@ -22,7 +22,7 @@ def test_callback_resolves_and_passes_provenance():
         patch("app.orchestrator.nutrient_adapter") as adapter,
     ):
         adapter.to_domain_models.return_value = {"assessment_results": []}
-        orch._send_results_callback(job, {"impact_summary": MagicMock()})
+        orch._send_results_callback(job, {"impact_summary": MagicMock()}, None)
 
     resolve.assert_called_once()
     assert adapter.to_domain_models.call_args.kwargs["provenance"] == prov

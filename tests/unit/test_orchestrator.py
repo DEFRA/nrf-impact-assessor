@@ -26,6 +26,7 @@ def _orchestrator() -> JobOrchestrator:
 
 
 def test_propagates_empty_reference_data(mocker):
+    mocker.patch.object(JobOrchestrator, "_calculate_levy", return_value=None)
     mocker.patch(
         "app.orchestrator.assert_reference_data_present",
         side_effect=EmptyReferenceDataError("wwtw_catchments is empty"),
@@ -37,6 +38,7 @@ def test_propagates_empty_reference_data(mocker):
 
 
 def test_raises_when_geometry_missing(mocker):
+    mocker.patch.object(JobOrchestrator, "_calculate_levy", return_value=None)
     mocker.patch("app.orchestrator.assert_reference_data_present")
     job = _job()
     job.boundary_geojson = None
@@ -46,6 +48,7 @@ def test_raises_when_geometry_missing(mocker):
 
 
 def test_raises_when_assessment_produces_no_results(mocker):
+    mocker.patch.object(JobOrchestrator, "_calculate_levy", return_value=None)
     mocker.patch("app.orchestrator.assert_reference_data_present")
     mocker.patch.object(JobOrchestrator, "_process_inline_geometry", return_value={})
     orchestrator = _orchestrator()
@@ -55,6 +58,7 @@ def test_raises_when_assessment_produces_no_results(mocker):
 
 
 def test_returns_results_on_success(mocker):
+    mocker.patch.object(JobOrchestrator, "_calculate_levy", return_value=None)
     mocker.patch("app.orchestrator.assert_reference_data_present")
     dataframes = {"results": MagicMock()}
     mocker.patch.object(
@@ -104,6 +108,7 @@ class TestValidateGeodataframeBounds:
 
 
 def test_checks_reference_data_before_running_assessment(mocker):
+    mocker.patch.object(JobOrchestrator, "_calculate_levy", return_value=None)
     guard = mocker.patch("app.orchestrator.assert_reference_data_present")
     run = mocker.patch.object(
         JobOrchestrator, "_process_inline_geometry", return_value={"x": MagicMock()}

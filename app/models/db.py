@@ -1,17 +1,20 @@
 """SQLAlchemy database models for PostGIS reference data."""
 
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
 from geoalchemy2 import Geometry
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     UniqueConstraint,
     func,
@@ -201,6 +204,108 @@ class LookupTable(Base):
 
     def __repr__(self) -> str:
         return f"<LookupTable(id={self.id}, name={self.name}, rows={len(self.data)})>"
+
+
+class LevyCharge(Base):
+    """Published base charge per unit for an EDP over one charging year.
+
+    Seeded by migration, not by data sync (NRF2-913 decision 1). The lookup is
+    `edp_id = :id AND :on_date BETWEEN charge_valid_from AND charge_valid_to`.
+    """
+
+    __tablename__ = "levy_charges"
+    __table_args__ = (
+        UniqueConstraint(
+            "edp_id", "charge_valid_from", name="uq_levy_charges_edp_from"
+        ),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    edp_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    edp_name: Mapped[str] = mapped_column(String, nullable=False)
+    edp_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    charge_valid_from: Mapped[date] = mapped_column(Date, nullable=False)
+    charge_valid_to: Mapped[date] = mapped_column(Date, nullable=False)
+    base_charge_per_unit: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<LevyCharge(edp_id={self.edp_id}, from={self.charge_valid_from}, "
+            f"price={self.base_charge_per_unit})>"
+        )
+
+
+class LevyInflationIndex(Base):
+    """RICS CIL Index factor for one charging year, relative to the fixed
+    2026 base (2026 = 1.0000).
+
+    Seeded by migration, hand-maintained like levy_charges. Scales a levy's
+    base charge from the EDP's charging year to a later calculation year.
+    """
+
+    __tablename__ = "levy_inflation_index"
+    __table_args__ = (
+        UniqueConstraint("charging_year", name="uq_levy_inflation_index_year"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    charging_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    index_factor: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<LevyInflationIndex(year={self.charging_year}, "
+            f"factor={self.index_factor})>"
+        )
+
+
+class LevyCalculationRecord(Base):
+    """Audit row for one levy calculation (NRF2-913 scenario 7).
+
+    One row per successful calculation. A redelivered job that calculates again
+    writes another row; the history is the point.
+    """
+
+    __tablename__ = "levy_calculations"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    quote_reference: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    edp_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    edp_name: Mapped[str] = mapped_column(String, nullable=False)
+    edp_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    calculator_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    base_charge_per_unit: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4), nullable=False
+    )
+    rounded_charge_per_unit: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), nullable=False
+    )
+    units: Mapped[int] = mapped_column(Integer, nullable=False)
+    calculation_date: Mapped[date] = mapped_column(Date, nullable=False)
+    provisional_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    inflation_adjusted_amount: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<LevyCalculationRecord(quote={self.quote_reference}, "
+            f"edp_id={self.edp_id}, provisional={self.provisional_amount})>"
+        )
 
 
 class DataSyncRun(Base):

@@ -33,7 +33,10 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+from collections.abc import Callable
 from contextlib import contextmanager
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
@@ -66,6 +69,8 @@ from app.models.db import (  # noqa: E402
     EdpExcludedAreas,
     GcnPonds,
     GcnRiskZones,
+    LevyCharge,
+    LevyInflationIndex,
     LookupTable,
     LpaBoundaries,
     NnCatchments,
@@ -190,6 +195,12 @@ class SpatialDataLoader:
         self.settings = settings
         self.sample_mode = sample_mode
         self.sample_limit = 100 if sample_mode else None
+        # levy_charges/levy_inflation_index are finance-confirmed data in
+        # production, seeded only by migration there. These CSV fixtures are
+        # a fixtures_dir-only convenience so a local/CI job can exercise the
+        # levy calculation end-to-end; there is no .env.local equivalent.
+        self.levy_charges_csv: Path | None = None
+        self.levy_inflation_index_csv: Path | None = None
 
         if fixtures_dir is not None:
             validate_fixture_manifest(fixtures_dir)
@@ -211,6 +222,8 @@ class SpatialDataLoader:
             self.edp_boundary_layer = "edp_boundary_extents"
             self.edp_excluded_areas_gpkg = fixtures_dir / "edp_excluded_areas.gpkg"
             self.edp_excluded_areas_layer = "edp_excluded_areas"
+            self.levy_charges_csv = fixtures_dir / "levy_charges.csv"
+            self.levy_inflation_index_csv = fixtures_dir / "levy_inflation_index.csv"
         else:
             if settings is None:
                 msg = "Either settings or fixtures_dir must be provided"
@@ -243,6 +256,7 @@ class SpatialDataLoader:
         self.load_spatial_layers()
         self.load_coefficient_layer()
         self.load_lookup_tables()
+        self.load_levy_fixtures()
         print("All data loaded successfully!")
 
     def load_spatial_layers(self, layer_types: list[str] | None = None) -> None:
@@ -664,6 +678,69 @@ class SpatialDataLoader:
 
         except Exception as e:
             print(f"Error loading {table_name}: {e}")
+
+    def load_levy_fixtures(self) -> None:
+        """Load levy_charges and levy_inflation_index from CSV fixtures.
+
+        Fixtures only (levy_charges_csv/levy_inflation_index_csv are None
+        outside fixtures_dir mode): these tables hold finance-confirmed data
+        in production and are seeded solely by migration there.
+        """
+        self._load_csv_table(
+            self.levy_charges_csv, LevyCharge, _levy_charge_from_row
+        )
+        self._load_csv_table(
+            self.levy_inflation_index_csv, LevyInflationIndex, _levy_index_from_row
+        )
+
+    def _load_csv_table(
+        self,
+        csv_path: Path | None,
+        model: type,
+        row_to_model: "Callable[[dict], Any]",
+    ) -> None:
+        if csv_path is None or not csv_path.exists():
+            print(f"Skipping {model.__tablename__}: no fixture at {csv_path}")
+            return
+
+        # dtype=str keeps decimal/date fields as the literal text in the CSV,
+        # so parsing is explicit below rather than round-tripping through a
+        # pandas-inferred float or Timestamp.
+        df = pd.read_csv(csv_path, dtype=str)
+        rows = [row_to_model(row) for row in df.to_dict(orient="records")]
+
+        with self.repository.session() as session:
+            deleted = session.execute(delete(model))
+            session.commit()
+            if deleted.rowcount > 0:
+                print(f"Deleted {deleted.rowcount} existing {model.__tablename__} rows")
+
+            session.add_all(rows)
+            session.commit()
+
+        print(f"Loaded {len(rows)} {model.__tablename__} fixture rows")
+
+
+def _levy_charge_from_row(row: dict) -> LevyCharge:
+    """Build a LevyCharge from one levy_charges.csv row (ISO date strings)."""
+    return LevyCharge(
+        id=uuid4(),
+        edp_id=int(row["edp_id"]),
+        edp_name=row["edp_name"],
+        edp_start_date=date.fromisoformat(row["edp_start_date"]),
+        charge_valid_from=date.fromisoformat(row["charge_valid_from"]),
+        charge_valid_to=date.fromisoformat(row["charge_valid_to"]),
+        base_charge_per_unit=Decimal(str(row["base_charge_per_unit"])),
+    )
+
+
+def _levy_index_from_row(row: dict) -> LevyInflationIndex:
+    """Build a LevyInflationIndex from one levy_inflation_index.csv row."""
+    return LevyInflationIndex(
+        id=uuid4(),
+        charging_year=int(row["charging_year"]),
+        index_factor=Decimal(str(row["index_factor"])),
+    )
 
 
 def _load_selected_layers(loader: "SpatialDataLoader", layer: list[str]) -> None:

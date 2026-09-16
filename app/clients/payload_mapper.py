@@ -2,8 +2,9 @@
 
 import logging
 
+from app.calculators.levy import LevyCalculation
 from app.clients.bands import get_band
-from app.models.domain import CatchmentImpact, ImpactAssessmentResult
+from app.models.domain import ImpactAssessmentResult
 from app.models.enums import EdpType
 from app.models.job import IntersectingEdp
 
@@ -26,28 +27,30 @@ def _impact_block(n_total: float, p_total: float) -> dict:
     }
 
 
-def _provisional_edp_id(catchments: list[CatchmentImpact]) -> str:
-    """Pick a stable stand-in for the EDP id.
+def _levy_block(levy: LevyCalculation) -> dict:
+    """The four fields nrf-backend's patchSchema accepts.
 
-    The EDP boundary layer carries only EDP_Area and EDP_Name — there is no EDP
-    identifier to send, but nrf-backend requires an integer `edpId` and dedupes
-    on (quote_id, edp_id). Until a real identifier exists we reuse the lowest NN
-    catchment OID, which is at least stable for a given development.
-
-    TODO: replace with the real EDP identifier once the source layer carries one.
+    amountExcludingVat and baseAmount are both the provisional amount: the
+    backend prints the first in the quote email and the second on the admin
+    page as the provisional levy. VAT and the 2028 inflation uplift are not in
+    scope (NRF2-913).
     """
-    ids = [c.catchment_id for c in catchments]
-    numeric = [cid for cid in ids if cid.lstrip("-").isdigit()]
-    if numeric:
-        return min(numeric, key=int)
-    return min(ids)
+    return {
+        "amountExcludingVat": float(levy.provisional_amount),
+        "amountInflationAdjusted": float(levy.inflation_adjusted_amount),
+        "baseAmount": float(levy.provisional_amount),
+        "modelVersion": levy.calculator_version,
+    }
 
 
 def _edp_entry(
-    job_edp: IntersectingEdp, result: ImpactAssessmentResult, catchments: list[dict]
+    job_edp: IntersectingEdp,
+    result: ImpactAssessmentResult,
+    catchments: list[dict],
+    levy: LevyCalculation,
 ) -> dict:
     return {
-        "edpId": _provisional_edp_id(result.catchment_impacts),
+        "edpId": levy.edp_id,
         "edpName": job_edp.label,
         "edpType": EdpType.NUTRIENT,
         "impact": _impact_block(
@@ -55,13 +58,7 @@ def _edp_entry(
             result.total.phosphorus_total_kg_yr,
         ),
         "catchments": catchments,
-        # TODO: replace with real levy once finance calculation in place
-        "levyGbp": {
-            "amountExcludingVat": 999,
-            "amountInflationAdjusted": 999,
-            "baseAmount": 999,
-            "modelVersion": 1,
-        },
+        "levyGbp": _levy_block(levy),
     }
 
 
@@ -69,6 +66,7 @@ def build_quote_patch_payload(
     results: list[ImpactAssessmentResult],
     intersecting_edps: list[IntersectingEdp],
     catchments: list[dict] | None = None,
+    levy: LevyCalculation | None = None,
 ) -> dict:
     """Build the PATCH body for nrf-backend from assessment results.
 
@@ -85,11 +83,14 @@ def build_quote_patch_payload(
         catchments: The boundary's NN catchments, as computed by
             find_intersecting_catchments against the same data version the
             assessment ran on.
+        levy: The levy calculated for the single intersecting EDP; carries the
+            resolved EDP_id used as `edpId`. None means no calculation was
+            possible, so no entry is emitted.
 
     Returns:
         Dict matching the nrf-backend PATCH /quotes/{reference} schema.
         Returns {"edps": []} when there are no results, no catchment impacts,
-        or the EDPs cannot be identified.
+        no levy, or the EDPs cannot be identified.
     """
     if not results:
         return {"edps": []}
@@ -104,9 +105,7 @@ def build_quote_patch_payload(
 
     if len(intersecting_edps) > 1:
         # The totals are per development, so they cannot be divided between
-        # EDPs, and there is no per-EDP id to keep the entries distinct.
-        # Sending them all the full figures would over-report and, once the
-        # levy calculation is real, over-charge.
+        # EDPs. Sending them all the full figures would over-charge.
         labels = ", ".join(edp.label for edp in intersecting_edps)
         logger.error(
             f"Boundary intersects {len(intersecting_edps)} EDPs ({labels}); "
@@ -114,4 +113,8 @@ def build_quote_patch_payload(
         )
         return {"edps": []}
 
-    return {"edps": [_edp_entry(intersecting_edps[0], result, catchments or [])]}
+    if levy is None:
+        logger.error("No levy calculation for the EDP, skipping callback payload")
+        return {"edps": []}
+
+    return {"edps": [_edp_entry(intersecting_edps[0], result, catchments or [], levy)]}

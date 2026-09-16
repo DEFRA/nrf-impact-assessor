@@ -2,6 +2,7 @@
 
 import logging
 import time
+from datetime import UTC, datetime
 
 import geopandas as gpd
 import shapely
@@ -10,6 +11,11 @@ from shapely.geometry import shape
 from app.assessments.adapters import nutrient_adapter
 from app.assessments.reference_data import assert_reference_data_present
 from app.boundary.catchments import find_intersecting_catchments
+from app.calculators.levy import (
+    LevyCalculation,
+    LevyChargeUnavailableError,
+    calculate_levy,
+)
 from app.clients.backend_client import BackendClient
 from app.clients.payload_mapper import build_quote_patch_payload
 from app.common.tracing import ctx_trace_id
@@ -17,10 +23,24 @@ from app.config import AWSConfig
 from app.data_sync.service import resolve_active_provenance
 from app.models.enums import AssessmentType
 from app.models.job import ImpactAssessmentJob
+from app.repositories.levy import (
+    get_inflation_index,
+    get_levy_charge,
+    record_levy_calculation,
+    resolve_edp_id,
+)
 from app.repositories.repository import Repository
 from app.runner.runner import run_assessment
 
 logger = logging.getLogger(__name__)
+
+
+_NO_UNITS = "no housing units on job"
+_NO_EDP_MATCH = "boundary intersects no EDP"
+_MULTIPLE_EDPS = "boundary intersects multiple EDPs"
+_NO_EDP_ID = "no EDP_id for label in edp_boundary_layer"
+_NO_CHARGE = "no charge for EDP on date in levy_charges"
+_NO_INFLATION_INDEX = "no RICS CIL index for edp start year or calculation year"
 
 
 class JobProcessingError(RuntimeError):
@@ -57,6 +77,10 @@ class JobOrchestrator:
             Dictionary of assessment result DataFrames on success.
 
         Raises:
+            LevyChargeUnavailableError: The levy could not be calculated (no
+                housing units, zero or multiple intersecting EDPs, no EDP_id,
+                or no charge for the date). Raised before anything else runs;
+                the caller leaves the message on the queue.
             JobProcessingError: The job could not be completed (missing geometry,
                 invalid geometry, or the assessment produced no results).
             EmptyReferenceDataError: A reference table the assessment needs is
@@ -74,6 +98,15 @@ class JobOrchestrator:
         logger.info(f"Job {job_id} started (assessment type: {assessment_type.value})")
 
         try:
+            # The levy is the first step of the job (NRF2-913 decision 9): a
+            # missing charge fails in milliseconds before the geometry check,
+            # the reference-data guard and the multi-second spatial run, and a
+            # redelivery does not repeat work it cannot finish. Raises
+            # LevyChargeUnavailableError, which the consumer treats as "not
+            # done": the message stays on the queue, no PATCH, so no quote
+            # email (scenario 5).
+            levy = self._calculate_levy(job)
+
             if not job.boundary_geojson:
                 msg = (
                     f"No geometry source for job {job_id}: boundaryGeojson is required"
@@ -96,10 +129,16 @@ class JobOrchestrator:
             )
 
             # Callback to nrf-backend if quote reference and EDPs are present
-            self._send_results_callback(job, dataframes)
+            self._send_results_callback(job, dataframes, levy)
 
             return dataframes
 
+        except LevyChargeUnavailableError as e:
+            # Named reason without a traceback, because the reason is the whole
+            # story. The consumer logs its own line with the traceback when it
+            # leaves the message on the queue, so this one stays terse.
+            logger.error(f"Job {job_id} not started, levy unavailable: {e}")
+            raise
         except Exception:
             logger.exception(f"Job {job_id} failed with exception")
             raise
@@ -228,6 +267,99 @@ class JobOrchestrator:
 
         return gdf
 
+    def _calculate_levy(self, job: ImpactAssessmentJob) -> LevyCalculation | None:
+        """Resolve the charge for the job's single EDP, calculate the levy and
+        persist the scenario 7 audit row.
+
+        Returns None only when there is no boundary at all: the geometry check
+        that follows raises its own error for that case. A boundary that
+        intersects zero or several EDPs is a levy failure like a missing
+        charge, not a silent no-levy success (scenario 5): the calculation
+        date can't be resolved to a single charge, so it fails closed.
+
+        Raises:
+            LevyChargeUnavailableError: no housing units on the job, the
+                boundary intersects zero or multiple EDPs, no EDP_id for the
+                label in the active boundary layer, no levy_charges row for
+                that id covering today's date, or (when today falls in a
+                different charging year than the EDP's publication) no RICS
+                CIL index for one of those years.
+        """
+        job_id = job.reference or "unknown"
+        calculation_date = datetime.now(UTC).date()
+
+        def unavailable(reason: str, where: str) -> LevyChargeUnavailableError:
+            msg = (
+                f"Levy unavailable for quote {job_id} ({where}, "
+                f"date={calculation_date}): {reason}"
+            )
+            return LevyChargeUnavailableError(msg)
+
+        if not job.boundary_geojson:
+            return None
+
+        edps = job.boundary_geojson.intersecting_edps
+        if len(edps) == 0:
+            raise unavailable(_NO_EDP_MATCH, "edps=[]")
+        if len(edps) > 1:
+            labels = ", ".join(e.label for e in edps)
+            raise unavailable(_MULTIPLE_EDPS, f"edps=[{labels}]")
+
+        label = edps[0].label
+        units = job.residential_building_count
+        if not units or units <= 0:
+            raise unavailable(_NO_UNITS, f"edp={label!r}")
+
+        with self.repository.session() as session:
+            edp_id = resolve_edp_id(session, label)
+            if edp_id is None:
+                raise unavailable(_NO_EDP_ID, f"edp={label!r}")
+            charge = get_levy_charge(session, edp_id, calculation_date)
+            if charge is None:
+                raise unavailable(_NO_CHARGE, f"edp={label!r}, edp_id={edp_id}")
+
+            edp_start_year_index = None
+            calculation_year_index = None
+            if calculation_date.year != charge.edp_start_date.year:
+                edp_start_year_index = get_inflation_index(
+                    session, charge.edp_start_date.year
+                )
+                calculation_year_index = get_inflation_index(
+                    session, calculation_date.year
+                )
+                if edp_start_year_index is None or calculation_year_index is None:
+                    raise unavailable(
+                        _NO_INFLATION_INDEX,
+                        f"edp={label!r}, edp_id={edp_id}, "
+                        f"edp_start_year={charge.edp_start_date.year}, "
+                        f"calculation_year={calculation_date.year}",
+                    )
+
+            levy = calculate_levy(
+                charge,
+                units=units,
+                calculation_date=calculation_date,
+                edp_start_year_index=edp_start_year_index,
+                calculation_year_index=calculation_year_index,
+            )
+            record_levy_calculation(session, job_id, levy)
+            session.commit()
+
+        # Scenario 7 audit record, also in the log so a quote can be traced
+        # without a database query. One line, key=value.
+        logger.info(
+            "Levy calculated: "
+            f"quote={job_id} edp_id={levy.edp_id} edp_name={levy.edp_name!r} "
+            f"edp_start_date={levy.edp_start_date} "
+            f"calculator_version={levy.calculator_version} "
+            f"base_charge_per_unit={levy.base_charge_per_unit} "
+            f"rounded_charge_per_unit={levy.rounded_charge_per_unit} "
+            f"units={levy.units} calculation_date={levy.calculation_date} "
+            f"provisional_amount={levy.provisional_amount} "
+            f"inflation_adjusted_amount={levy.inflation_adjusted_amount}"
+        )
+        return levy
+
     def _boundary_catchments(self, job: ImpactAssessmentJob) -> list[dict]:
         """The NN catchments the job's boundary falls in.
 
@@ -250,13 +382,17 @@ class JobOrchestrator:
             return []
 
     def _send_results_callback(
-        self, job: ImpactAssessmentJob, dataframes: dict
+        self,
+        job: ImpactAssessmentJob,
+        dataframes: dict,
+        levy: LevyCalculation | None,
     ) -> None:
         """Send assessment results to nrf-backend via PATCH /quotes/{reference}.
 
         Only fires when all conditions are met:
         - backend_client is configured
         - job has a quote reference
+        - a levy was calculated for a single EDP
 
         Failures are logged but do not affect the job result.
         """
@@ -300,6 +436,7 @@ class JobOrchestrator:
                 results=results,
                 intersecting_edps=intersecting_edps,
                 catchments=catchments,
+                levy=levy,
             )
             if not payload.get("edps"):
                 logger.error(

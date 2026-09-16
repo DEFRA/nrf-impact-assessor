@@ -77,10 +77,43 @@ erDiagram
         varchar license "nullable"
         timestamptz created_at "default now()"
     }
+
+    levy_charges {
+        uuid id PK "app-generated uuid4, no DB default"
+        integer edp_id "indexed; matches edp_boundary_layer.attributes.EDP_id"
+        varchar edp_name "for readers, not a lookup key"
+        date edp_start_date
+        date charge_valid_from "unique with edp_id; charging year start"
+        date charge_valid_to "charging year end, inclusive"
+        numeric base_charge_per_unit "numeric(12,4), GBP, unrounded"
+        timestamptz created_at "default now()"
+    }
+
+    levy_calculations {
+        uuid id PK "app-generated uuid4, no DB default"
+        varchar quote_reference "indexed; NRL-000000"
+        integer edp_id
+        varchar edp_name
+        date edp_start_date
+        integer calculator_version
+        numeric base_charge_per_unit "numeric(12,4)"
+        numeric rounded_charge_per_unit "numeric(12,2)"
+        integer units "dwellings used"
+        date calculation_date
+        numeric provisional_amount "numeric(12,2)"
+        numeric inflation_adjusted_amount "numeric(12,2)"
+        timestamptz created_at "default now()"
+    }
 ```
 
 Reads fall back to `MAX(version)` when `data_active_version` holds no row for a
 table, so it only gains one once a reload or rollback has actually run.
+
+`levy_charges` is seeded by migration (`d4e8f1a2b3c5`), not by `load_data.py`
+or data sync, and is not versioned by `data_active_version`. The assessor reads
+the row whose validity window contains the calculation date (NRF2-913).
+`levy_calculations` holds one audit row per calculation (scenario 7); it is
+written by the orchestrator and never truncated by data sync.
 
 ## Spatial reference layers
 
