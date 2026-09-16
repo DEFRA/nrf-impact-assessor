@@ -404,7 +404,10 @@ _STUB_CATCHMENTS = [
 ]
 
 
-_STUB_EDP_LABEL = "Broads SAC (Yare & Bure) & Wensum SAC"
+_STUB_EDP_LABEL = (
+    "Broads SAC, Broadland Ramsar and River Wensum SAC Environmental "
+    "Delivery Plan addressing nutrient pollution (2026 to 2036)"
+)
 
 
 def _build_stub_patch_payload(stub_edps: int = 1) -> dict:

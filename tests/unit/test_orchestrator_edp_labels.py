@@ -5,8 +5,6 @@ which is a constituent site of an EDP rather than the EDP itself. The EDP name
 arrives on the job as `intersectingEdps[].label`.
 """
 
-from datetime import date
-from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 from app.calculators.levy import LevyCalculation
@@ -20,23 +18,7 @@ from app.models.domain import (
 )
 from app.models.job import BoundaryGeojson, ImpactAssessmentJob, IntersectingEdp
 from app.orchestrator import JobOrchestrator
-
-EDP_LABEL = "Broads SAC (Yare & Bure) & Wensum SAC"
-
-
-def _levy() -> LevyCalculation:
-    return LevyCalculation(
-        edp_id=1,
-        edp_name=EDP_LABEL,
-        edp_start_date=date(2026, 1, 1),
-        calculation_date=date(2026, 9, 14),
-        calculator_version=1,
-        units=10,
-        base_charge_per_unit=Decimal("2193.6649"),
-        rounded_charge_per_unit=Decimal("2193.66"),
-        provisional_amount=Decimal("21936.60"),
-        inflation_adjusted_amount=Decimal("21936.60"),
-    )
+from tests.conftest import EDP_NAME, make_levy_calculation
 
 
 def _result() -> ImpactAssessmentResult:
@@ -84,7 +66,7 @@ def _run_callback(
     job: ImpactAssessmentJob, catchments=None, levy: LevyCalculation | None = "unset"
 ) -> MagicMock:
     if levy == "unset":
-        levy = _levy()
+        levy = make_levy_calculation()
     orch = JobOrchestrator.__new__(JobOrchestrator)
     orch.repository = MagicMock()
     orch.backend_client = MagicMock()
@@ -104,11 +86,11 @@ def _run_callback(
 
 
 def test_callback_names_edp_from_job_label():
-    client = _run_callback(_job([EDP_LABEL]))
+    client = _run_callback(_job([EDP_NAME]))
 
     client.patch_quote.assert_called_once()
     payload = client.patch_quote.call_args.args[1]
-    assert [edp["edpName"] for edp in payload["edps"]] == [EDP_LABEL]
+    assert [edp["edpName"] for edp in payload["edps"]] == [EDP_NAME]
 
 
 def test_callback_skipped_when_job_has_no_edps():
@@ -127,7 +109,7 @@ CATCHMENTS = [
 
 
 def test_callback_carries_the_recomputed_catchments():
-    client = _run_callback(_job([EDP_LABEL]), catchments=CATCHMENTS)
+    client = _run_callback(_job([EDP_NAME]), catchments=CATCHMENTS)
 
     payload = client.patch_quote.call_args.args[1]
     assert payload["edps"][0]["catchments"] == CATCHMENTS
@@ -149,7 +131,7 @@ def test_callback_is_still_sent_when_the_catchment_query_fails():
     ):
         adapter.to_domain_models.return_value = {"assessment_results": [_result()]}
         orch._send_results_callback(
-            _job([EDP_LABEL]), {"impact_summary": MagicMock()}, _levy()
+            _job([EDP_NAME]), {"impact_summary": MagicMock()}, make_levy_calculation()
         )
 
     payload = orch.backend_client.patch_quote.call_args.args[1]

@@ -8,7 +8,6 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select, text
 
-from app.calculators.levy import LevyCalculation
 from app.models.db import LevyCalculationRecord
 from app.repositories.levy import (
     get_inflation_index,
@@ -17,6 +16,7 @@ from app.repositories.levy import (
     resolve_edp_id,
 )
 from app.repositories.repository import Repository
+from tests.conftest import make_levy_calculation
 from tests.integration.conftest import set_active_version
 
 pytestmark = pytest.mark.integration
@@ -123,18 +123,7 @@ def test_inflation_index_lookup_by_charging_year(repository: Repository):
 
 
 def test_record_levy_calculation_round_trips(repository: Repository):
-    levy = LevyCalculation(
-        edp_id=1,
-        edp_name="Norfolk EDP",
-        edp_start_date=date(2026, 1, 1),
-        calculation_date=date(2026, 9, 14),
-        calculator_version=1,
-        units=10,
-        base_charge_per_unit=Decimal("2193.6649"),
-        rounded_charge_per_unit=Decimal("2193.66"),
-        provisional_amount=Decimal("21936.60"),
-        inflation_adjusted_amount=Decimal("21936.60"),
-    )
+    levy = make_levy_calculation()
     with repository.session() as session:
         record_levy_calculation(session, "NRL-000001", levy)
         session.commit()

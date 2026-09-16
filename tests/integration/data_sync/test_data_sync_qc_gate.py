@@ -2,6 +2,7 @@
 
 import contextlib
 import gzip
+import json
 import os
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from app.config import AWSConfig
 from app.data_sync.manifest import Manifest
 from app.data_sync.qc_rules import load_qc_rules
 from app.data_sync.service import run_data_sync
+from tests.conftest import EDP_NAME
 from tests.integration.data_sync.dumps import PG_DUMP_PREAMBLE
 
 pytestmark = pytest.mark.integration
@@ -112,7 +114,7 @@ def _good_dumps() -> dict[str, bytes]:
         "wwtw_catchments": '{"WwTw_ID": 1}',
         "nn_catchments": '{"OID": 1, "N2K_Site_N": "Site A"}',
         "subcatchments": '{"OPCAT_NAME": "Catchment A"}',
-        "edp_boundary_layer": '{"EDP_Name": "Broads SAC (Yare & Bure) & Wensum SAC"}',
+        "edp_boundary_layer": json.dumps({"EDP_Name": EDP_NAME}),
         "lpa_boundaries": '{"NAME": "Authority A"}',
         "gcn_risk_zones": '{"RZ": "Green"}',
         "gcn_ponds": "{}",

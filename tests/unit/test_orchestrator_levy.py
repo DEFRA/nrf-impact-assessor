@@ -15,11 +15,10 @@ from app.calculators.levy import LevyCalculation, LevyChargeUnavailableError
 from app.models.enums import AssessmentType
 from app.models.job import BoundaryGeojson, ImpactAssessmentJob, IntersectingEdp
 from app.orchestrator import JobOrchestrator
+from tests.conftest import EDP_NAME
 
-EDP_LABEL = "Broads SAC (Yare & Bure) & Wensum SAC"
 
-
-def _job(labels=(EDP_LABEL,), units: int | None = 10) -> ImpactAssessmentJob:
+def _job(labels=(EDP_NAME,), units: int | None = 10) -> ImpactAssessmentJob:
     return ImpactAssessmentJob(
         reference="NRL-000001",
         boundary_geojson=BoundaryGeojson(
@@ -33,7 +32,7 @@ def _job(labels=(EDP_LABEL,), units: int | None = 10) -> ImpactAssessmentJob:
 def _charge() -> MagicMock:
     charge = MagicMock()
     charge.edp_id = 1
-    charge.edp_name = EDP_LABEL
+    charge.edp_name = EDP_NAME
     charge.edp_start_date = date(2026, 1, 1)
     charge.base_charge_per_unit = Decimal("2193.6649")
     return charge
@@ -144,7 +143,7 @@ def test_zero_edps_raises_without_lookups(orch, lookups):
 
 
 def test_multiple_edps_raises_without_lookups(orch, lookups):
-    job = _job(labels=(EDP_LABEL, "Other EDP"))
+    job = _job(labels=(EDP_NAME, "Other EDP"))
 
     with pytest.raises(LevyChargeUnavailableError, match="multiple EDPs"):
         orch._calculate_levy(job)

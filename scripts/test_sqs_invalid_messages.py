@@ -64,7 +64,11 @@ def _valid_job(**overrides) -> dict:
         "reference": "NRL-000001",
         "boundaryGeojson": {
             "boundaryGeometryOriginal": json.loads(json.dumps(_VALID_GEOM)),
-            "intersectingEdps": [{"label": "Broads SAC (Yare & Bure) & Wensum SAC"}],
+            "intersectingEdps": [
+                {
+                    "label": "Broads SAC, Broadland Ramsar and River Wensum SAC Environmental Delivery Plan addressing nutrient pollution (2026 to 2036)"
+                }
+            ],
         },
         "developmentTypes": ["housing"],
         "residentialBuildingCount": 25,

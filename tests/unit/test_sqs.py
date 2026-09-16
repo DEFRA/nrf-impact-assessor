@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.aws.sqs import SQSClient
+from tests.conftest import EDP_NAME
 
 # -- Fixtures --
 
@@ -31,7 +32,7 @@ _INNER_JOB = {
                 ]
             ],
         },
-        "intersectingEdps": [{"label": "Broads SAC (Yare & Bure) & Wensum SAC"}],
+        "intersectingEdps": [{"label": EDP_NAME}],
     },
     "developmentTypes": ["housing"],
     "housingUnits": 25,

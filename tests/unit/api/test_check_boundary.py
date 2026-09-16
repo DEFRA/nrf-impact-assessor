@@ -20,6 +20,7 @@ from app.boundary.router import (
 )
 from app.boundary.validation import validate_geometry
 from app.main import app
+from tests.conftest import EDP_NAME
 from tests.unit.api.conftest import _make_geojson_bytes
 
 
@@ -824,7 +825,7 @@ class TestFindIntersectingEdpsMapping:
                 {
                     "OBJECTID": 2,
                     "EDP_Area": "Norfolk",
-                    "EDP_Name": "Broads SAC (Yare & Bure) & Wensum SAC",
+                    "EDP_Name": EDP_NAME,
                 }
             )
         ]
@@ -832,7 +833,7 @@ class TestFindIntersectingEdpsMapping:
         results = self._run(rows)
 
         assert len(results) == 1
-        assert results[0]["label"] == "Broads SAC (Yare & Bure) & Wensum SAC"
+        assert results[0]["label"] == EDP_NAME
 
     def test_missing_attributes_map_to_none(self):
         results = self._run([self._make_row(None)])

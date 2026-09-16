@@ -8,13 +8,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.calculators.levy import LevyCalculation
 from app.models.db import LevyCalculationRecord
 from app.repositories.levy import (
     get_inflation_index,
     record_levy_calculation,
     resolve_edp_id,
 )
+from tests.conftest import EDP_NAME, make_levy_calculation
 
 LABEL = "Broads SAC EDP"
 
@@ -66,31 +66,16 @@ def test_get_inflation_index_returns_none_when_missing():
 # --- record_levy_calculation -------------------------------------------------
 
 
-def _levy() -> LevyCalculation:
-    return LevyCalculation(
-        edp_id=1,
-        edp_name="Norfolk EDP",
-        edp_start_date=date(2026, 1, 1),
-        calculation_date=date(2026, 9, 14),
-        calculator_version=1,
-        units=10,
-        base_charge_per_unit=Decimal("2193.6649"),
-        rounded_charge_per_unit=Decimal("2193.66"),
-        provisional_amount=Decimal("21936.60"),
-        inflation_adjusted_amount=Decimal("21936.60"),
-    )
-
-
 def test_record_maps_every_audit_field_and_adds_to_session():
     session = MagicMock()
 
-    row = record_levy_calculation(session, "NRL-000001", _levy())
+    row = record_levy_calculation(session, "NRL-000001", make_levy_calculation())
 
     session.add.assert_called_once_with(row)
     assert isinstance(row, LevyCalculationRecord)
     assert row.quote_reference == "NRL-000001"
     assert row.edp_id == 1
-    assert row.edp_name == "Norfolk EDP"
+    assert row.edp_name == EDP_NAME
     assert row.edp_start_date == date(2026, 1, 1)
     assert row.calculator_version == 1
     assert row.base_charge_per_unit == Decimal("2193.6649")
