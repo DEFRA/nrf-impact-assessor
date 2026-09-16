@@ -7,7 +7,7 @@ lookup tables, and the audit trail for the S3-driven data sync that loads them.
 - **Source:** live `nrf_impact` Postgres (`docker compose` service `postgres`),
   schema `public`, cross-checked against the Alembic revisions under
   `alembic/versions/`.
-- **Generated:** 2026-08-13, by the `generate-db-diagram` skill.
+- **Generated:** 2026-09-16, by the `generate-db-diagram` skill.
 - **Scope:** application domain tables only. `alembic_version` and PostGIS
   internals (`spatial_ref_sys`, `geometry_columns`, `geography_columns`) are
   excluded.
@@ -104,14 +104,34 @@ erDiagram
         numeric inflation_adjusted_amount "numeric(12,2)"
         timestamptz created_at "default now()"
     }
+
+    levy_inflation_index {
+        uuid id PK "app-generated uuid4, no DB default"
+        integer charging_year UK "indexed; one row per year"
+        numeric index_factor "numeric(10,4), RICS CIL Index vs the 2026 base"
+        timestamptz created_at "default now()"
+    }
 ```
 
 Reads fall back to `MAX(version)` when `data_active_version` holds no row for a
 table, so it only gains one once a reload or rollback has actually run.
 
-`levy_charges` is seeded by migration (`d4e8f1a2b3c5`), not by `load_data.py`
-or data sync, and is not versioned by `data_active_version`. The assessor reads
-the row whose validity window contains the calculation date (NRF2-913).
+All three levy tables are maintained by migration (`d4e8f1a2b3c5`), not by
+`load_data.py` or data sync, and none is versioned by `data_active_version`.
+
+`levy_charges` is created **empty** — the migration deliberately seeds no row,
+because finance has not confirmed a published base charge or charging year for
+any EDP, and an assumed value would let a real quote price against it
+(scenario 5). The Norfolk row is inserted once finance confirms. The assessor
+reads the row whose validity window contains the calculation date (NRF2-913).
+
+`levy_inflation_index` **is** seeded by the same migration, with RICS CIL Index
+factors for charging years 2021-2026 expressed against the 2026 base
+(2026 = 1.0000) — these are published figures, not finance-confirmed prices.
+Later years arrive by follow-up migration as RICS publishes them. It is read
+when the calculation date falls in a later charging year than the EDP's
+publication, to inflation-adjust the provisional amount.
+
 `levy_calculations` holds one audit row per calculation (scenario 7); it is
 written by the orchestrator and never truncated by data sync.
 
@@ -177,6 +197,9 @@ spatially at query time.
 | `uq_lookup_name_version` | `UNIQUE (name, version)` — one row per lookup table per version. |
 | `ix_public_coefficient_layer_geom_v1` | Partial GiST over `geometry WHERE version = 1`. **Add an equivalent when loading a new version**, or queries against it lose the index. |
 | `ix_data_load_history_table_loaded_at` | `(table_name, loaded_at)` — the provenance lookup. |
+| `uq_levy_charges_edp_from` | `UNIQUE (edp_id, charge_valid_from)` — one charge row per EDP per charging-year start. |
+| `uq_levy_inflation_index_year` | `UNIQUE (charging_year)` — one index factor per charging year. |
+| `ix_public_levy_calculations_quote_reference` | `(quote_reference)` — fetches the audit trail for a quote. |
 | `ix_public_<layer>_geometry` | GiST on every spatial layer. |
 
 ## UUID primary keys have no database default
