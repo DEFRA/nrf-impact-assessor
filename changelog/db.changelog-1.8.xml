@@ -105,6 +105,9 @@
             <column name="charging_year" type="integer">
                 <constraints nullable="false"/>
             </column>
+            <column name="cil_index" type="numeric(10,4)">
+                <constraints nullable="false"/>
+            </column>
             <column name="index_factor" type="numeric(10,4)">
                 <constraints nullable="false"/>
             </column>
@@ -121,43 +124,6 @@
         </createIndex>
         <rollback>
             <dropTable tableName="levy_inflation_index" schemaName="public"/>
-        </rollback>
-    </changeSet>
-
-    <changeSet id="08-levy-inflation-index-seed" author="nrf">
-        <!-- Published RICS CIL Index factor vs the 2026 base, 2021-2026. -->
-        <insert tableName="levy_inflation_index" schemaName="public">
-            <column name="id" valueComputed="gen_random_uuid()"/>
-            <column name="charging_year" valueNumeric="2021"/>
-            <column name="index_factor" valueNumeric="0.8325"/>
-        </insert>
-        <insert tableName="levy_inflation_index" schemaName="public">
-            <column name="id" valueComputed="gen_random_uuid()"/>
-            <column name="charging_year" valueNumeric="2022"/>
-            <column name="index_factor" valueNumeric="0.8300"/>
-        </insert>
-        <insert tableName="levy_inflation_index" schemaName="public">
-            <column name="id" valueComputed="gen_random_uuid()"/>
-            <column name="charging_year" valueNumeric="2023"/>
-            <column name="index_factor" valueNumeric="0.8875"/>
-        </insert>
-        <insert tableName="levy_inflation_index" schemaName="public">
-            <column name="id" valueComputed="gen_random_uuid()"/>
-            <column name="charging_year" valueNumeric="2024"/>
-            <column name="index_factor" valueNumeric="0.9525"/>
-        </insert>
-        <insert tableName="levy_inflation_index" schemaName="public">
-            <column name="id" valueComputed="gen_random_uuid()"/>
-            <column name="charging_year" valueNumeric="2025"/>
-            <column name="index_factor" valueNumeric="0.9775"/>
-        </insert>
-        <insert tableName="levy_inflation_index" schemaName="public">
-            <column name="id" valueComputed="gen_random_uuid()"/>
-            <column name="charging_year" valueNumeric="2026"/>
-            <column name="index_factor" valueNumeric="1.0000"/>
-        </insert>
-        <rollback>
-            <sql>DELETE FROM public.levy_inflation_index WHERE charging_year BETWEEN 2021 AND 2026</sql>
         </rollback>
     </changeSet>
 

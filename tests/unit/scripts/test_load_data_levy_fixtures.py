@@ -31,9 +31,10 @@ def test_levy_charge_from_row_parses_types():
 
 
 def test_levy_index_from_row_parses_types():
-    row = {"charging_year": "2026", "index_factor": "1.0000"}
+    row = {"charging_year": "2026", "cil_index": "400", "index_factor": "1.0000"}
 
     index = _levy_index_from_row(row)
 
     assert index.charging_year == 2026
+    assert index.cil_index == Decimal("400")
     assert index.index_factor == Decimal("1.0000")

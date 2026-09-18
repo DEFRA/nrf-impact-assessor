@@ -257,6 +257,7 @@ class LevyInflationIndex(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     charging_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    cil_index: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
     index_factor: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

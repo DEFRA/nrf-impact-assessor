@@ -108,6 +108,7 @@ erDiagram
     levy_inflation_index {
         uuid id PK "app-generated uuid4, no DB default"
         integer charging_year UK "indexed; one row per year"
+        numeric cil_index "numeric(10,4), published RICS CIL Index"
         numeric index_factor "numeric(10,4), RICS CIL Index vs the 2026 base"
         timestamptz created_at "default now()"
     }
@@ -119,18 +120,16 @@ table, so it only gains one once a reload or rollback has actually run.
 All three levy tables are maintained by migration (`d4e8f1a2b3c5`), not by
 `load_data.py` or data sync, and none is versioned by `data_active_version`.
 
-`levy_charges` is created **empty** — the migration deliberately seeds no row,
-because finance has not confirmed a published base charge or charging year for
-any EDP, and an assumed value would let a real quote price against it
-(scenario 5). The Norfolk row is inserted once finance confirms. The assessor
-reads the row whose validity window contains the calculation date (NRF2-913).
+All three are created **empty** — the migration deliberately seeds no row.
+Finance has not confirmed a published base charge or charging year for any EDP,
+and an assumed value would let a real quote price against it (scenario 5). The
+assessor reads the `levy_charges` row whose validity window contains the
+calculation date (NRF2-913).
 
-`levy_inflation_index` **is** seeded by the same migration, with RICS CIL Index
-factors for charging years 2021-2026 expressed against the 2026 base
-(2026 = 1.0000) — these are published figures, not finance-confirmed prices.
-Later years arrive by follow-up migration as RICS publishes them. It is read
-when the calculation date falls in a later charging year than the EDP's
-publication, to inflation-adjust the provisional amount.
+`levy_inflation_index` holds the published RICS CIL Index per charging year and
+the factor it derives against the 2026 base (2026 = 1.0000). It is read when the
+calculation date falls in a later charging year than the EDP's publication, to
+inflation-adjust the provisional amount.
 
 `levy_calculations` holds one audit row per calculation (scenario 7); it is
 written by the orchestrator and never truncated by data sync.

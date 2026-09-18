@@ -98,15 +98,17 @@ def test_charge_lookup_honours_validity_window(repository: Repository):
 # --- get_inflation_index ------------------------------------------------------
 
 
-def _insert_index(repository: Repository, year: int, factor: str) -> None:
+def _insert_index(
+    repository: Repository, year: int, factor: str, cil_index: str = "400"
+) -> None:
     with repository.session() as session:
         session.execute(
             text(
                 "INSERT INTO public.levy_inflation_index "
-                "(id, charging_year, index_factor) VALUES "
-                "(gen_random_uuid(), :year, :factor)"
+                "(id, charging_year, cil_index, index_factor) VALUES "
+                "(gen_random_uuid(), :year, :cil_index, :factor)"
             ),
-            {"year": year, "factor": factor},
+            {"year": year, "cil_index": cil_index, "factor": factor},
         )
         session.commit()
 

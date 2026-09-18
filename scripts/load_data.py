@@ -195,10 +195,8 @@ class SpatialDataLoader:
         self.settings = settings
         self.sample_mode = sample_mode
         self.sample_limit = 100 if sample_mode else None
-        # levy_charges/levy_inflation_index are finance-confirmed data in
-        # production, seeded only by migration there. These CSV fixtures are
-        # a fixtures_dir-only convenience so a local/CI job can exercise the
-        # levy calculation end-to-end; there is no .env.local equivalent.
+        # Fixtures-only convenience so a local/CI job can exercise the levy
+        # calculation end-to-end; the migration seeds neither table.
         self.levy_charges_csv: Path | None = None
         self.levy_inflation_index_csv: Path | None = None
 
@@ -682,9 +680,7 @@ class SpatialDataLoader:
     def load_levy_fixtures(self) -> None:
         """Load levy_charges and levy_inflation_index from CSV fixtures.
 
-        Fixtures only (levy_charges_csv/levy_inflation_index_csv are None
-        outside fixtures_dir mode): these tables hold finance-confirmed data
-        in production and are seeded solely by migration there.
+        Both CSV paths are None outside fixtures_dir mode.
         """
         self._load_csv_table(
             self.levy_charges_csv, LevyCharge, _levy_charge_from_row
@@ -739,6 +735,7 @@ def _levy_index_from_row(row: dict) -> LevyInflationIndex:
     return LevyInflationIndex(
         id=uuid4(),
         charging_year=int(row["charging_year"]),
+        cil_index=Decimal(str(row["cil_index"])),
         index_factor=Decimal(str(row["index_factor"])),
     )
 

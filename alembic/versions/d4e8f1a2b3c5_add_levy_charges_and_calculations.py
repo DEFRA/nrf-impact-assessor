@@ -1,29 +1,15 @@
 """add levy_charges, levy_calculations and levy_inflation_index
 
-Base charge per unit for each EDP and charging year, used by the assessor to
-calculate the provisional nature restoration levy (NRF2-913), the audit
-record for every calculation performed (scenario 7): EDP identity and start
-date, calculator version, the unrounded and rounded base charge, units,
-calculation date, and both totals; and the RICS CIL Index factor per charging
-year (relative to the 2026 base, 2026 = 1.0000) used to inflation-adjust a
-levy when the calculation date falls in a later charging year than the EDP's
-publication.
+Base charge per EDP and charging year, the audit record for every levy
+calculation (NRF2-913), and the published RICS CIL Index per charging year
+with the factor it derives against the 2026 base (2026 = 1.0000).
 
-Three tables squashed into one migration: levy_charges, levy_calculations
-and levy_inflation_index were all still unmerged, so carry one revision for
-the feature rather than three.
+Squashed into one revision because all three tables were still unmerged.
 
-levy_charges is populated here rather than by scripts/load_data.py or data
-sync: the table is small, hand-maintained, and not part of any spatial data
-drop. No row is seeded by this migration — finance has not yet confirmed a
-published base charge or charging year for any EDP, and seeding an unconfirmed
-value would let a real quote calculate against it (scenario 5 requires no
-assumed/default value). Insert the Norfolk row once finance confirms.
-
-levy_inflation_index IS seeded unconditionally, unlike levy_charges: these
-are published RICS figures, not finance-confirmed EDP prices. Seeded with
-factors for 2021-2026; later years are added by a follow-up migration once
-RICS publishes them.
+No rows are seeded: finance has not confirmed a base charge for any EDP,
+and seeding an unconfirmed value would let a real quote calculate against it
+(scenario 5 requires no assumed/default value). The RICS CIL Index rows are
+loaded separately rather than baked into this migration.
 
 Revision ID: d4e8f1a2b3c5
 Revises: c3d7e1f2a4b6
@@ -45,30 +31,6 @@ CHARGES_TABLE = "levy_charges"
 CALCULATIONS_TABLE = "levy_calculations"
 INFLATION_INDEX_TABLE = "levy_inflation_index"
 NOW_SQL = "now()"
-
-# RICS CIL Index factor vs the 2026 base (raw index / raw 2026 index),
-# charging year -> factor.
-_INDEX_FACTORS = {
-    2021: "0.8325",
-    2022: "0.8300",
-    2023: "0.8875",
-    2024: "0.9525",
-    2025: "0.9775",
-    2026: "1.0000",
-}
-
-
-def seed_index(conn) -> None:
-    """Insert the published RICS CIL Index factor rows. Shared with the integration test."""
-    for year, factor in _INDEX_FACTORS.items():
-        conn.execute(
-            sa.text(
-                "INSERT INTO public.levy_inflation_index "
-                "(id, charging_year, index_factor) VALUES "
-                "(gen_random_uuid(), :year, :factor)"
-            ),
-            {"year": year, "factor": factor},
-        )
 
 
 def upgrade() -> None:
@@ -131,6 +93,7 @@ def upgrade() -> None:
         INFLATION_INDEX_TABLE,
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("charging_year", sa.Integer(), nullable=False),
+        sa.Column("cil_index", sa.Numeric(10, 4), nullable=False),
         sa.Column("index_factor", sa.Numeric(10, 4), nullable=False),
         sa.Column(
             "created_at",
@@ -148,7 +111,6 @@ def upgrade() -> None:
         ["charging_year"],
         schema="public",
     )
-    seed_index(op.get_bind())
 
 
 def downgrade() -> None:
