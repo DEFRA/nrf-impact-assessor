@@ -277,7 +277,7 @@ class LevyCalculationRecord(Base):
     writes another row; the history is the point.
     """
 
-    __tablename__ = "levy_calculations"
+    __tablename__ = "audit_levy_calculations"
     __table_args__ = {"schema": "public"}
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)

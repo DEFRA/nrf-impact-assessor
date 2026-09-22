@@ -89,7 +89,7 @@ erDiagram
         timestamptz created_at "default now()"
     }
 
-    levy_calculations {
+    audit_levy_calculations {
         uuid id PK "app-generated uuid4, no DB default"
         varchar quote_reference "indexed; NRL-000000"
         integer edp_id
@@ -131,7 +131,7 @@ the factor it derives against the 2026 base (2026 = 1.0000). It is read when the
 calculation date falls in a later charging year than the EDP's publication, to
 inflation-adjust the provisional amount.
 
-`levy_calculations` holds one audit row per calculation (scenario 7); it is
+`audit_levy_calculations` holds one audit row per calculation (scenario 7); it is
 written by the orchestrator and never truncated by data sync.
 
 ## Spatial reference layers
@@ -198,7 +198,7 @@ spatially at query time.
 | `ix_data_load_history_table_loaded_at` | `(table_name, loaded_at)` — the provenance lookup. |
 | `uq_levy_charges_edp_from` | `UNIQUE (edp_id, charge_valid_from)` — one charge row per EDP per charging-year start. |
 | `uq_levy_inflation_index_year` | `UNIQUE (charging_year)` — one index factor per charging year. |
-| `ix_public_levy_calculations_quote_reference` | `(quote_reference)` — fetches the audit trail for a quote. |
+| `ix_public_audit_levy_calculations_quote_reference` | `(quote_reference)` — fetches the audit trail for a quote. |
 | `ix_public_<layer>_geometry` | GiST on every spatial layer. |
 
 ## UUID primary keys have no database default

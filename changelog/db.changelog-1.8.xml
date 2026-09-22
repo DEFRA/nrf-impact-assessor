@@ -47,7 +47,7 @@
     </changeSet>
 
     <changeSet id="08-levy-calculations" author="nrf">
-        <createTable tableName="levy_calculations" schemaName="public">
+        <createTable tableName="audit_levy_calculations" schemaName="public">
             <column name="id" type="uuid">
                 <constraints primaryKey="true" nullable="false"/>
             </column>
@@ -88,12 +88,12 @@
                 <constraints nullable="false"/>
             </column>
         </createTable>
-        <createIndex indexName="ix_public_levy_calculations_quote_reference"
-                     tableName="levy_calculations" schemaName="public">
+        <createIndex indexName="ix_public_audit_levy_calculations_quote_reference"
+                     tableName="audit_levy_calculations" schemaName="public">
             <column name="quote_reference"/>
         </createIndex>
         <rollback>
-            <dropTable tableName="levy_calculations" schemaName="public"/>
+            <dropTable tableName="audit_levy_calculations" schemaName="public"/>
         </rollback>
     </changeSet>
 

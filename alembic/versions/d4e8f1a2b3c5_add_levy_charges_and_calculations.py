@@ -1,4 +1,4 @@
-"""add levy_charges, levy_calculations and levy_inflation_index
+"""add levy_charges, audit_levy_calculations and levy_inflation_index
 
 Base charge per EDP and charging year, the audit record for every levy
 calculation (NRF2-913), and the published RICS CIL Index per charging year
@@ -28,7 +28,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 CHARGES_TABLE = "levy_charges"
-CALCULATIONS_TABLE = "levy_calculations"
+CALCULATIONS_TABLE = "audit_levy_calculations"
 INFLATION_INDEX_TABLE = "levy_inflation_index"
 NOW_SQL = "now()"
 

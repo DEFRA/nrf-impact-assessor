@@ -30,7 +30,7 @@ REFERENCE_TABLES = (
     "data_active_version",
     "lookup_table",
     "levy_charges",
-    "levy_calculations",
+    "audit_levy_calculations",
     "levy_inflation_index",
 )
 
