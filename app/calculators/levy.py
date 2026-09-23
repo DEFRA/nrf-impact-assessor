@@ -72,7 +72,6 @@ class LevyCalculation(BaseModel):
     calculator_version: int
     units: int = Field(gt=0)
     base_charge_per_unit: Decimal
-    rounded_charge_per_unit: Decimal
     provisional_amount: Decimal
     inflation_adjusted_amount: Decimal
     inflation_adjusted_charge_per_unit: Decimal | None = None
@@ -151,7 +150,6 @@ def calculate_levy(
         calculator_version=LEVY_CALCULATOR_VERSION,
         units=units,
         base_charge_per_unit=charge.base_charge_per_unit,
-        rounded_charge_per_unit=rounded,
         provisional_amount=provisional,
         inflation_adjusted_amount=inflation_adjusted,
         inflation_adjusted_charge_per_unit=indexed_per_unit,

@@ -355,7 +355,6 @@ class JobOrchestrator:
             f"edp_start_date={levy.edp_start_date} "
             f"calculator_version={levy.calculator_version} "
             f"base_charge_per_unit={levy.base_charge_per_unit} "
-            f"rounded_charge_per_unit={levy.rounded_charge_per_unit} "
             f"units={levy.units} calculation_date={levy.calculation_date} "
             f"provisional_amount={levy.provisional_amount} "
             f"inflation_adjusted_amount={levy.inflation_adjusted_amount} "

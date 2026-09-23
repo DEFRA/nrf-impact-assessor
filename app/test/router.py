@@ -479,7 +479,6 @@ def _build_stub_patch_payload(stub_edps: int = 1) -> dict:
         calculator_version=LEVY_CALCULATOR_VERSION,
         units=1,
         base_charge_per_unit=Decimal("2193.6649"),
-        rounded_charge_per_unit=Decimal("2193.66"),
         provisional_amount=Decimal("2193.66"),
         inflation_adjusted_amount=Decimal("2193.66"),
     )

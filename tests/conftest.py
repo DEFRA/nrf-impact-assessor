@@ -53,7 +53,6 @@ def make_levy_calculation(**overrides) -> LevyCalculation:
         "calculator_version": 1,
         "units": 10,
         "base_charge_per_unit": Decimal("2193.6649"),
-        "rounded_charge_per_unit": Decimal("2193.66"),
         "provisional_amount": Decimal("21936.60"),
         "inflation_adjusted_amount": Decimal("21936.60"),
     }

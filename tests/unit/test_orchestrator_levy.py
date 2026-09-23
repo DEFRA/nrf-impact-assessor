@@ -80,7 +80,6 @@ def test_success_returns_calculation_and_logs_audit_record(orch, lookups, caplog
         "edp_start_date=2026-01-01",
         "calculator_version=1",
         "base_charge_per_unit=2193.6649",
-        "rounded_charge_per_unit=2193.66",
         "units=10",
         "calculation_date=",
         "provisional_amount=21936.60",

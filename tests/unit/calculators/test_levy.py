@@ -56,7 +56,6 @@ def test_worked_example_from_ticket():
     result = calculate_levy(_charge("2193.6649"), units=10, calculation_date=CALC_DATE)
 
     assert result.base_charge_per_unit == Decimal("2193.6649")
-    assert result.rounded_charge_per_unit == Decimal("2193.66")
     assert result.provisional_amount == Decimal("21936.60")
     assert str(result.provisional_amount) == "21936.60"
 
@@ -65,7 +64,6 @@ def test_rounds_the_charge_before_multiplying_not_after():
     # 3 x 2193.665 = 6580.995 -> 6581.00 if rounded after; the rule rounds first.
     result = calculate_levy(_charge("2193.665"), units=3, calculation_date=CALC_DATE)
 
-    assert result.rounded_charge_per_unit == Decimal("2193.67")
     assert result.provisional_amount == Decimal("6581.01")
 
 
