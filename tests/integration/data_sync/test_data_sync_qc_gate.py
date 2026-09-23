@@ -114,7 +114,7 @@ def _good_dumps() -> dict[str, bytes]:
         "wwtw_catchments": '{"WwTw_ID": 1}',
         "nn_catchments": '{"OID": 1, "N2K_Site_N": "Site A"}',
         "subcatchments": '{"OPCAT_NAME": "Catchment A"}',
-        "edp_boundary_layer": json.dumps({"EDP_Name": EDP_NAME}),
+        "edp_boundary_layer": json.dumps({"EDP_Name": EDP_NAME, "EDP_Id": 1}),
         "lpa_boundaries": '{"NAME": "Authority A"}',
         "gcn_risk_zones": '{"RZ": "Green"}',
         "gcn_ponds": "{}",
@@ -552,5 +552,38 @@ def test_excluded_areas_unusable_name_fails_qc(
     assert detail.status == "failed"
     assert expected_rule in detail.status_detail
     assert count == 0, "a QC failure must leave the table empty"
+
+    _reset_sync_state(test_engine)
+
+
+def test_edp_boundary_without_edp_id_fails_qc(
+    test_engine, s3_localstack, data_sync_env
+):
+    """An EDP polygon with no EDP_Id must fail QC: the levy cannot price it."""
+    dumps = _good_dumps()
+    dumps["edp_boundary_layer"] = _spatial_dump(
+        "edp_boundary_layer", "Name", json.dumps({"EDP_Name": EDP_NAME})
+    )
+
+    manifest = _publish(s3_localstack, dumps, "20260701_170000")
+
+    _reset_sync_state(test_engine)
+    run_id = _start_run(test_engine)
+
+    run_data_sync(run_id, manifest, force=True)
+
+    with test_engine.connect() as conn:
+        run_row = _run_row(conn, run_id)
+        detail = conn.execute(
+            text(
+                "SELECT status, status_detail FROM public.data_load_history "
+                "WHERE run_id = :id AND table_name = 'edp_boundary_layer'"
+            ),
+            {"id": str(run_id)},
+        ).one()
+
+    assert run_row.status == "failed"
+    assert detail.status == "failed"
+    assert "attributes.EDP_Id" in detail.status_detail
 
     _reset_sync_state(test_engine)

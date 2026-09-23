@@ -358,7 +358,14 @@ class JobOrchestrator:
             f"rounded_charge_per_unit={levy.rounded_charge_per_unit} "
             f"units={levy.units} calculation_date={levy.calculation_date} "
             f"provisional_amount={levy.provisional_amount} "
-            f"inflation_adjusted_amount={levy.inflation_adjusted_amount}"
+            f"inflation_adjusted_amount={levy.inflation_adjusted_amount} "
+            "inflation_adjusted_charge_per_unit="
+            f"{levy.inflation_adjusted_charge_per_unit} "
+            f"levy_charge_id={levy.levy_charge_id} "
+            f"edp_start_year_index_id={levy.edp_start_year_index_id} "
+            f"edp_start_year_index_factor={levy.edp_start_year_index_factor} "
+            f"calculation_year_index_id={levy.calculation_year_index_id} "
+            f"calculation_year_index_factor={levy.calculation_year_index_factor}"
         )
         return levy
 
@@ -404,6 +411,12 @@ class JobOrchestrator:
         if not job.reference:
             logger.error("Job has no reference, skipping results callback")
             return
+        if levy is None:
+            logger.error(
+                f"No levy calculated for quote {job.reference}, "
+                "skipping results callback"
+            )
+            return
 
         try:
             with self.repository.session() as session:
@@ -440,10 +453,9 @@ class JobOrchestrator:
                 catchments=catchments,
                 levy=levy,
             )
-            if not payload.get("edps"):
+            if payload is None:
                 logger.error(
-                    f"Empty EDP payload for quote {job.reference}, "
-                    "skipping PATCH callback"
+                    f"No EDP payload for quote {job.reference}, skipping PATCH callback"
                 )
                 return
 

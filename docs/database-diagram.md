@@ -28,6 +28,8 @@ The only foreign key in this database is `data_load_history.run_id`.
 ```mermaid
 erDiagram
     data_sync_run ||--o{ data_load_history : "audits"
+    levy_charges ||--o{ audit_levy_calculations : "priced"
+    levy_inflation_index |o--o{ audit_levy_calculations : "inflated"
 
     data_sync_run {
         uuid id PK "app-generated uuid4, no DB default"
@@ -83,7 +85,7 @@ erDiagram
         integer edp_id "indexed; matches edp_boundary_layer.attributes.EDP_id"
         varchar edp_name "for readers, not a lookup key"
         date edp_start_date
-        date charge_valid_from "unique with edp_id; charging year start"
+        date charge_valid_from "charging year start; windows per edp_id never overlap"
         date charge_valid_to "charging year end, inclusive"
         numeric base_charge_per_unit "numeric(12,4), GBP, unrounded"
         timestamptz created_at "default now()"
@@ -97,11 +99,15 @@ erDiagram
         date edp_start_date
         integer calculator_version
         numeric base_charge_per_unit "numeric(12,4)"
-        numeric rounded_charge_per_unit "numeric(12,2)"
         integer units "dwellings used"
         date calculation_date
         numeric provisional_amount "numeric(12,2)"
         numeric inflation_adjusted_amount "numeric(12,2)"
+        uuid levy_charge_id FK "indexed; levy_charges row used, RESTRICT"
+        uuid edp_start_year_index_id FK "nullable; levy_inflation_index row, RESTRICT"
+        numeric edp_start_year_index_factor "nullable; numeric(10,4)"
+        uuid calculation_year_index_id FK "nullable; levy_inflation_index row, RESTRICT"
+        numeric calculation_year_index_factor "nullable; numeric(10,4)"
         timestamptz created_at "default now()"
     }
 
@@ -132,7 +138,16 @@ calculation date falls in a later charging year than the EDP's publication, to
 inflation-adjust the provisional amount.
 
 `audit_levy_calculations` holds one audit row per calculation (scenario 7); it is
-written by the orchestrator and never truncated by data sync.
+written by the orchestrator and never truncated by data sync. Each row copies the
+values it used and names the `levy_charges` row and, when an inflation step
+applied, the two `levy_inflation_index` rows they came from (otherwise the index
+columns are NULL). The rounded per-unit charges are not stored:
+`calculator_version` pins the rounding rule that derives them from
+`base_charge_per_unit` and the index factors, and they appear in the audit log
+line. Comparing the copy with the current row shows whether a value
+was corrected after the event or the wrong row was picked up. The foreign keys are
+`RESTRICT`: a charge or index row that has priced a quote cannot be deleted, so
+correct it with a visible update or a new row.
 
 ## Spatial reference layers
 
@@ -196,9 +211,12 @@ spatially at query time.
 | `uq_lookup_name_version` | `UNIQUE (name, version)` — one row per lookup table per version. |
 | `ix_public_coefficient_layer_geom_v1` | Partial GiST over `geometry WHERE version = 1`. **Add an equivalent when loading a new version**, or queries against it lose the index. |
 | `ix_data_load_history_table_loaded_at` | `(table_name, loaded_at)` — the provenance lookup. |
-| `uq_levy_charges_edp_from` | `UNIQUE (edp_id, charge_valid_from)` — one charge row per EDP per charging-year start. |
+| `ck_levy_charges_valid_window` | `CHECK (charge_valid_to >= charge_valid_from)`. |
+| `ex_levy_charges_edp_window` | `EXCLUDE USING gist (edp_id WITH =, daterange(charge_valid_from, charge_valid_to, '[]') WITH &&)` — an EDP's charge windows never overlap, so a date matches at most one charge (needs `btree_gist`). |
 | `uq_levy_inflation_index_year` | `UNIQUE (charging_year)` — one index factor per charging year. |
 | `ix_public_audit_levy_calculations_quote_reference` | `(quote_reference)` — fetches the audit trail for a quote. |
+| `ix_public_audit_levy_calculations_levy_charge_id` | `(levy_charge_id)` — finds every quote a charge row priced, e.g. after a correction. |
+| `fk_audit_levy_calculations_*` | `ON DELETE RESTRICT` to `levy_charges` and `levy_inflation_index` — a row that priced a quote cannot be deleted. |
 | `ix_public_<layer>_geometry` | GiST on every spatial layer. |
 
 ## UUID primary keys have no database default

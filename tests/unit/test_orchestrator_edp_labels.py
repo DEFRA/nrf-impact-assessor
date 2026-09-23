@@ -94,7 +94,13 @@ def test_callback_names_edp_from_job_label():
 
 
 def test_callback_skipped_when_job_has_no_edps():
-    client = _run_callback(_job([]), levy=None)
+    client = _run_callback(_job([]))
+
+    client.patch_quote.assert_not_called()
+
+
+def test_callback_skipped_when_no_levy():
+    client = _run_callback(_job([EDP_NAME]), levy=None)
 
     client.patch_quote.assert_not_called()
 

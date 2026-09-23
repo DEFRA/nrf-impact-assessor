@@ -67,7 +67,7 @@ def build_quote_patch_payload(
     intersecting_edps: list[IntersectingEdp],
     catchments: list[dict] | None = None,
     levy: LevyCalculation | None = None,
-) -> dict:
+) -> dict | None:
     """Build the PATCH body for nrf-backend from assessment results.
 
     One entry per EDP, not per NN catchment. A single EDP spans several NN
@@ -85,23 +85,23 @@ def build_quote_patch_payload(
             assessment ran on.
         levy: The levy calculated for the single intersecting EDP; carries the
             resolved EDP_id used as `edpId`. None means no calculation was
-            possible, so no entry is emitted.
+            possible, so there is nothing to send.
 
     Returns:
-        Dict matching the nrf-backend PATCH /quotes/{reference} schema.
-        Returns {"edps": []} when there are no results, no catchment impacts,
-        no levy, or the EDPs cannot be identified.
+        Dict matching the nrf-backend PATCH /quotes/{reference} schema, or None
+        when there is nothing to send: no results, no catchment impacts, no
+        levy, or the EDPs cannot be identified. The caller must not PATCH then.
     """
     if not results:
-        return {"edps": []}
+        return None
 
     result = results[0]
     if not result.catchment_impacts:
-        return {"edps": []}
+        return None
 
     if not intersecting_edps:
         logger.error("No intersecting EDPs on the job, cannot name the EDP entry")
-        return {"edps": []}
+        return None
 
     if len(intersecting_edps) > 1:
         # The totals are per development, so they cannot be divided between
@@ -111,10 +111,10 @@ def build_quote_patch_payload(
             f"Boundary intersects {len(intersecting_edps)} EDPs ({labels}); "
             "impacts cannot be attributed per EDP, skipping callback payload"
         )
-        return {"edps": []}
+        return None
 
     if levy is None:
         logger.error("No levy calculation for the EDP, skipping callback payload")
-        return {"edps": []}
+        return None
 
     return {"edps": [_edp_entry(intersecting_edps[0], result, catchments or [], levy)]}

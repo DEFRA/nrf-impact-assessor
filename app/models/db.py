@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from geoalchemy2 import Geometry
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -20,7 +21,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, ExcludeConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -215,8 +216,15 @@ class LevyCharge(Base):
 
     __tablename__ = "levy_charges"
     __table_args__ = (
-        UniqueConstraint(
-            "edp_id", "charge_valid_from", name="uq_levy_charges_edp_from"
+        CheckConstraint(
+            "charge_valid_to >= charge_valid_from",
+            name="ck_levy_charges_valid_window",
+        ),
+        ExcludeConstraint(
+            ("edp_id", "="),
+            (text("daterange(charge_valid_from, charge_valid_to, '[]')"), "&&"),
+            name="ex_levy_charges_edp_window",
+            using="gist",
         ),
         {"schema": "public"},
     )
@@ -275,6 +283,15 @@ class LevyCalculationRecord(Base):
 
     One row per successful calculation. A redelivered job that calculates again
     writes another row; the history is the point.
+
+    The values used are copied onto the row, and the *_id columns name the
+    levy_charges and levy_inflation_index rows they came from. Comparing the
+    two against the current row shows whether a value was corrected after the
+    event or the wrong row was picked up. The foreign keys are RESTRICT, so a
+    row that has priced a quote cannot be deleted from under its audit trail.
+    The index columns are NULL when no inflation step applied. The rounded
+    per-unit charges are not stored: calculator_version pins the rounding rule
+    that derives them from base_charge_per_unit and the index factors.
     """
 
     __tablename__ = "audit_levy_calculations"
@@ -289,14 +306,42 @@ class LevyCalculationRecord(Base):
     base_charge_per_unit: Mapped[Decimal] = mapped_column(
         Numeric(12, 4), nullable=False
     )
-    rounded_charge_per_unit: Mapped[Decimal] = mapped_column(
-        Numeric(12, 2), nullable=False
-    )
     units: Mapped[int] = mapped_column(Integer, nullable=False)
     calculation_date: Mapped[date] = mapped_column(Date, nullable=False)
     provisional_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     inflation_adjusted_amount: Mapped[Decimal] = mapped_column(
         Numeric(12, 2), nullable=False
+    )
+    levy_charge_id: Mapped[UUID] = mapped_column(
+        ForeignKey(
+            "public.levy_charges.id",
+            name="fk_audit_levy_calculations_levy_charge",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+        index=True,
+    )
+    edp_start_year_index_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "public.levy_inflation_index.id",
+            name="fk_audit_levy_calculations_edp_start_year_index",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
+    edp_start_year_index_factor: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 4), nullable=True
+    )
+    calculation_year_index_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "public.levy_inflation_index.id",
+            name="fk_audit_levy_calculations_calculation_year_index",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
+    calculation_year_index_factor: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 4), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

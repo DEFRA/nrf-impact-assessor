@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from app.models.domain import DataProvenance, TableProvenance
 from app.orchestrator import JobOrchestrator
+from tests.conftest import make_levy_calculation
 
 
 def test_callback_resolves_and_passes_provenance():
@@ -22,7 +23,9 @@ def test_callback_resolves_and_passes_provenance():
         patch("app.orchestrator.nutrient_adapter") as adapter,
     ):
         adapter.to_domain_models.return_value = {"assessment_results": []}
-        orch._send_results_callback(job, {"impact_summary": MagicMock()}, None)
+        orch._send_results_callback(
+            job, {"impact_summary": MagicMock()}, make_levy_calculation()
+        )
 
     resolve.assert_called_once()
     assert adapter.to_domain_models.call_args.kwargs["provenance"] == prov

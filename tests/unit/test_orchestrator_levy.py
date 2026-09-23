@@ -7,7 +7,9 @@ or the assessment run, so the SQS message stays on the queue and no PATCH
 import logging
 from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -31,6 +33,7 @@ def _job(labels=(EDP_NAME,), units: int | None = 10) -> ImpactAssessmentJob:
 
 def _charge() -> MagicMock:
     charge = MagicMock()
+    charge.id = uuid4()
     charge.edp_id = 1
     charge.edp_name = EDP_NAME
     charge.edp_start_date = date(2026, 1, 1)
@@ -82,6 +85,10 @@ def test_success_returns_calculation_and_logs_audit_record(orch, lookups, caplog
         "calculation_date=",
         "provisional_amount=21936.60",
         "inflation_adjusted_amount=21936.60",
+        f"levy_charge_id={lookups['charge'].return_value.id}",
+        "inflation_adjusted_charge_per_unit=None",
+        "edp_start_year_index_id=None",
+        "calculation_year_index_id=None",
     ):
         assert fragment in audit
 
@@ -113,12 +120,18 @@ def test_applies_inflation_index_when_calculation_year_differs(orch, lookups):
     charge = _charge()
     charge.edp_start_date = date(2020, 1, 1)
     lookups["charge"].return_value = charge
-    lookups["index"].side_effect = [Decimal("300"), Decimal("400")]
+    start = SimpleNamespace(id=uuid4(), index_factor=Decimal("300"))
+    calc = SimpleNamespace(id=uuid4(), index_factor=Decimal("400"))
+    lookups["index"].side_effect = [start, calc]
 
     levy = orch._calculate_levy(_job())
 
     assert lookups["index"].call_count == 2
     assert levy.inflation_adjusted_amount != levy.provisional_amount
+    # round_gbp(2193.6649 * 400 / 300) = 2924.89
+    assert levy.inflation_adjusted_charge_per_unit == Decimal("2924.89")
+    assert levy.edp_start_year_index_id == start.id
+    assert levy.calculation_year_index_id == calc.id
 
 
 def test_no_inflation_index_raises(orch, lookups):

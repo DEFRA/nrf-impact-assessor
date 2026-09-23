@@ -20,6 +20,8 @@ import logging
 import random
 import re
 import time
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from uuid import uuid4
 
 import boto3
@@ -33,6 +35,7 @@ from shapely.geometry import mapping
 from sqlalchemy import func, select, text
 
 from app.assess._geometry import inject_job_fields
+from app.calculators.levy import LEVY_CALCULATOR_VERSION, LevyCalculation
 from app.clients.backend_client import BackendClient
 from app.clients.payload_mapper import build_quote_patch_payload
 from app.common.tracing import ctx_trace_id
@@ -48,7 +51,7 @@ from app.models.domain import (
     WastewaterImpact,
 )
 from app.models.enums import AssessmentType
-from app.models.job import BoundaryGeojson, ImpactAssessmentJob
+from app.models.job import BoundaryGeojson, ImpactAssessmentJob, IntersectingEdp
 from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
 from app.runner.runner import run_assessment
@@ -467,7 +470,26 @@ def _build_stub_patch_payload(stub_edps: int = 1) -> dict:
         total=NutrientImpact(nitrogen_total_kg_yr=0.0, phosphorus_total_kg_yr=0.0),
         catchment_impacts=catchments,
     )
-    return build_quote_patch_payload([stub_result], [_STUB_EDP_LABEL])
+    stub_levy = LevyCalculation(
+        levy_charge_id=uuid4(),
+        edp_id=1,
+        edp_name=_STUB_EDP_LABEL,
+        edp_start_date=date(2026, 1, 1),
+        calculation_date=datetime.now(UTC).date(),
+        calculator_version=LEVY_CALCULATOR_VERSION,
+        units=1,
+        base_charge_per_unit=Decimal("2193.6649"),
+        rounded_charge_per_unit=Decimal("2193.66"),
+        provisional_amount=Decimal("2193.66"),
+        inflation_adjusted_amount=Decimal("2193.66"),
+    )
+    payload = build_quote_patch_payload(
+        [stub_result], [IntersectingEdp(label=_STUB_EDP_LABEL)], levy=stub_levy
+    )
+    if payload is None:
+        msg = "Stub inputs produced no payload"
+        raise RuntimeError(msg)
+    return payload
 
 
 @router.post(

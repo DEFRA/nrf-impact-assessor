@@ -199,10 +199,10 @@ def test_build_payload_levy_values_are_floats():
     )
 
 
-def test_build_payload_without_levy_is_empty():
+def test_build_payload_without_levy_is_none():
     payload = build_quote_patch_payload([_make_result()], [_job_edp()], levy=None)
 
-    assert payload == {"edps": []}
+    assert payload is None
 
 
 def test_mapper_has_no_provisional_edp_id():
@@ -217,7 +217,7 @@ def test_build_payload_no_edp_labels():
 
     payload = build_quote_patch_payload([result], [], levy=make_levy_calculation())
 
-    assert payload == {"edps": []}
+    assert payload is None
 
 
 def test_build_payload_multiple_edp_labels():
@@ -230,22 +230,22 @@ def test_build_payload_multiple_edp_labels():
         levy=make_levy_calculation(),
     )
 
-    assert payload == {"edps": []}
+    assert payload is None
 
 
 def test_build_payload_empty_results():
-    """Empty results list returns empty edps with no top-level totals."""
+    """Empty results list means nothing to send."""
     payload = build_quote_patch_payload([], [_job_edp()], levy=make_levy_calculation())
-    assert payload == {"edps": []}
+    assert payload is None
 
 
 def test_build_payload_no_nn_catchment():
-    """Result with no catchment_impacts returns empty edps."""
+    """Result with no catchment_impacts means nothing to send."""
     result = _make_result(catchment_impacts=[])
     payload = build_quote_patch_payload(
         [result], [_job_edp()], levy=make_levy_calculation()
     )
-    assert payload == {"edps": []}
+    assert payload is None
 
 
 def test_build_payload_rounds_to_two_decimals():
