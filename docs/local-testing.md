@@ -92,7 +92,7 @@ When the assessment finishes, `JobOrchestrator._send_results_callback` fires a `
 
 ### Pointing at a running nrf-backend
 
-Start nrf-backend locally so it listens on `0.0.0.0:3001` (loopback-only binds won't be reachable from the container). Its Swagger is at <http://localhost:3001/docs/index.html> — confirm the exact PATCH route there. If the route sits under a prefix (e.g. `/api/v1/quotes/{reference}`), override the base URL to include it:
+Start nrf-backend locally so it listens on `0.0.0.0:3001` (loopback-only binds won't be reachable from the container). The callback route is `PATCH /quotes/{reference}` — if the route sits under a prefix (e.g. `/api/v1/quotes/{reference}`), override the base URL to include it:
 
 ```bash
 BACKEND_BASE_URL=http://host.docker.internal:3001/api/v1 make up
