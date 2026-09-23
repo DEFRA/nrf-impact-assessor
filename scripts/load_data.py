@@ -682,19 +682,33 @@ class SpatialDataLoader:
 
         Both CSV paths are None outside fixtures_dir mode.
         """
-        self._load_csv_table(
-            self.levy_charges_csv, LevyCharge, _levy_charge_from_row
+        self._upsert_csv_table(
+            self.levy_charges_csv,
+            LevyCharge,
+            _levy_charge_from_row,
+            key=("edp_id", "charge_valid_from"),
         )
-        self._load_csv_table(
-            self.levy_inflation_index_csv, LevyInflationIndex, _levy_index_from_row
+        self._upsert_csv_table(
+            self.levy_inflation_index_csv,
+            LevyInflationIndex,
+            _levy_index_from_row,
+            key=("charging_year",),
         )
 
-    def _load_csv_table(
+    def _upsert_csv_table(
         self,
         csv_path: Path | None,
         model: type,
         row_to_model: "Callable[[dict], Any]",
+        key: tuple[str, ...],
     ) -> None:
+        """Sync a table to its CSV fixture, matching rows on ``key``.
+
+        Matched rows are updated in place so they keep their id: the audit
+        table's RESTRICT foreign keys point at those ids, so a delete-and-
+        reinsert fails once any quote has been priced. A row dropped from the
+        CSV is deleted, which still fails if a quote was priced from it.
+        """
         if csv_path is None or not csv_path.exists():
             print(f"Skipping {model.__tablename__}: no fixture at {csv_path}")
             return
@@ -704,17 +718,38 @@ class SpatialDataLoader:
         # pandas-inferred float or Timestamp.
         df = pd.read_csv(csv_path, dtype=str)
         rows = [row_to_model(row) for row in df.to_dict(orient="records")]
+        columns = [
+            c.key for c in model.__table__.columns if c.key not in ("id", "created_at")
+        ]
+
+        def key_of(obj: Any) -> tuple:
+            return tuple(getattr(obj, k) for k in key)
 
         with self.repository.session() as session:
-            deleted = session.execute(delete(model))
-            session.commit()
-            if deleted.rowcount > 0:
-                print(f"Deleted {deleted.rowcount} existing {model.__tablename__} rows")
+            existing = {key_of(obj): obj for obj in session.scalars(select(model))}
+            wanted = {key_of(obj) for obj in rows}
 
-            session.add_all(rows)
+            stale = [obj for k, obj in existing.items() if k not in wanted]
+            for obj in stale:
+                session.delete(obj)
+            # Flush deletes first so a replacement window cannot trip the
+            # levy_charges overlap exclusion against the row it replaces.
+            session.flush()
+
+            for row in rows:
+                current = existing.get(key_of(row))
+                if current is None:
+                    session.add(row)
+                    continue
+                for column in columns:
+                    setattr(current, column, getattr(row, column))
+
             session.commit()
 
-        print(f"Loaded {len(rows)} {model.__tablename__} fixture rows")
+        print(
+            f"Synced {len(rows)} {model.__tablename__} fixture rows"
+            f" ({len(stale)} removed)"
+        )
 
 
 def _levy_charge_from_row(row: dict) -> LevyCharge:
