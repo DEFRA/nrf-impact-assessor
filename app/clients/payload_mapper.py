@@ -66,7 +66,8 @@ def build_quote_patch_payload(
     results: list[ImpactAssessmentResult],
     intersecting_edps: list[IntersectingEdp],
     catchments: list[dict] | None = None,
-    levy: LevyCalculation | None = None,
+    *,
+    levy: LevyCalculation,
 ) -> dict | None:
     """Build the PATCH body for nrf-backend from assessment results.
 
@@ -84,13 +85,12 @@ def build_quote_patch_payload(
             find_intersecting_catchments against the same data version the
             assessment ran on.
         levy: The levy calculated for the single intersecting EDP; carries the
-            resolved EDP_id used as `edpId`. None means no calculation was
-            possible, so there is nothing to send.
+            resolved EDP_id used as `edpId`.
 
     Returns:
         Dict matching the nrf-backend PATCH /quotes/{reference} schema, or None
-        when there is nothing to send: no results, no catchment impacts, no
-        levy, or the EDPs cannot be identified. The caller must not PATCH then.
+        when there is nothing to send: no results, no catchment impacts, or
+        the EDPs cannot be identified. The caller must not PATCH then.
     """
     if not results:
         return None
@@ -111,10 +111,6 @@ def build_quote_patch_payload(
             f"Boundary intersects {len(intersecting_edps)} EDPs ({labels}); "
             "impacts cannot be attributed per EDP, skipping callback payload"
         )
-        return None
-
-    if levy is None:
-        logger.error("No levy calculation for the EDP, skipping callback payload")
         return None
 
     return {"edps": [_edp_entry(intersecting_edps[0], result, catchments or [], levy)]}

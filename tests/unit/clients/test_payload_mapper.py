@@ -199,12 +199,6 @@ def test_build_payload_levy_values_are_floats():
     )
 
 
-def test_build_payload_without_levy_is_none():
-    payload = build_quote_patch_payload([_make_result()], [_job_edp()], levy=None)
-
-    assert payload is None
-
-
 def test_mapper_has_no_provisional_edp_id():
     import app.clients.payload_mapper as mapper
 
