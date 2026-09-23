@@ -144,8 +144,10 @@ def test_overlapping_charge_windows_are_rejected(
 
 
 def test_a_window_ending_before_it_starts_is_rejected(repository: Repository):
+    valid_from, valid_to = date(2026, 12, 31), date(2026, 1, 1)
+
     with pytest.raises(IntegrityError, match="ck_levy_charges_valid_window"):
-        _insert_charge(repository, 7, date(2026, 12, 31), date(2026, 1, 1))
+        _insert_charge(repository, 7, valid_from, valid_to)
 
 
 # --- get_inflation_index ------------------------------------------------------
@@ -257,7 +259,8 @@ def test_a_row_that_priced_a_quote_cannot_be_deleted(
         record_levy_calculation(session, "NRL-000004", levy)
         session.commit()
 
+    delete = text(f"DELETE FROM public.{table}")  # noqa: S608
     with repository.session() as session:
         with pytest.raises(IntegrityError, match="fk_audit_levy_calculations"):
-            session.execute(text(f"DELETE FROM public.{table}"))  # noqa: S608
+            session.execute(delete)
         session.rollback()
