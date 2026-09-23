@@ -107,9 +107,10 @@ def test_callback_names_edp_from_job_label():
 
 def test_callback_fails_when_job_has_no_edps():
     orch = _orchestrator()
+    job = _job([])
 
     with pytest.raises(JobProcessingError, match="No EDP payload"):
-        _run_callback(_job([]), orch=orch)
+        _run_callback(job, orch=orch)
 
     orch.backend_client.patch_quote.assert_not_called()
 

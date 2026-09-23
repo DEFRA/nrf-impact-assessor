@@ -27,8 +27,9 @@ def test_callback_resolves_and_passes_provenance():
     ):
         adapter.to_domain_models.return_value = {"assessment_results": []}
         levy = RecordedLevy(make_levy_calculation(), uuid4())
+        results = {"impact_summary": MagicMock()}
         with pytest.raises(JobProcessingError):
-            orch._send_results_callback(job, {"impact_summary": MagicMock()}, levy)
+            orch._send_results_callback(job, results, levy)
 
     resolve.assert_called_once()
     assert adapter.to_domain_models.call_args.kwargs["provenance"] == prov

@@ -150,9 +150,10 @@ def test_process_job_raises_when_the_quote_is_not_delivered(orch, mocker):
         JobOrchestrator, "_process_inline_geometry", return_value={"x": MagicMock()}
     )
     orch.backend_client.patch_quote.side_effect = httpx.TransportError("down")
+    job = _job()
 
     with pytest.raises(httpx.TransportError):
-        orch.process_job(_job(), AssessmentType.NUTRIENT)
+        orch.process_job(job, AssessmentType.NUTRIENT)
 
 
 def test_process_job_raises_when_there_is_nothing_to_send(orch, mocker):
@@ -162,8 +163,9 @@ def test_process_job_raises_when_there_is_nothing_to_send(orch, mocker):
         JobOrchestrator, "_process_inline_geometry", return_value={"x": MagicMock()}
     )
     mocker.patch("app.orchestrator.build_quote_patch_payload", return_value=None)
+    job = _job()
 
     with pytest.raises(JobProcessingError):
-        orch.process_job(_job(), AssessmentType.NUTRIENT)
+        orch.process_job(job, AssessmentType.NUTRIENT)
 
     orch.backend_client.patch_quote.assert_not_called()
