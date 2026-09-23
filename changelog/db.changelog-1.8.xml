@@ -125,6 +125,7 @@
             <column name="created_at" type="timestamptz" defaultValueComputed="now()">
                 <constraints nullable="false"/>
             </column>
+            <column name="sent_at" type="timestamptz"/>
         </createTable>
         <createIndex indexName="ix_public_audit_levy_calculations_quote_reference"
                      tableName="audit_levy_calculations" schemaName="public">

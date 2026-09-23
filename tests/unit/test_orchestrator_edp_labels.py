@@ -6,6 +6,9 @@ arrives on the job as `intersectingEdps[].label`.
 """
 
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
+
+import pytest
 
 from app.calculators.levy import LevyCalculation
 from app.models.domain import (
@@ -17,7 +20,7 @@ from app.models.domain import (
     SpatialAssignment,
 )
 from app.models.job import BoundaryGeojson, ImpactAssessmentJob, IntersectingEdp
-from app.orchestrator import JobOrchestrator
+from app.orchestrator import JobOrchestrator, JobProcessingError, RecordedLevy
 from tests.conftest import EDP_NAME, make_levy_calculation
 
 
@@ -62,14 +65,22 @@ def _job(labels: list[str]) -> ImpactAssessmentJob:
     )
 
 
-def _run_callback(
-    job: ImpactAssessmentJob, catchments=None, levy: LevyCalculation | None = "unset"
-) -> MagicMock:
-    if levy == "unset":
-        levy = make_levy_calculation()
+def _orchestrator() -> JobOrchestrator:
     orch = JobOrchestrator.__new__(JobOrchestrator)
     orch.repository = MagicMock()
     orch.backend_client = MagicMock()
+    return orch
+
+
+def _run_callback(
+    job: ImpactAssessmentJob,
+    catchments=None,
+    levy: LevyCalculation | None = "unset",
+    orch: JobOrchestrator | None = None,
+) -> MagicMock:
+    if levy == "unset":
+        levy = make_levy_calculation()
+    orch = orch or _orchestrator()
 
     with (
         patch("app.orchestrator.resolve_active_provenance", return_value=None),
@@ -80,7 +91,8 @@ def _run_callback(
         ),
     ):
         adapter.to_domain_models.return_value = {"assessment_results": [_result()]}
-        orch._send_results_callback(job, {"impact_summary": MagicMock()}, levy)
+        recorded = None if levy is None else RecordedLevy(levy, uuid4())
+        orch._send_results_callback(job, {"impact_summary": MagicMock()}, recorded)
 
     return orch.backend_client
 
@@ -93,10 +105,13 @@ def test_callback_names_edp_from_job_label():
     assert [edp["edpName"] for edp in payload["edps"]] == [EDP_NAME]
 
 
-def test_callback_skipped_when_job_has_no_edps():
-    client = _run_callback(_job([]))
+def test_callback_fails_when_job_has_no_edps():
+    orch = _orchestrator()
 
-    client.patch_quote.assert_not_called()
+    with pytest.raises(JobProcessingError, match="No EDP payload"):
+        _run_callback(_job([]), orch=orch)
+
+    orch.backend_client.patch_quote.assert_not_called()
 
 
 def test_callback_skipped_when_no_levy():
@@ -137,7 +152,9 @@ def test_callback_is_still_sent_when_the_catchment_query_fails():
     ):
         adapter.to_domain_models.return_value = {"assessment_results": [_result()]}
         orch._send_results_callback(
-            _job([EDP_NAME]), {"impact_summary": MagicMock()}, make_levy_calculation()
+            _job([EDP_NAME]),
+            {"impact_summary": MagicMock()},
+            RecordedLevy(make_levy_calculation(), uuid4()),
         )
 
     payload = orch.backend_client.patch_quote.call_args.args[1]

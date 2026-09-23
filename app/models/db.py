@@ -292,6 +292,10 @@ class LevyCalculationRecord(Base):
     The index columns are NULL when no inflation step applied. The rounded
     per-unit charges are not stored: calculator_version pins the rounding rule
     that derives them from base_charge_per_unit and the index factors.
+
+    sent_at is set once nrf-backend accepts the quote PATCH priced from this
+    row. NULL means delivery was never confirmed: not sent, or sent but the
+    stamp itself failed.
     """
 
     __tablename__ = "audit_levy_calculations"
@@ -345,6 +349,9 @@ class LevyCalculationRecord(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     def __repr__(self) -> str:

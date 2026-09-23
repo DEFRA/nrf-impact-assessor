@@ -62,9 +62,11 @@ def lookups(mocker) -> dict:
 
 def test_success_returns_calculation_and_logs_audit_record(orch, lookups, caplog):
     with caplog.at_level(logging.INFO, logger="app.orchestrator"):
-        levy = orch._calculate_levy(_job())
+        recorded = orch._calculate_levy(_job())
 
+    levy = recorded.levy
     assert isinstance(levy, LevyCalculation)
+    assert recorded.audit_id == lookups["record"].return_value.id
     assert levy.edp_id == 1
     assert levy.units == 10
     assert levy.provisional_amount == Decimal("21936.60")
@@ -123,7 +125,7 @@ def test_applies_inflation_index_when_calculation_year_differs(orch, lookups):
     calc = SimpleNamespace(id=uuid4(), index_factor=Decimal("400"))
     lookups["index"].side_effect = [start, calc]
 
-    levy = orch._calculate_levy(_job())
+    levy = orch._calculate_levy(_job()).levy
 
     assert lookups["index"].call_count == 2
     assert levy.inflation_adjusted_amount != levy.provisional_amount
@@ -209,6 +211,7 @@ def test_process_job_passes_the_levy_to_the_callback(orch, lookups, mocker):
 
     orch.process_job(_job(), AssessmentType.NUTRIENT)
 
-    job_arg, frames_arg, levy_arg = callback.call_args.args
+    job_arg, frames_arg, recorded_arg = callback.call_args.args
     assert frames_arg is dataframes
-    assert isinstance(levy_arg, LevyCalculation)
+    assert isinstance(recorded_arg.levy, LevyCalculation)
+    assert recorded_arg.audit_id == lookups["record"].return_value.id

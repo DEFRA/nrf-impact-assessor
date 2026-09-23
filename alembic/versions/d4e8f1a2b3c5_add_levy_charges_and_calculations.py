@@ -6,7 +6,8 @@ with the factor it derives against the 2026 base (2026 = 1.0000).
 
 Each audit row names the levy_charges and levy_inflation_index rows it used
 (RESTRICT foreign keys) alongside the copied values, so a later correction to
-a row can be told apart from the wrong row being picked up.
+a row can be told apart from the wrong row being picked up. sent_at is set
+when nrf-backend accepts the quote PATCH priced from that row.
 
 Squashed into one revision because all three tables were still unmerged.
 
@@ -121,6 +122,7 @@ def upgrade() -> None:
             server_default=sa.text(NOW_SQL),
             nullable=False,
         ),
+        sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
         sa.ForeignKeyConstraint(
             ["levy_charge_id"],

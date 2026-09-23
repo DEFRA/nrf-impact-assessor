@@ -6,8 +6,9 @@ operations."""
 
 import logging
 from datetime import date
+from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.calculators.levy import LevyCalculation
@@ -109,3 +110,16 @@ def record_levy_calculation(
     )
     session.add(row)
     return row
+
+
+def mark_levy_calculation_sent(session: Session, audit_id: UUID) -> None:
+    """Stamp sent_at on the audit row a delivered quote was priced from.
+
+    By id, not quote reference: a redelivered job records one row per
+    attempt, and only the one that was sent is stamped. The caller commits.
+    """
+    session.execute(
+        update(LevyCalculationRecord)
+        .where(LevyCalculationRecord.id == audit_id)
+        .values(sent_at=func.now())
+    )

@@ -3,6 +3,8 @@
 import logging
 import time
 from datetime import UTC, datetime
+from typing import NamedTuple
+from uuid import UUID
 
 import geopandas as gpd
 import shapely
@@ -26,6 +28,7 @@ from app.models.job import ImpactAssessmentJob
 from app.repositories.levy import (
     get_inflation_index,
     get_levy_charge,
+    mark_levy_calculation_sent,
     record_levy_calculation,
     resolve_edp_id,
 )
@@ -41,6 +44,14 @@ _MULTIPLE_EDPS = "boundary intersects multiple EDPs"
 _NO_EDP_ID = "no EDP_id for label in edp_boundary_layer"
 _NO_CHARGE = "no charge for EDP on date in levy_charges"
 _NO_INFLATION_INDEX = "no RICS CIL index for edp start year or calculation year"
+
+
+class RecordedLevy(NamedTuple):
+    """A levy calculation and the id of the audit row it was recorded as, so
+    the callback can stamp sent_at on that row once the quote is delivered."""
+
+    levy: LevyCalculation
+    audit_id: UUID
 
 
 class JobProcessingError(RuntimeError):
@@ -82,7 +93,10 @@ class JobOrchestrator:
                 or no charge for the date). Raised before anything else runs;
                 the caller leaves the message on the queue.
             JobProcessingError: The job could not be completed (missing geometry,
-                invalid geometry, or the assessment produced no results).
+                invalid geometry, the assessment produced no results, or the
+                results yield no NN catchment impact or EDP payload to send).
+            httpx.HTTPError: The results PATCH to nrf-backend still failed
+                after the client's retries, so the quote was not delivered.
             EmptyReferenceDataError: A reference table the assessment needs is
                 empty. Propagated so the caller leaves the message on the queue.
         """
@@ -105,7 +119,7 @@ class JobOrchestrator:
             # LevyChargeUnavailableError, which the consumer treats as "not
             # done": the message stays on the queue, no PATCH, so no quote
             # email (scenario 5).
-            levy = self._calculate_levy(job)
+            recorded = self._calculate_levy(job)
 
             if not job.boundary_geojson:
                 msg = (
@@ -123,13 +137,14 @@ class JobOrchestrator:
                 msg = f"Assessment produced no results for job {job_id}"
                 raise JobProcessingError(msg)
 
+            # Callback to nrf-backend if quote reference and EDPs are present.
+            # Raises if the PATCH fails, so an undelivered quote is retried.
+            self._send_results_callback(job, dataframes, recorded)
+
             processing_time = time.time() - start_time
             logger.info(
                 f"Job {job_id} completed successfully in {processing_time:.2f}s"
             )
-
-            # Callback to nrf-backend if quote reference and EDPs are present
-            self._send_results_callback(job, dataframes, levy)
 
             return dataframes
 
@@ -269,9 +284,9 @@ class JobOrchestrator:
 
         return gdf
 
-    def _calculate_levy(self, job: ImpactAssessmentJob) -> LevyCalculation | None:
+    def _calculate_levy(self, job: ImpactAssessmentJob) -> RecordedLevy | None:
         """Resolve the charge for the job's single EDP, calculate the levy and
-        persist the scenario 7 audit row.
+        persist the scenario 7 audit row. Returns the levy with that row's id.
 
         Returns None only when there is no boundary at all: the geometry check
         that follows raises its own error for that case. A boundary that
@@ -344,8 +359,9 @@ class JobOrchestrator:
                 edp_start_year_index=edp_start_year_index,
                 calculation_year_index=calculation_year_index,
             )
-            record_levy_calculation(session, job_id, levy)
+            record = record_levy_calculation(session, job_id, levy)
             session.commit()
+            audit_id = record.id
 
         # Scenario 7 audit record, also in the log so a quote can be traced
         # without a database query. One line, key=value.
@@ -366,7 +382,7 @@ class JobOrchestrator:
             f"calculation_year_index_id={levy.calculation_year_index_id} "
             f"calculation_year_index_factor={levy.calculation_year_index_factor}"
         )
-        return levy
+        return RecordedLevy(levy=levy, audit_id=audit_id)
 
     def _boundary_catchments(self, job: ImpactAssessmentJob) -> list[dict]:
         """The NN catchments the job's boundary falls in.
@@ -393,7 +409,7 @@ class JobOrchestrator:
         self,
         job: ImpactAssessmentJob,
         dataframes: dict,
-        levy: LevyCalculation | None,
+        recorded: RecordedLevy | None,
     ) -> None:
         """Send assessment results to nrf-backend via PATCH /quotes/{reference}.
 
@@ -402,7 +418,12 @@ class JobOrchestrator:
         - job has a quote reference
         - a levy was calculated for a single EDP
 
-        Failures are logged but do not affect the job result.
+        A failure building or sending the PATCH raises, so process_job fails
+        and the message is redelivered / DLQ'd rather than deleted with the
+        quote never sent. That includes having nothing to send: no assessment
+        results, no NN catchment impact, or no EDP payload raise
+        JobProcessingError. Once the backend accepts it, sent_at is stamped on
+        the audit row the quote was priced from.
         """
         if not self.backend_client:
             logger.error("Backend client not configured, skipping results callback")
@@ -410,64 +431,74 @@ class JobOrchestrator:
         if not job.reference:
             logger.error("Job has no reference, skipping results callback")
             return
-        if levy is None:
+        if recorded is None:
             logger.error(
                 f"No levy calculated for quote {job.reference}, "
                 "skipping results callback"
             )
             return
 
+        with self.repository.session() as session:
+            provenance = resolve_active_provenance(session)
+        domain_results = nutrient_adapter.to_domain_models(
+            dataframes, provenance=provenance
+        )
+        results = domain_results["assessment_results"]
+        if not results:
+            msg = (
+                f"No assessment results for quote {job.reference}, "
+                "cannot send PATCH callback"
+            )
+            raise JobProcessingError(msg)
+
+        result = results[0]
+        if not result.catchment_impacts:
+            msg = (
+                f"No NN catchment found for quote {job.reference}, "
+                "cannot derive EDP for PATCH callback"
+            )
+            raise JobProcessingError(msg)
+
+        intersecting_edps = (
+            job.boundary_geojson.intersecting_edps if job.boundary_geojson else []
+        )
+        # Recomputed, not taken off the job: the backend's copy was made
+        # when the boundary was checked, which may be an older
+        # nn_catchments version than the one just assessed against.
+        catchments = self._boundary_catchments(job)
+        payload = build_quote_patch_payload(
+            results=results,
+            intersecting_edps=intersecting_edps,
+            catchments=catchments,
+            levy=recorded.levy,
+        )
+        if payload is None:
+            msg = (
+                f"No EDP payload for quote {job.reference}, cannot send PATCH callback"
+            )
+            raise JobProcessingError(msg)
+
+        start = time.time()
+        response = self.backend_client.patch_quote(job.reference, payload)
+        edps = payload["edps"]
+        edp_names = ", ".join(e["edpName"] for e in edps)
+        logger.info(
+            f"Sent assessment results to nrf-backend for quote {job.reference} "
+            f"(HTTP {response.status_code} in {time.time() - start:.2f}s, "
+            f"{len(edps)} EDP(s): {edp_names})"
+        )
+        self._mark_sent(job.reference, recorded.audit_id)
+
+    def _mark_sent(self, reference: str, audit_id: UUID) -> None:
+        """Stamp sent_at on the audit row. Failures are logged, not raised:
+        the quote is already delivered, and failing the job would redeliver
+        the message and send it again."""
         try:
             with self.repository.session() as session:
-                provenance = resolve_active_provenance(session)
-            domain_results = nutrient_adapter.to_domain_models(
-                dataframes, provenance=provenance
-            )
-            results = domain_results["assessment_results"]
-            if not results:
-                logger.error(
-                    f"No assessment results for quote {job.reference}, "
-                    "cannot send PATCH callback"
-                )
-                return
-
-            result = results[0]
-            if not result.catchment_impacts:
-                logger.error(
-                    f"No NN catchment found for quote {job.reference}, "
-                    "cannot derive EDP for PATCH callback"
-                )
-                return
-
-            intersecting_edps = (
-                job.boundary_geojson.intersecting_edps if job.boundary_geojson else []
-            )
-            # Recomputed, not taken off the job: the backend's copy was made
-            # when the boundary was checked, which may be an older
-            # nn_catchments version than the one just assessed against.
-            catchments = self._boundary_catchments(job)
-            payload = build_quote_patch_payload(
-                results=results,
-                intersecting_edps=intersecting_edps,
-                catchments=catchments,
-                levy=levy,
-            )
-            if payload is None:
-                logger.error(
-                    f"No EDP payload for quote {job.reference}, skipping PATCH callback"
-                )
-                return
-
-            start = time.time()
-            response = self.backend_client.patch_quote(job.reference, payload)
-            edps = payload["edps"]
-            edp_names = ", ".join(e["edpName"] for e in edps)
-            logger.info(
-                f"Sent assessment results to nrf-backend for quote {job.reference} "
-                f"(HTTP {response.status_code} in {time.time() - start:.2f}s, "
-                f"{len(edps)} EDP(s): {edp_names})"
-            )
+                mark_levy_calculation_sent(session, audit_id)
+                session.commit()
         except Exception:
             logger.exception(
-                f"Failed to send results to nrf-backend for quote {job.reference}"
+                f"Quote {reference} was delivered but sent_at could not be set "
+                f"on audit row {audit_id}"
             )

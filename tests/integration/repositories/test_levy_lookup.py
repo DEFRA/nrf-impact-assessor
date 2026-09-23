@@ -15,6 +15,7 @@ from app.models.db import LevyCalculationRecord
 from app.repositories.levy import (
     get_inflation_index,
     get_levy_charge,
+    mark_levy_calculation_sent,
     record_levy_calculation,
     resolve_edp_id,
 )
@@ -232,6 +233,34 @@ def test_record_without_inflation_leaves_index_columns_null(repository: Reposito
 
     assert row.edp_start_year_index_id is None
     assert row.calculation_year_index_id is None
+
+
+def test_mark_sent_stamps_only_the_named_row(repository: Repository):
+    charge_id = _insert_charge(repository, 1, date(2026, 1, 1), date(2027, 12, 31))
+    levy = make_levy_calculation(levy_charge_id=charge_id)
+    with repository.session() as session:
+        # A redelivered job records a second row for the same quote.
+        first = record_levy_calculation(session, "NRL-000005", levy)
+        second = record_levy_calculation(session, "NRL-000005", levy)
+        session.commit()
+        assert first.sent_at is None
+
+    with repository.session() as session:
+        mark_levy_calculation_sent(session, second.id)
+        session.commit()
+
+    with repository.session() as session:
+        sent = {
+            row.id: row.sent_at
+            for row in session.scalars(
+                select(LevyCalculationRecord).where(
+                    LevyCalculationRecord.quote_reference == "NRL-000005"
+                )
+            )
+        }
+
+    assert sent[first.id] is None
+    assert sent[second.id] is not None
 
 
 def test_record_rejects_an_unknown_charge_id(repository: Repository):

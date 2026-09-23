@@ -109,6 +109,7 @@ erDiagram
         uuid calculation_year_index_id FK "nullable; levy_inflation_index row, RESTRICT"
         numeric calculation_year_index_factor "nullable; numeric(10,4)"
         timestamptz created_at "default now()"
+        timestamptz sent_at "nullable; set when nrf-backend accepts the quote PATCH"
     }
 
     levy_inflation_index {
