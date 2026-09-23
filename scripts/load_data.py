@@ -61,6 +61,7 @@ import typer  # noqa: E402
 from fixture_manifest import validate_fixture_manifest  # noqa: E402
 from settings import ScriptSettings, db_settings  # noqa: E402
 from sqlalchemy import delete, func, select  # noqa: E402
+from sqlalchemy.exc import IntegrityError  # noqa: E402
 
 from app.models.db import (  # noqa: E402
     CoefficientLayer,
@@ -734,7 +735,21 @@ class SpatialDataLoader:
                 session.delete(obj)
             # Flush deletes first so a replacement window cannot trip the
             # levy_charges overlap exclusion against the row it replaces.
-            session.flush()
+            try:
+                session.flush()
+            except IntegrityError as e:
+                stale_keys = "; ".join(
+                    ", ".join(f"{k}={v}" for k, v in zip(key, key_of(obj)))
+                    for obj in stale
+                )
+                msg = (
+                    f"Cannot remove {model.__tablename__} rows no longer in "
+                    f"{csv_path.name} ({stale_keys}): priced quotes in the audit "
+                    "table reference them. Changing a key column counts as a "
+                    "removal; end-date the row and add a new one instead, or "
+                    "clear the local audit rows first."
+                )
+                raise RuntimeError(msg) from e
 
             for row in rows:
                 current = existing.get(key_of(row))
