@@ -63,7 +63,7 @@ def test_spatial_table_rules_have_json_key_and_geometry():
     assert gcn_ponds.key is None  # no reliable business key (DM-2)
 
     edp = rules.tables["edp_boundary_layer"]
-    assert edp.non_null_json_columns == ["attributes.EDP_Name"]
+    assert edp.non_null_json_columns == ["attributes.EDP_Name", "attributes.EDP_Id"]
 
 
 def test_geometry_types_match_the_source_layers():

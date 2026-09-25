@@ -1,23 +1,27 @@
 """SQLAlchemy database models for PostGIS reference data."""
 
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
 from geoalchemy2 import Geometry
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     UniqueConstraint,
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, ExcludeConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -201,6 +205,160 @@ class LookupTable(Base):
 
     def __repr__(self) -> str:
         return f"<LookupTable(id={self.id}, name={self.name}, rows={len(self.data)})>"
+
+
+class LevyCharge(Base):
+    """Published base charge per unit for an EDP over one charging year.
+
+    Seeded by migration, not by data sync (NRF2-913 decision 1). The lookup is
+    `edp_id = :id AND :on_date BETWEEN charge_valid_from AND charge_valid_to`.
+    """
+
+    __tablename__ = "levy_charges"
+    __table_args__ = (
+        CheckConstraint(
+            "charge_valid_to >= charge_valid_from",
+            name="ck_levy_charges_valid_window",
+        ),
+        ExcludeConstraint(
+            ("edp_id", "="),
+            (text("daterange(charge_valid_from, charge_valid_to, '[]')"), "&&"),
+            name="ex_levy_charges_edp_window",
+            using="gist",
+        ),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    edp_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    edp_name: Mapped[str] = mapped_column(String, nullable=False)
+    edp_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    charge_valid_from: Mapped[date] = mapped_column(Date, nullable=False)
+    charge_valid_to: Mapped[date] = mapped_column(Date, nullable=False)
+    base_charge_per_unit: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<LevyCharge(edp_id={self.edp_id}, from={self.charge_valid_from}, "
+            f"price={self.base_charge_per_unit})>"
+        )
+
+
+class LevyInflationIndex(Base):
+    """RICS CIL Index factor for one charging year, relative to the fixed
+    2026 base (2026 = 1.0000).
+
+    Seeded by migration, hand-maintained like levy_charges. Scales a levy's
+    base charge from the EDP's charging year to a later calculation year.
+    """
+
+    __tablename__ = "levy_inflation_index"
+    __table_args__ = (
+        UniqueConstraint("charging_year", name="uq_levy_inflation_index_year"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    charging_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    cil_index: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    index_factor: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<LevyInflationIndex(year={self.charging_year}, "
+            f"factor={self.index_factor})>"
+        )
+
+
+class LevyCalculationRecord(Base):
+    """Audit row for one levy calculation (NRF2-913 scenario 7).
+
+    One row per successful calculation. A redelivered job that calculates again
+    writes another row; the history is the point.
+
+    The values used are copied onto the row, and the *_id columns name the
+    levy_charges and levy_inflation_index rows they came from. Comparing the
+    two against the current row shows whether a value was corrected after the
+    event or the wrong row was picked up. The foreign keys are RESTRICT, so a
+    row that has priced a quote cannot be deleted from under its audit trail.
+    The index columns are NULL when no inflation step applied. The rounded
+    per-unit charges are not stored: calculator_version pins the rounding rule
+    that derives them from base_charge_per_unit and the index factors.
+
+    sent_at is set once nrf-backend accepts the quote PATCH priced from this
+    row. NULL means delivery was never confirmed: not sent, or sent but the
+    stamp itself failed.
+    """
+
+    __tablename__ = "audit_levy_calculations"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    quote_reference: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    edp_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    edp_name: Mapped[str] = mapped_column(String, nullable=False)
+    edp_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    calculator_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    base_charge_per_unit: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4), nullable=False
+    )
+    units: Mapped[int] = mapped_column(Integer, nullable=False)
+    calculation_date: Mapped[date] = mapped_column(Date, nullable=False)
+    provisional_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    inflation_adjusted_amount: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), nullable=False
+    )
+    levy_charge_id: Mapped[UUID] = mapped_column(
+        ForeignKey(
+            "public.levy_charges.id",
+            name="fk_audit_levy_calculations_levy_charge",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+        index=True,
+    )
+    edp_start_year_index_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "public.levy_inflation_index.id",
+            name="fk_audit_levy_calculations_edp_start_year_index",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
+    edp_start_year_index_factor: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 4), nullable=True
+    )
+    calculation_year_index_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "public.levy_inflation_index.id",
+            name="fk_audit_levy_calculations_calculation_year_index",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
+    calculation_year_index_factor: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 4), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<LevyCalculationRecord(quote={self.quote_reference}, "
+            f"edp_id={self.edp_id}, provisional={self.provisional_amount})>"
+        )
 
 
 class DataSyncRun(Base):

@@ -69,7 +69,7 @@ tables:
     geometry: {expected_types: [MultiPolygon], expected_srid: 27700}
 
   edp_boundary_layer:
-    non_null_json_columns: ["attributes.EDP_Name"]
+    non_null_json_columns: ["attributes.EDP_Name", "attributes.EDP_Id"]
     geometry: {expected_types: [MultiPolygon], expected_srid: 27700}
 
   edp_excluded_areas:

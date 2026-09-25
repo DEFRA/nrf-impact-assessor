@@ -7,7 +7,7 @@ lookup tables, and the audit trail for the S3-driven data sync that loads them.
 - **Source:** live `nrf_impact` Postgres (`docker compose` service `postgres`),
   schema `public`, cross-checked against the Alembic revisions under
   `alembic/versions/`.
-- **Generated:** 2026-08-13, by the `generate-db-diagram` skill.
+- **Generated:** 2026-09-16, by the `generate-db-diagram` skill.
 - **Scope:** application domain tables only. `alembic_version` and PostGIS
   internals (`spatial_ref_sys`, `geometry_columns`, `geography_columns`) are
   excluded.
@@ -28,6 +28,8 @@ The only foreign key in this database is `data_load_history.run_id`.
 ```mermaid
 erDiagram
     data_sync_run ||--o{ data_load_history : "audits"
+    levy_charges ||--o{ audit_levy_calculations : "priced"
+    levy_inflation_index |o--o{ audit_levy_calculations : "inflated"
 
     data_sync_run {
         uuid id PK "app-generated uuid4, no DB default"
@@ -77,10 +79,76 @@ erDiagram
         varchar license "nullable"
         timestamptz created_at "default now()"
     }
+
+    levy_charges {
+        uuid id PK "app-generated uuid4, no DB default"
+        integer edp_id "indexed; matches edp_boundary_layer.attributes.EDP_id"
+        varchar edp_name "for readers, not a lookup key"
+        date edp_start_date
+        date charge_valid_from "charging year start; windows per edp_id never overlap"
+        date charge_valid_to "charging year end, inclusive"
+        numeric base_charge_per_unit "numeric(12,4), GBP, unrounded"
+        timestamptz created_at "default now()"
+    }
+
+    audit_levy_calculations {
+        uuid id PK "app-generated uuid4, no DB default"
+        varchar quote_reference "indexed; NRL-000000"
+        integer edp_id
+        varchar edp_name
+        date edp_start_date
+        integer calculator_version
+        numeric base_charge_per_unit "numeric(12,4)"
+        integer units "dwellings used"
+        date calculation_date
+        numeric provisional_amount "numeric(12,2)"
+        numeric inflation_adjusted_amount "numeric(12,2)"
+        uuid levy_charge_id FK "indexed; levy_charges row used, RESTRICT"
+        uuid edp_start_year_index_id FK "nullable; levy_inflation_index row, RESTRICT"
+        numeric edp_start_year_index_factor "nullable; numeric(10,4)"
+        uuid calculation_year_index_id FK "nullable; levy_inflation_index row, RESTRICT"
+        numeric calculation_year_index_factor "nullable; numeric(10,4)"
+        timestamptz created_at "default now()"
+        timestamptz sent_at "nullable; set when nrf-backend accepts the quote PATCH"
+    }
+
+    levy_inflation_index {
+        uuid id PK "app-generated uuid4, no DB default"
+        integer charging_year UK "indexed; one row per year"
+        numeric cil_index "numeric(10,4), published RICS CIL Index"
+        numeric index_factor "numeric(10,4), RICS CIL Index vs the 2026 base"
+        timestamptz created_at "default now()"
+    }
 ```
 
 Reads fall back to `MAX(version)` when `data_active_version` holds no row for a
 table, so it only gains one once a reload or rollback has actually run.
+
+All three levy tables are maintained by migration (`d4e8f1a2b3c5`), not by
+`load_data.py` or data sync, and none is versioned by `data_active_version`.
+
+All three are created **empty** — the migration deliberately seeds no row.
+Finance has not confirmed a published base charge or charging year for any EDP,
+and an assumed value would let a real quote price against it (scenario 5). The
+assessor reads the `levy_charges` row whose validity window contains the
+calculation date (NRF2-913).
+
+`levy_inflation_index` holds the published RICS CIL Index per charging year and
+the factor it derives against the 2026 base (2026 = 1.0000). It is read when the
+calculation date falls in a later charging year than the EDP's publication, to
+inflation-adjust the provisional amount.
+
+`audit_levy_calculations` holds one audit row per calculation (scenario 7); it is
+written by the orchestrator and never truncated by data sync. Each row copies the
+values it used and names the `levy_charges` row and, when an inflation step
+applied, the two `levy_inflation_index` rows they came from (otherwise the index
+columns are NULL). The rounded per-unit charges are not stored:
+`calculator_version` pins the rounding rule that derives them from
+`base_charge_per_unit` and the index factors, and they appear in the audit log
+line. Comparing the copy with the current row shows whether a value
+was corrected after the event or the wrong row was picked up. The foreign keys are
+`RESTRICT`: a charge or index row that has priced a quote cannot be deleted, so
+correct it with a visible update or a new row.
 
 ## Spatial reference layers
 
@@ -144,6 +212,12 @@ spatially at query time.
 | `uq_lookup_name_version` | `UNIQUE (name, version)` — one row per lookup table per version. |
 | `ix_public_coefficient_layer_geom_v1` | Partial GiST over `geometry WHERE version = 1`. **Add an equivalent when loading a new version**, or queries against it lose the index. |
 | `ix_data_load_history_table_loaded_at` | `(table_name, loaded_at)` — the provenance lookup. |
+| `ck_levy_charges_valid_window` | `CHECK (charge_valid_to >= charge_valid_from)`. |
+| `ex_levy_charges_edp_window` | `EXCLUDE USING gist (edp_id WITH =, daterange(charge_valid_from, charge_valid_to, '[]') WITH &&)` — an EDP's charge windows never overlap, so a date matches at most one charge (needs `btree_gist`). |
+| `uq_levy_inflation_index_year` | `UNIQUE (charging_year)` — one index factor per charging year. |
+| `ix_public_audit_levy_calculations_quote_reference` | `(quote_reference)` — fetches the audit trail for a quote. |
+| `ix_public_audit_levy_calculations_levy_charge_id` | `(levy_charge_id)` — finds every quote a charge row priced, e.g. after a correction. |
+| `fk_audit_levy_calculations_*` | `ON DELETE RESTRICT` to `levy_charges` and `levy_inflation_index` — a row that priced a quote cannot be deleted. |
 | `ix_public_<layer>_geometry` | GiST on every spatial layer. |
 
 ## UUID primary keys have no database default

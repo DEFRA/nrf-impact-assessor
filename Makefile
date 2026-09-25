@@ -108,7 +108,19 @@ DB_TABLES = \
 	public.subcatchments \
 	public.gcn_risk_zones \
 	public.gcn_ponds \
-	public.edp_edges
+	public.edp_edges \
+	public.levy_charges \
+	public.levy_inflation_index
+
+# DB_TABLES entries that another table's foreign key points at. Postgres refuses
+# to TRUNCATE these even when the referencing table is empty, so the generated
+# restore clears them with DELETE instead. CASCADE is not an option: it would
+# wipe audit_levy_calculations. The DELETE still fails while audit rows reference
+# a levy row, which is the intended fail-closed behaviour. The levy tables are
+# not data-sync tables (NRF2-913 decision 1); upload only the rest to S3.
+DB_FK_REFERENCED_TABLES = \
+	public.levy_charges \
+	public.levy_inflation_index
 
 db-tables: ## List public tables with their exact row counts
 	@$(PG_EXEC) psql $(PG_CONN) -U $(DB_USER) -d $(DB_NAME) -tA -c \
@@ -175,8 +187,12 @@ db-backup-tables: ## Per-table backup — schema grants + one .sql.gz per table 
 		base=$$(basename "$$out"); \
 		if [ -e "$$out" ]; then decompress="gunzip -c $$base"; \
 		else decompress="cat $$base.part-* | gunzip -c"; fi; \
-		printf 'psql -U $(RESTORE_USER) -d $(RESTORE_DB) -c "TRUNCATE TABLE %s;" && %s | psql -U $(RESTORE_USER) -d $(RESTORE_DB) -v ON_ERROR_STOP=1\n' \
-			"$$table" "$$decompress" >> "$$restore"; \
+		case " $(DB_FK_REFERENCED_TABLES) " in \
+		*" $$table "*) clear="DELETE FROM";; \
+		*) clear="TRUNCATE TABLE";; \
+		esac; \
+		printf 'psql -U $(RESTORE_USER) -d $(RESTORE_DB) -c "%s %s;" && %s | psql -U $(RESTORE_USER) -d $(RESTORE_DB) -v ON_ERROR_STOP=1\n' \
+			"$$clear" "$$table" "$$decompress" >> "$$restore"; \
 	done
 	@echo "Per-table backups written to $(BACKUP_DIR)"
 	@echo "Restore commands written to $(BACKUP_DIR)/restore_commands.txt"

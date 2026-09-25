@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- Alembic revision: d4e8f1a2b3c5 -->
+
+    <changeSet id="08-levy-charges" author="nrf">
+        <createTable tableName="levy_charges" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="edp_id" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="edp_name" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="edp_start_date" type="date">
+                <constraints nullable="false"/>
+            </column>
+            <column name="charge_valid_from" type="date">
+                <constraints nullable="false"/>
+            </column>
+            <column name="charge_valid_to" type="date">
+                <constraints nullable="false"/>
+            </column>
+            <column name="base_charge_per_unit" type="numeric(12,4)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <sql>CREATE EXTENSION IF NOT EXISTS btree_gist</sql>
+        <sql>ALTER TABLE public.levy_charges
+            ADD CONSTRAINT ck_levy_charges_valid_window
+            CHECK (charge_valid_to &gt;= charge_valid_from)</sql>
+        <sql>ALTER TABLE public.levy_charges
+            ADD CONSTRAINT ex_levy_charges_edp_window EXCLUDE USING gist
+            (edp_id WITH =, daterange(charge_valid_from, charge_valid_to, '[]') WITH &amp;&amp;)</sql>
+        <createIndex indexName="ix_public_levy_charges_edp_id"
+                     tableName="levy_charges" schemaName="public">
+            <column name="edp_id"/>
+        </createIndex>
+        <rollback>
+            <dropTable tableName="levy_charges" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="08-levy-inflation-index" author="nrf">
+        <createTable tableName="levy_inflation_index" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="charging_year" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="cil_index" type="numeric(10,4)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="index_factor" type="numeric(10,4)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint constraintName="uq_levy_inflation_index_year"
+                             tableName="levy_inflation_index" schemaName="public"
+                             columnNames="charging_year"/>
+        <createIndex indexName="ix_public_levy_inflation_index_charging_year"
+                     tableName="levy_inflation_index" schemaName="public">
+            <column name="charging_year"/>
+        </createIndex>
+        <rollback>
+            <dropTable tableName="levy_inflation_index" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="08-levy-calculations" author="nrf">
+        <createTable tableName="audit_levy_calculations" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="quote_reference" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="edp_id" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="edp_name" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="edp_start_date" type="date">
+                <constraints nullable="false"/>
+            </column>
+            <column name="calculator_version" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="base_charge_per_unit" type="numeric(12,4)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="units" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="calculation_date" type="date">
+                <constraints nullable="false"/>
+            </column>
+            <column name="provisional_amount" type="numeric(12,2)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="inflation_adjusted_amount" type="numeric(12,2)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="levy_charge_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="edp_start_year_index_id" type="uuid"/>
+            <column name="edp_start_year_index_factor" type="numeric(10,4)"/>
+            <column name="calculation_year_index_id" type="uuid"/>
+            <column name="calculation_year_index_factor" type="numeric(10,4)"/>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="sent_at" type="timestamptz"/>
+        </createTable>
+        <createIndex indexName="ix_public_audit_levy_calculations_quote_reference"
+                     tableName="audit_levy_calculations" schemaName="public">
+            <column name="quote_reference"/>
+        </createIndex>
+        <createIndex indexName="ix_public_audit_levy_calculations_levy_charge_id"
+                     tableName="audit_levy_calculations" schemaName="public">
+            <column name="levy_charge_id"/>
+        </createIndex>
+        <addForeignKeyConstraint constraintName="fk_audit_levy_calculations_levy_charge"
+                                 baseTableName="audit_levy_calculations"
+                                 baseTableSchemaName="public"
+                                 baseColumnNames="levy_charge_id"
+                                 referencedTableName="levy_charges"
+                                 referencedTableSchemaName="public"
+                                 referencedColumnNames="id"
+                                 onDelete="RESTRICT"/>
+        <addForeignKeyConstraint constraintName="fk_audit_levy_calculations_edp_start_year_index"
+                                 baseTableName="audit_levy_calculations"
+                                 baseTableSchemaName="public"
+                                 baseColumnNames="edp_start_year_index_id"
+                                 referencedTableName="levy_inflation_index"
+                                 referencedTableSchemaName="public"
+                                 referencedColumnNames="id"
+                                 onDelete="RESTRICT"/>
+        <addForeignKeyConstraint constraintName="fk_audit_levy_calculations_calculation_year_index"
+                                 baseTableName="audit_levy_calculations"
+                                 baseTableSchemaName="public"
+                                 baseColumnNames="calculation_year_index_id"
+                                 referencedTableName="levy_inflation_index"
+                                 referencedTableSchemaName="public"
+                                 referencedColumnNames="id"
+                                 onDelete="RESTRICT"/>
+        <rollback>
+            <dropTable tableName="audit_levy_calculations" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

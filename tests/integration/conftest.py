@@ -29,6 +29,9 @@ REFERENCE_TABLES = (
     "edp_excluded_areas",
     "data_active_version",
     "lookup_table",
+    "levy_charges",
+    "audit_levy_calculations",
+    "levy_inflation_index",
 )
 
 

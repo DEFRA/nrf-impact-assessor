@@ -15,12 +15,16 @@ class FixtureManifestError(ValueError):
     """Raised when fixture files do not match their checksum manifest."""
 
 
+_SQLITE_SIDECAR_SUFFIXES = ("-shm", "-wal", "-journal")
+
+
 def _fixture_files(fixtures_dir: Path) -> list[Path]:
     return sorted(
         path
         for path in fixtures_dir.rglob("*")
         if path.is_file()
         and path.name not in {MANIFEST_NAME, COMPOSE_LABELS_NAME}
+        and not path.name.endswith(_SQLITE_SIDECAR_SUFFIXES)
         and not any(
             part.startswith(".") for part in path.relative_to(fixtures_dir).parts
         )

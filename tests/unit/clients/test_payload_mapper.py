@@ -12,6 +12,7 @@ from app.models.domain import (
 )
 from app.models.enums import EdpType
 from app.models.job import IntersectingEdp
+from tests.conftest import EDP_NAME, make_levy_calculation
 
 
 def _make_catchment_impact(
@@ -83,10 +84,7 @@ def _make_result(
     )
 
 
-EDP_LABEL = "Broads SAC (Yare & Bure) & Wensum SAC"
-
-
-def _job_edp(label=EDP_LABEL):
+def _job_edp(label=EDP_NAME):
     return IntersectingEdp(label=label)
 
 
@@ -103,12 +101,14 @@ def test_build_payload_derives_edp_from_result():
     """Single catchment produces one EDP named for the EDP, not the catchment."""
     result = _make_result(n_total=10.505, p_total=2.304)
 
-    payload = build_quote_patch_payload([result], [_job_edp()])
+    payload = build_quote_patch_payload(
+        [result], [_job_edp()], levy=make_levy_calculation()
+    )
 
     assert len(payload["edps"]) == 1
     edp_out = payload["edps"][0]
-    assert edp_out["edpId"] == "1"
-    assert edp_out["edpName"] == EDP_LABEL
+    assert edp_out["edpId"] == 1
+    assert edp_out["edpName"] == EDP_NAME
     assert edp_out["edpType"] == EdpType.NUTRIENT.value
     assert edp_out["impact"]["nitrogenTotal"]["amount"] == 10.51  # NOSONAR
     assert edp_out["impact"]["nitrogenTotal"]["unit"] == "mg/I TP"
@@ -116,17 +116,21 @@ def test_build_payload_derives_edp_from_result():
     assert edp_out["impact"]["phosphorusTotal"]["amount"] == 2.30  # NOSONAR
     assert edp_out["impact"]["phosphorusTotal"]["unit"] == "mg/I TP"
     assert edp_out["impact"]["phosphorusTotal"]["band"] == {"min": 3, "max": 3}
-    assert edp_out["levyGbp"]["amountExcludingVat"] == 999
-    assert edp_out["levyGbp"]["amountInflationAdjusted"] == 999
-    assert edp_out["levyGbp"]["baseAmount"] == 999
-    assert edp_out["levyGbp"]["modelVersion"] == 1
+    assert edp_out["levyGbp"] == {
+        "amountExcludingVat": 21936.60,
+        "amountInflationAdjusted": 21936.60,
+        "baseAmount": 21936.60,
+        "modelVersion": 1,
+    }
 
 
 def test_build_payload_excludes_top_level_totals():
     """Payload must not include totalNitrogen/totalPhosphorus (rejected by backend)."""
     result = _make_result(n_total=10.505, p_total=2.304)
 
-    payload = build_quote_patch_payload([result], [_job_edp()])
+    payload = build_quote_patch_payload(
+        [result], [_job_edp()], levy=make_levy_calculation()
+    )
 
     assert "totalNitrogen" not in payload
     assert "totalPhosphorus" not in payload
@@ -163,30 +167,51 @@ def test_build_payload_multiple_catchments_one_edp():
     entry per catchment duplicated them and made nrf-backend's levy sum
     double-count.
     """
-    payload = build_quote_patch_payload([_two_catchment_result()], [_job_edp()])
+    payload = build_quote_patch_payload(
+        [_two_catchment_result()], [_job_edp()], levy=make_levy_calculation()
+    )
 
     assert len(payload["edps"]) == 1
     edp_out = payload["edps"][0]
-    assert edp_out["edpName"] == EDP_LABEL
+    assert edp_out["edpName"] == EDP_NAME
     assert edp_out["edpType"] == EdpType.NUTRIENT.value
     assert edp_out["impact"]["nitrogenTotal"]["amount"] == 20.0  # NOSONAR
     assert edp_out["impact"]["phosphorusTotal"]["amount"] == 2.0  # NOSONAR
 
 
-def test_build_payload_edp_id_is_lowest_catchment_id():
-    """edpId stays provisional (lowest catchment OID) but must be deterministic."""
-    payload = build_quote_patch_payload([_two_catchment_result()], [_job_edp()])
+def test_build_payload_edp_id_comes_from_the_levy_not_a_catchment():
+    payload = build_quote_patch_payload(
+        [_two_catchment_result()], [_job_edp()], levy=make_levy_calculation(edp_id=42)
+    )
 
-    assert payload["edps"][0]["edpId"] == "10"
+    assert payload["edps"][0]["edpId"] == 42
+
+
+def test_build_payload_levy_values_are_floats():
+    payload = build_quote_patch_payload(
+        [_make_result()], [_job_edp()], levy=make_levy_calculation()
+    )
+
+    levy = payload["edps"][0]["levyGbp"]
+    assert all(
+        isinstance(levy[k], float)
+        for k in ("amountExcludingVat", "amountInflationAdjusted", "baseAmount")
+    )
+
+
+def test_mapper_has_no_provisional_edp_id():
+    import app.clients.payload_mapper as mapper
+
+    assert not hasattr(mapper, "_provisional_edp_id")
 
 
 def test_build_payload_no_edp_labels():
     """Without an EDP label there is nothing to name the entry, so emit none."""
     result = _make_result()
 
-    payload = build_quote_patch_payload([result], [])
+    payload = build_quote_patch_payload([result], [], levy=make_levy_calculation())
 
-    assert payload == {"edps": []}
+    assert payload is None
 
 
 def test_build_payload_multiple_edp_labels():
@@ -194,30 +219,36 @@ def test_build_payload_multiple_edp_labels():
     result = _make_result()
 
     payload = build_quote_patch_payload(
-        [result], [_job_edp(), _job_edp(label="Norfolk EDP 2")]
+        [result],
+        [_job_edp(), _job_edp(label="Norfolk EDP 2")],
+        levy=make_levy_calculation(),
     )
 
-    assert payload == {"edps": []}
+    assert payload is None
 
 
 def test_build_payload_empty_results():
-    """Empty results list returns empty edps with no top-level totals."""
-    payload = build_quote_patch_payload([], [_job_edp()])
-    assert payload == {"edps": []}
+    """Empty results list means nothing to send."""
+    payload = build_quote_patch_payload([], [_job_edp()], levy=make_levy_calculation())
+    assert payload is None
 
 
 def test_build_payload_no_nn_catchment():
-    """Result with no catchment_impacts returns empty edps."""
+    """Result with no catchment_impacts means nothing to send."""
     result = _make_result(catchment_impacts=[])
-    payload = build_quote_patch_payload([result], [_job_edp()])
-    assert payload == {"edps": []}
+    payload = build_quote_patch_payload(
+        [result], [_job_edp()], levy=make_levy_calculation()
+    )
+    assert payload is None
 
 
 def test_build_payload_rounds_to_two_decimals():
     """Amounts in EDPs and top-level totals are rounded to 2 decimal places."""
     result = _make_result(n_total=10.999, p_total=0.001)
 
-    payload = build_quote_patch_payload([result], [_job_edp()])
+    payload = build_quote_patch_payload(
+        [result], [_job_edp()], levy=make_levy_calculation()
+    )
 
     assert payload["edps"][0]["impact"]["nitrogenTotal"]["amount"] == 11.0  # NOSONAR
     assert payload["edps"][0]["impact"]["phosphorusTotal"]["amount"] == 0.0  # NOSONAR
@@ -231,7 +262,9 @@ def test_catchments_are_carried_onto_the_edp_entry():
     passes them in, so the mapper stays a pure function of its arguments."""
     result = _make_result()
 
-    payload = build_quote_patch_payload([result], [_job_edp()], CATCHMENTS)
+    payload = build_quote_patch_payload(
+        [result], [_job_edp()], CATCHMENTS, levy=make_levy_calculation()
+    )
 
     assert payload["edps"][0]["catchments"] == CATCHMENTS
 
@@ -240,6 +273,8 @@ def test_catchments_default_to_empty_when_not_supplied():
     """A failed catchment query must not cost the assessment its callback."""
     result = _make_result()
 
-    payload = build_quote_patch_payload([result], [_job_edp()])
+    payload = build_quote_patch_payload(
+        [result], [_job_edp()], levy=make_levy_calculation()
+    )
 
     assert payload["edps"][0]["catchments"] == []

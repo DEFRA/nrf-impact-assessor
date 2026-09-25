@@ -29,8 +29,14 @@ Usage:
 """
 
 import json
+import shutil
 import sqlite3
 import sys
+import tempfile
+from collections.abc import Callable
+from contextlib import contextmanager
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
@@ -55,6 +61,7 @@ import typer  # noqa: E402
 from fixture_manifest import validate_fixture_manifest  # noqa: E402
 from settings import ScriptSettings, db_settings  # noqa: E402
 from sqlalchemy import delete, func, select  # noqa: E402
+from sqlalchemy.exc import IntegrityError  # noqa: E402
 
 from app.models.db import (  # noqa: E402
     CoefficientLayer,
@@ -63,6 +70,8 @@ from app.models.db import (  # noqa: E402
     EdpExcludedAreas,
     GcnPonds,
     GcnRiskZones,
+    LevyCharge,
+    LevyInflationIndex,
     LookupTable,
     LpaBoundaries,
     NnCatchments,
@@ -77,6 +86,29 @@ _MSG_NO_CRS = f"No CRS found, assuming {CRS_BRITISH_NATIONAL_GRID}"
 _MSG_CONVERT_3D = "Converting 3D geometries to 2D"
 
 app = typer.Typer(help="Load spatial data into PostGIS database")
+
+
+@contextmanager
+def _gdal_readonly(path: Path):
+    """Yield a private scratch copy of a GeoPackage for GDAL to read.
+
+    GDAL's GeoPackage driver can rewrite internal caches (e.g. the
+    ``gpkg_ogr_contents`` row-count cache) on a plain read, mutating the
+    committed fixture file on disk. Since fixture directories are watched by
+    Tilt's ``load-IA-data`` resource, that self-inflicted write re-triggers
+    the load, which mutates the file again -- an infinite loop.
+
+    Copying to a scratch file (rather than chmod-ing the shared fixture
+    read-only) also keeps concurrent readers safe: stripping write
+    permission on the shared file races with any other process reading it
+    at the same time (e.g. Tilt's own retry firing while a developer
+    manually re-runs the load), and GDAL can silently drop or corrupt
+    geometries when it hits a permission error mid-read.
+    """
+    with tempfile.TemporaryDirectory() as scratch_dir:
+        scratch_path = Path(scratch_dir) / path.name
+        shutil.copy2(path, scratch_path)
+        yield scratch_path
 
 
 def clean_nan_values(obj: Any) -> Any:
@@ -164,6 +196,10 @@ class SpatialDataLoader:
         self.settings = settings
         self.sample_mode = sample_mode
         self.sample_limit = 100 if sample_mode else None
+        # Fixtures-only convenience so a local/CI job can exercise the levy
+        # calculation end-to-end; the migration seeds neither table.
+        self.levy_charges_csv: Path | None = None
+        self.levy_inflation_index_csv: Path | None = None
 
         if fixtures_dir is not None:
             validate_fixture_manifest(fixtures_dir)
@@ -185,6 +221,8 @@ class SpatialDataLoader:
             self.edp_boundary_layer = "edp_boundary_extents"
             self.edp_excluded_areas_gpkg = fixtures_dir / "edp_excluded_areas.gpkg"
             self.edp_excluded_areas_layer = "edp_excluded_areas"
+            self.levy_charges_csv = fixtures_dir / "levy_charges.csv"
+            self.levy_inflation_index_csv = fixtures_dir / "levy_inflation_index.csv"
         else:
             if settings is None:
                 msg = "Either settings or fixtures_dir must be provided"
@@ -217,6 +255,7 @@ class SpatialDataLoader:
         self.load_spatial_layers()
         self.load_coefficient_layer()
         self.load_lookup_tables()
+        self.load_levy_fixtures()
         print("All data loaded successfully!")
 
     def load_spatial_layers(self, layer_types: list[str] | None = None) -> None:
@@ -400,7 +439,8 @@ class SpatialDataLoader:
 
         print(f"Loading coefficients from {self.coefficient_gpkg.name}...")
 
-        gdf = gpd.read_file(self.coefficient_gpkg, layer=self.coefficient_layer)
+        with _gdal_readonly(self.coefficient_gpkg) as scratch_path:
+            gdf = gpd.read_file(scratch_path, layer=self.coefficient_layer)
         gdf = self._normalise_gdf(gdf)
         self._check_geometry_validity(gdf, "coefficient_layer")
         gdf, total_features = self._apply_sample_mode(gdf)
@@ -517,9 +557,12 @@ class SpatialDataLoader:
 
         print(f"Loading {layer_name} from {file_path.name}...")
 
-        gdf = (
-            gpd.read_file(file_path, layer=layer) if layer else gpd.read_file(file_path)
-        )
+        with _gdal_readonly(file_path) as scratch_path:
+            gdf = (
+                gpd.read_file(scratch_path, layer=layer)
+                if layer
+                else gpd.read_file(scratch_path)
+            )
         gdf = self._normalise_gdf(gdf)
         self._check_geometry_validity(gdf, layer_name)
         gdf, total_features = self._apply_sample_mode(gdf)
@@ -634,6 +677,117 @@ class SpatialDataLoader:
 
         except Exception as e:
             print(f"Error loading {table_name}: {e}")
+
+    def load_levy_fixtures(self) -> None:
+        """Load levy_charges and levy_inflation_index from CSV fixtures.
+
+        Both CSV paths are None outside fixtures_dir mode.
+        """
+        self._upsert_csv_table(
+            self.levy_charges_csv,
+            LevyCharge,
+            _levy_charge_from_row,
+            key=("edp_id", "charge_valid_from"),
+        )
+        self._upsert_csv_table(
+            self.levy_inflation_index_csv,
+            LevyInflationIndex,
+            _levy_index_from_row,
+            key=("charging_year",),
+        )
+
+    def _upsert_csv_table(
+        self,
+        csv_path: Path | None,
+        model: type,
+        row_to_model: "Callable[[dict], Any]",
+        key: tuple[str, ...],
+    ) -> None:
+        """Sync a table to its CSV fixture, matching rows on ``key``.
+
+        Matched rows are updated in place so they keep their id: the audit
+        table's RESTRICT foreign keys point at those ids, so a delete-and-
+        reinsert fails once any quote has been priced. A row dropped from the
+        CSV is deleted, which still fails if a quote was priced from it.
+        """
+        if csv_path is None or not csv_path.exists():
+            print(f"Skipping {model.__tablename__}: no fixture at {csv_path}")
+            return
+
+        # dtype=str keeps decimal/date fields as the literal text in the CSV,
+        # so parsing is explicit below rather than round-tripping through a
+        # pandas-inferred float or Timestamp.
+        df = pd.read_csv(csv_path, dtype=str)
+        rows = [row_to_model(row) for row in df.to_dict(orient="records")]
+        columns = [
+            c.key for c in model.__table__.columns if c.key not in ("id", "created_at")
+        ]
+
+        def key_of(obj: Any) -> tuple:
+            return tuple(getattr(obj, k) for k in key)
+
+        with self.repository.session() as session:
+            existing = {key_of(obj): obj for obj in session.scalars(select(model))}
+            wanted = {key_of(obj) for obj in rows}
+
+            stale = [obj for k, obj in existing.items() if k not in wanted]
+            for obj in stale:
+                session.delete(obj)
+            # Flush deletes first so a replacement window cannot trip the
+            # levy_charges overlap exclusion against the row it replaces.
+            try:
+                session.flush()
+            except IntegrityError as e:
+                stale_keys = "; ".join(
+                    ", ".join(f"{k}={v}" for k, v in zip(key, key_of(obj)))
+                    for obj in stale
+                )
+                msg = (
+                    f"Cannot remove {model.__tablename__} rows no longer in "
+                    f"{csv_path.name} ({stale_keys}): priced quotes in the audit "
+                    "table reference them. Changing a key column counts as a "
+                    "removal; end-date the row and add a new one instead, or "
+                    "clear the local audit rows first."
+                )
+                raise RuntimeError(msg) from e
+
+            for row in rows:
+                current = existing.get(key_of(row))
+                if current is None:
+                    session.add(row)
+                    continue
+                for column in columns:
+                    setattr(current, column, getattr(row, column))
+
+            session.commit()
+
+        print(
+            f"Synced {len(rows)} {model.__tablename__} fixture rows"
+            f" ({len(stale)} removed)"
+        )
+
+
+def _levy_charge_from_row(row: dict) -> LevyCharge:
+    """Build a LevyCharge from one levy_charges.csv row (ISO date strings)."""
+    return LevyCharge(
+        id=uuid4(),
+        edp_id=int(row["edp_id"]),
+        edp_name=row["edp_name"],
+        edp_start_date=date.fromisoformat(row["edp_start_date"]),
+        charge_valid_from=date.fromisoformat(row["charge_valid_from"]),
+        charge_valid_to=date.fromisoformat(row["charge_valid_to"]),
+        base_charge_per_unit=Decimal(str(row["base_charge_per_unit"])),
+    )
+
+
+def _levy_index_from_row(row: dict) -> LevyInflationIndex:
+    """Build a LevyInflationIndex from one levy_inflation_index.csv row."""
+    return LevyInflationIndex(
+        id=uuid4(),
+        charging_year=int(row["charging_year"]),
+        cil_index=Decimal(str(row["cil_index"])),
+        index_factor=Decimal(str(row["index_factor"])),
+    )
 
 
 def _load_selected_layers(loader: "SpatialDataLoader", layer: list[str]) -> None:
