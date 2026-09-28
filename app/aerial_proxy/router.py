@@ -1,15 +1,19 @@
 """Aerial tile proxy endpoint.
 
 Relays raster tiles from an upstream WMTS source without exposing the
-source URL to the client.  When the upstream tile is unavailable a
-lightweight "not available" placeholder is returned instead.
+source URL to the client.  Close-in tiles are instead rendered from the
+upstream WMS in British National Grid and reprojected here to Web Mercator.
+When the upstream tile is unavailable a lightweight "not available"
+placeholder is returned instead.
 
     GET /aerial_proxy/{z}/{x}/{y}
 """
 
 import asyncio
 import hashlib
+import io
 import logging
+import math
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -19,11 +23,14 @@ from threading import Lock
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
+import numpy as np
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
+from PIL import Image
+from pyproj import Transformer
 
 from app.common.http_client import create_async_client
-from app.config import AerialProxyConfig
+from app.config import AERIAL_WMS_MIN_ZOOM, AerialProxyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -192,17 +199,192 @@ _inflight_lock = Lock()
 # in the configured base URL are replaced with the requested coordinates.
 _TILE_QUERY_KEYS = frozenset({"tilematrix", "tilerow", "tilecol"})
 
+# The equivalent for WMS GetMap: the parameters that frame the image.
+_WMS_QUERY_KEYS = frozenset({"crs", "bbox", "width", "height"})
 
-def _build_upstream_url(z: int, x: int, y: int) -> str:
-    """Set the tile coordinates on the configured upstream WMTS URL."""
-    parsed = urlsplit(_config.base_url)
-    params = [
+# Metres from the EPSG:3857 origin to the antimeridian; the XYZ grid divides
+# that square into 2**z rows and columns.
+_WEB_MERCATOR_ORIGIN = 20037508.342789244
+
+# Matches the WMTS tile size, so the two halves hand over at the same scale.
+_WMS_TILE_PIXELS = 256
+
+# The WMS tile is warped through a coarse lattice of exact transforms and
+# interpolated between them; the transform barely bends across one tile.
+_WARP_LATTICE_STEPS = 16
+
+# Source pixels of margin, so bilinear sampling at the tile edge has
+# neighbors to read.
+_WARP_MARGIN_PIXELS = 2
+
+_WARP_JPEG_QUALITY = 85
+
+# Built lazily and shared: pyproj resolves the most accurate operation
+# available, which is OSTN15 wherever scripts/install_ostn15.py has run.
+_to_national_grid: Transformer | None = None
+
+
+def _national_grid_transformer() -> Transformer:
+    global _to_national_grid
+    if _to_national_grid is None:
+        _to_national_grid = Transformer.from_crs(3857, 27700, always_xy=True)
+    return _to_national_grid
+
+
+@dataclass(frozen=True)
+class _SourceWindow:
+    """The British National Grid image a Web Mercator tile is warped from.
+
+    `eastings`/`northings` hold the national grid position of every output
+    pixel centre, so warping is a lookup into the fetched image.
+    """
+
+    min_e: float
+    max_n: float
+    resolution: float
+    width: int
+    height: int
+    eastings: np.ndarray = field(repr=False)
+    northings: np.ndarray = field(repr=False)
+
+    @property
+    def bbox(self) -> str:
+        """WMS 1.3.0 BBOX; EPSG:27700 is easting/northing ordered."""
+        max_e = self.min_e + self.width * self.resolution
+        min_n = self.max_n - self.height * self.resolution
+        return f"{self.min_e:.3f},{min_n:.3f},{max_e:.3f},{self.max_n:.3f}"
+
+
+def _with_query_params(
+    base_url: str, replaced: frozenset[str], params: list[tuple[str, str]]
+) -> str:
+    """Drop `replaced` from `base_url`'s query, then append `params`.
+
+    Dropping first overwrites stale coordinates left in the configured URL,
+    rather than sending two values for the same parameter.
+    """
+    parsed = urlsplit(base_url)
+    kept = [
         (key, value)
         for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-        if key.lower() not in _TILE_QUERY_KEYS
+        if key.lower() not in replaced
     ]
-    params += [("TILEMATRIX", str(z)), ("TILEROW", str(y)), ("TILECOL", str(x))]
-    return urlunsplit(parsed._replace(query=urlencode(params)))
+    return urlunsplit(parsed._replace(query=urlencode(kept + params)))
+
+
+def _upsample(lattice: np.ndarray, size: int) -> np.ndarray:
+    """Bilinearly interpolate a square lattice spanning a tile's edges to
+    the centres of its `size` x `size` pixels."""
+    steps = lattice.shape[0] - 1
+    position = (np.arange(size) + 0.5) * steps / size
+    lower = np.minimum(position.astype(int), steps - 1)
+    frac = position - lower
+    rows = lattice[lower] * (1 - frac)[:, None] + lattice[lower + 1] * frac[:, None]
+    return rows[:, lower] * (1 - frac) + rows[:, lower + 1] * frac
+
+
+def _wms_source_window(z: int, x: int, y: int) -> _SourceWindow:
+    """The national grid window covering one XYZ tile, at about its resolution."""
+    span = 2 * _WEB_MERCATOR_ORIGIN / (2**z)
+    left = -_WEB_MERCATOR_ORIGIN + x * span
+    top = _WEB_MERCATOR_ORIGIN - y * span
+
+    edges = np.linspace(0.0, span, _WARP_LATTICE_STEPS + 1)
+    lattice_e, lattice_n = _national_grid_transformer().transform(
+        *np.meshgrid(left + edges, top - edges)
+    )
+
+    # Ground size of one output pixel along the tile's top edge.
+    resolution = (
+        math.dist(
+            (lattice_e[0, 0], lattice_n[0, 0]), (lattice_e[0, -1], lattice_n[0, -1])
+        )
+        / _WMS_TILE_PIXELS
+    )
+    margin = _WARP_MARGIN_PIXELS * resolution
+    min_e = lattice_e.min() - margin
+    max_n = lattice_n.max() + margin
+
+    return _SourceWindow(
+        min_e=min_e,
+        max_n=max_n,
+        resolution=resolution,
+        width=math.ceil((lattice_e.max() + margin - min_e) / resolution),
+        height=math.ceil((max_n - (lattice_n.min() - margin)) / resolution),
+        eastings=_upsample(lattice_e, _WMS_TILE_PIXELS),
+        northings=_upsample(lattice_n, _WMS_TILE_PIXELS),
+    )
+
+
+def _use_wms(z: int) -> bool:
+    """Whether this zoom is served by the WMS rather than the WMTS.
+
+    The WMTS pyramid is a fixed grid and caches well, so it takes the low
+    zooms; close in, the WMS renders from the native imagery instead.
+    """
+    return bool(_config.wms_base_url) and z >= AERIAL_WMS_MIN_ZOOM
+
+
+def _build_upstream_url(z: int, x: int, y: int) -> tuple[str, _SourceWindow | None]:
+    """Point the configured upstream URL at one tile.
+
+    WMS tiles come back with the window to warp them from; WMTS tiles are
+    already Web Mercator and are served as they come.
+    """
+    if _use_wms(z):
+        window = _wms_source_window(z, x, y)
+        url = _with_query_params(
+            _config.wms_base_url,
+            _WMS_QUERY_KEYS,
+            [
+                # Getmapping's own Web Mercator rendering sits metres off the
+                # OS basemap, so ask for the native grid and reproject here.
+                ("CRS", "EPSG:27700"),
+                ("BBOX", window.bbox),
+                ("WIDTH", str(window.width)),
+                ("HEIGHT", str(window.height)),
+            ],
+        )
+        return url, window
+    url = _with_query_params(
+        _config.base_url,
+        _TILE_QUERY_KEYS,
+        [("TILEMATRIX", str(z)), ("TILEROW", str(y)), ("TILECOL", str(x))],
+    )
+    return url, None
+
+
+def _warp_to_web_mercator(window: _SourceWindow, image_bytes: bytes) -> bytes:
+    """Bilinearly resample a national grid image onto the Web Mercator tile."""
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        # Checked from the header before decoding: the byte cap bounds the
+        # compressed body, not the raster, and a mis-sized image would be
+        # warped on the wrong scale.
+        if image.size != (window.width, window.height):
+            message = (
+                f"WMS image is {image.size}, requested {(window.width, window.height)}"
+            )
+            raise ValueError(message)
+        source = np.asarray(image.convert("RGB"), dtype=np.float32)
+    height, width = source.shape[:2]
+
+    # Source pixel coordinates of each output pixel centre.
+    col = (window.eastings - window.min_e) / window.resolution - 0.5
+    row = (window.max_n - window.northings) / window.resolution - 0.5
+    col = np.clip(col, 0, width - 1)
+    row = np.clip(row, 0, height - 1)
+    col0 = np.minimum(col.astype(int), width - 2)
+    row0 = np.minimum(row.astype(int), height - 2)
+    fc = (col - col0)[..., None]
+    fr = (row - row0)[..., None]
+
+    top = source[row0, col0] * (1 - fc) + source[row0, col0 + 1] * fc
+    bottom = source[row0 + 1, col0] * (1 - fc) + source[row0 + 1, col0 + 1] * fc
+    pixels = np.rint(top * (1 - fr) + bottom * fr).astype(np.uint8)
+
+    output = io.BytesIO()
+    Image.fromarray(pixels).save(output, format="JPEG", quality=_WARP_JPEG_QUALITY)
+    return output.getvalue()
 
 
 async def _read_capped(resp: httpx.Response, tile_ref: str) -> bytes | None:
@@ -225,7 +407,7 @@ async def _fetch_upstream(z: int, x: int, y: int) -> TileResult:
     tile_ref = f"{z}/{x}/{y}"
 
     try:
-        upstream_url = _build_upstream_url(z, x, y)
+        upstream_url, window = _build_upstream_url(z, x, y)
         async with _get_client().stream(
             "GET", upstream_url, follow_redirects=True
         ) as resp:
@@ -279,7 +461,17 @@ async def _fetch_upstream(z: int, x: int, y: int) -> TileResult:
     if not tile_bytes:
         return _MISSING
 
-    return TileResult(TileOutcome.HIT, tile_bytes, content_type)
+    if window is None:
+        return TileResult(TileOutcome.HIT, tile_bytes, content_type)
+
+    try:
+        # Off the event loop: numpy and Pillow release the GIL for the bulk.
+        warped = await asyncio.to_thread(_warp_to_web_mercator, window, tile_bytes)
+    except Exception:
+        logger.exception("Aerial proxy could not reproject WMS image: %s", tile_ref)
+        return _UPSTREAM_ERROR
+
+    return TileResult(TileOutcome.HIT, warped, "image/jpeg")
 
 
 async def _get_tile(z: int, x: int, y: int) -> TileResult:

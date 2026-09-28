@@ -19,6 +19,7 @@ dependencies = [
     "geopandas>=1.1.4",
     "moto>=5.2.2",
     "notifications-python-client>=12.1.0",
+    "pillow>=12.3.0",
     "psycopg2-binary>=2.9.12",
     "pydantic-settings==2.15.0",
     "pymongo[aws,encryption,snappy,zstd]==4.17.0",
