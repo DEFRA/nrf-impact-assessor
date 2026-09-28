@@ -378,8 +378,8 @@ class DatabaseSettings(BaseSettings):
 
         if self.local_password:
             password = quote(self.local_password, safe="")
-            return f"postgresql://{self.user}:{password}@{self.host}:{self.port}/{self.database}"
-        return f"postgresql://{self.user}@{self.host}:{self.port}/{self.database}"  # NOSONAR - intentional: trust auth for local dev without a password
+            return f"postgresql+psycopg2://{self.user}:{password}@{self.host}:{self.port}/{self.database}"
+        return f"postgresql+psycopg2://{self.user}@{self.host}:{self.port}/{self.database}"  # NOSONAR - intentional: trust auth for local dev without a password
 
 
 class BackendConfig(BaseSettings):

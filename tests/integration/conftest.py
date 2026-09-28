@@ -48,10 +48,10 @@ def test_engine() -> Engine:
     from app.config import DatabaseSettings
 
     db = DatabaseSettings()
-    admin_db_url = f"postgresql://{db.user}@{db.host}:{db.port}/postgres"  # NOSONAR
-    test_db_url = (
-        f"postgresql://{db.user}@{db.host}:{db.port}/test_nrf_impact"  # NOSONAR
+    admin_db_url = (
+        f"postgresql+psycopg2://{db.user}@{db.host}:{db.port}/postgres"  # NOSONAR
     )
+    test_db_url = f"postgresql+psycopg2://{db.user}@{db.host}:{db.port}/test_nrf_impact"  # NOSONAR
 
     # Connect to default postgres database to create test database
     admin_engine = create_engine(admin_db_url)
