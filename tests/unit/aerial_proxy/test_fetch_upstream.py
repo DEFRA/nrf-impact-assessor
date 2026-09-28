@@ -1,4 +1,5 @@
 import io
+import logging
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlsplit
 
@@ -526,3 +527,84 @@ async def test_missing_wms_image_is_not_reprojected():
     resp = _FakeStreamResponse(status_code=404, chunks=[], content_type="text/plain")
 
     assert await _fetch_wms_tile(_mock_client(resp), *_WESTMINSTER) == _MISSING
+
+
+# ---------------------------------------------------------------------------
+# Upstream error detail in logs
+# ---------------------------------------------------------------------------
+
+_ACCESS_KEY = "k-0123456789abcdef"
+_KEYED_BASE = f"https://example.com/wmts?SERVICE=WMTS&LAYER=APGB&key={_ACCESS_KEY}"
+_SERVICE_EXCEPTION = (
+    b'<?xml version="1.0"?><ServiceExceptionReport version="1.3.0">'
+    b'<ServiceException code="InvalidDimensionValue">'
+    b"Requested image size exceeds the maximum of 4096 pixels"
+    b"</ServiceException></ServiceExceptionReport>"
+)
+
+
+async def _logged_error(caplog, resp, **config_overrides):
+    with caplog.at_level(logging.ERROR, logger="app.aerial_proxy.router"):
+        result = await _fetch(_mock_client(resp), **config_overrides)
+    assert result == _UPSTREAM_ERROR
+    return "\n".join(r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_upstream_error_logs_the_reason_given_in_the_body(caplog):
+    resp = _FakeStreamResponse(
+        status_code=400, chunks=[_SERVICE_EXCEPTION], content_type="text/xml"
+    )
+    logged = await _logged_error(caplog, resp)
+
+    assert "upstream error 400" in logged
+    assert "Requested image size exceeds the maximum of 4096 pixels" in logged
+    assert "<ServiceException" not in logged
+
+
+@pytest.mark.asyncio
+async def test_service_exception_served_as_200_logs_the_reason(caplog):
+    resp = _FakeStreamResponse(
+        chunks=[_SERVICE_EXCEPTION], content_type="application/vnd.ogc.se_xml"
+    )
+    logged = await _logged_error(caplog, resp)
+
+    assert "Requested image size exceeds the maximum of 4096 pixels" in logged
+
+
+@pytest.mark.asyncio
+async def test_upstream_error_log_never_contains_the_access_key(caplog):
+    body = (
+        f"Invalid request {_KEYED_BASE}&TILEMATRIX=11 (key {_ACCESS_KEY} rejected)"
+    ).encode()
+    resp = _FakeStreamResponse(
+        status_code=400, chunks=[body], content_type="text/plain"
+    )
+    logged = await _logged_error(caplog, resp, base_url=_KEYED_BASE)
+
+    assert _ACCESS_KEY not in logged
+    assert "example.com" not in logged
+    assert "Invalid request <url>" in logged
+    assert "(key <redacted> rejected)" in logged
+
+
+@pytest.mark.asyncio
+async def test_upstream_error_detail_is_truncated(caplog):
+    resp = _FakeStreamResponse(
+        status_code=500, chunks=[b"x" * 10_000], content_type="text/plain"
+    )
+    logged = await _logged_error(caplog, resp)
+
+    assert "x" * 300 + "..." in logged
+    assert "x" * 301 not in logged
+
+
+@pytest.mark.asyncio
+async def test_wms_upstream_error_logs_the_requested_frame(caplog):
+    resp = _FakeStreamResponse(status_code=400, chunks=[b""], content_type="text/xml")
+    with patch("app.aerial_proxy.router.AERIAL_WMS_MIN_ZOOM", 0):
+        logged = await _logged_error(caplog, resp, wms_base_url=_WMS_BASE)
+
+    assert "WMS tile 11/1030/674 (BBOX=" in logged
+    assert "WIDTH=" in logged
+    assert "<empty body>" in logged

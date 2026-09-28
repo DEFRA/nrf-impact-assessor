@@ -14,6 +14,7 @@ import hashlib
 import io
 import logging
 import math
+import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -387,6 +388,75 @@ def _warp_to_web_mercator(window: _SourceWindow, image_bytes: bytes) -> bytes:
     return output.getvalue()
 
 
+# Upstream error bodies (e.g. a WMS ServiceException) say why a request was
+# refused; enough of one is logged to diagnose it, never the whole page.
+_ERROR_DETAIL_READ_BYTES = 4096
+_ERROR_DETAIL_MAX_CHARS = 300
+
+# Configured query values shorter than this are protocol constants such as
+# "WMS" or "1.3.0"; longer ones may be access keys.
+_REDACT_MIN_VALUE_CHARS = 6
+
+_URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
+_MARKUP_PATTERN = re.compile(r"<[^>]*>")
+
+
+def _configured_secrets() -> list[str]:
+    """Strings from the upstream URLs that must never reach a log line.
+
+    The URLs carry the access key, and a body may echo the request back,
+    so every non-trivial configured query value is treated as secret.
+    """
+    secrets: set[str] = set()
+    for base_url in (_config.base_url, _config.wms_base_url):
+        if not base_url:
+            continue
+        parsed = urlsplit(base_url)
+        secrets.update(filter(None, (parsed.username, parsed.password)))
+        secrets.update(
+            value
+            for _, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if len(value) >= _REDACT_MIN_VALUE_CHARS
+        )
+    # Longest first, so a secret containing another is redacted whole.
+    return sorted(secrets, key=len, reverse=True)
+
+
+def _redact(text: str) -> str:
+    text = _URL_PATTERN.sub("<url>", text)
+    for secret in _configured_secrets():
+        text = text.replace(secret, "<redacted>")
+    return text
+
+
+async def _error_detail(resp: httpx.Response) -> str:
+    """A short, redacted plain-text summary of an upstream error body."""
+    body = b""
+    try:
+        async for chunk in resp.aiter_bytes():
+            body += chunk
+            if len(body) >= _ERROR_DETAIL_READ_BYTES:
+                break
+    except httpx.HTTPError:
+        pass
+    text = body[:_ERROR_DETAIL_READ_BYTES].decode("utf-8", errors="replace")
+    text = " ".join(_MARKUP_PATTERN.sub(" ", text).split())
+    text = _redact(text)
+    if len(text) > _ERROR_DETAIL_MAX_CHARS:
+        text = text[:_ERROR_DETAIL_MAX_CHARS] + "..."
+    return text or "<empty body>"
+
+
+def _describe_request(z: int, x: int, y: int, window: _SourceWindow | None) -> str:
+    """Tile and request framing for logs; the upstream URL itself is secret."""
+    if window is None:
+        return f"WMTS tile {z}/{x}/{y}"
+    return (
+        f"WMS tile {z}/{x}/{y} (BBOX={window.bbox} "
+        f"WIDTH={window.width} HEIGHT={window.height})"
+    )
+
+
 async def _read_capped(resp: httpx.Response, tile_ref: str) -> bytes | None:
     """Read the response body, giving up once it exceeds the size cap."""
     limit = _config.max_tile_bytes
@@ -408,6 +478,7 @@ async def _fetch_upstream(z: int, x: int, y: int) -> TileResult:
 
     try:
         upstream_url, window = _build_upstream_url(z, x, y)
+        tile_ref = _describe_request(z, x, y, window)
         async with _get_client().stream(
             "GET", upstream_url, follow_redirects=True
         ) as resp:
@@ -416,7 +487,10 @@ async def _fetch_upstream(z: int, x: int, y: int) -> TileResult:
 
             if not (200 <= resp.status_code < 300):
                 logger.error(
-                    "Aerial proxy upstream error %d for %s", resp.status_code, tile_ref
+                    "Aerial proxy upstream error %d for %s: %s",
+                    resp.status_code,
+                    tile_ref,
+                    await _error_detail(resp),
                 )
                 return _UPSTREAM_ERROR
 
@@ -425,10 +499,12 @@ async def _fetch_upstream(z: int, x: int, y: int) -> TileResult:
             content_type = resp.headers.get("content-type", "")
             media_type = content_type.split(";", 1)[0].strip().lower()
             if media_type not in _ALLOWED_MEDIA_TYPES:
+                # WMS servers report errors as a 200 ServiceException.
                 logger.error(
-                    "Aerial proxy unexpected content-type %r for %s",
+                    "Aerial proxy unexpected content-type %r for %s: %s",
                     content_type,
                     tile_ref,
+                    await _error_detail(resp),
                 )
                 return _UPSTREAM_ERROR
 
