@@ -378,8 +378,8 @@ class DatabaseSettings(BaseSettings):
 
         if self.local_password:
             password = quote(self.local_password, safe="")
-            return f"postgresql://{self.user}:{password}@{self.host}:{self.port}/{self.database}"
-        return f"postgresql://{self.user}@{self.host}:{self.port}/{self.database}"  # NOSONAR - intentional: trust auth for local dev without a password
+            return f"postgresql+psycopg2://{self.user}:{password}@{self.host}:{self.port}/{self.database}"
+        return f"postgresql+psycopg2://{self.user}@{self.host}:{self.port}/{self.database}"  # NOSONAR - intentional: trust auth for local dev without a password
 
 
 class BackendConfig(BaseSettings):
@@ -548,6 +548,11 @@ class DataSyncConfig(BaseSettings):
     )
 
 
+# First zoom served by the WMS rather than the WMTS pyramid, which is a fixed
+# grid and caches better. Raising this trades close-in detail for cheaper tiles.
+AERIAL_WMS_MIN_ZOOM = 14
+
+
 class AerialProxyConfig(BaseSettings):
     """Configuration for the aerial tile proxy endpoint."""
 
@@ -567,6 +572,17 @@ class AerialProxyConfig(BaseSettings):
             "&VERSION=1.0.0&LAYER=APGB_Latest_UK_250mm&STYLE=Default"
             "&FORMAT=image%2Fpng&TILEMATRIXSET=GoogleMapsExtended. "
             "TILEMATRIX/TILEROW/TILECOL are set per request"
+        ),
+    )
+    wms_base_url: str = Field(
+        default="",
+        description=(
+            "Optional WMS GetMap URL without CRS/BBOX/WIDTH/HEIGHT, serving tiles "
+            "from AERIAL_WMS_MIN_ZOOM up, e.g. https://tiles.example.com/Apgb.wmsx"
+            "?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=APGB_Latest_UK_125mm"
+            "&STYLES=&FORMAT=image%2Fjpeg. Imagery is requested in EPSG:27700 and "
+            "reprojected to Web Mercator with OSTN15; any CRS given is replaced. "
+            "Left empty, the WMTS serves every zoom"
         ),
     )
     timeout_seconds: int = Field(

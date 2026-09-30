@@ -242,7 +242,9 @@ class TestRepositoryContextManager:
         from sqlalchemy import create_engine
 
         # Create a separate engine for this test (don't use shared test_engine)
-        test_url = "postgresql://postgres@localhost:5432/test_nrf_impact"  # NOSONAR
+        test_url = (
+            "postgresql+psycopg2://postgres@localhost:5432/test_nrf_impact"  # NOSONAR
+        )
         engine = create_engine(test_url, pool_size=2)
 
         repo = Repository(engine)

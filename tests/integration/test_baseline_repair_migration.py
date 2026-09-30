@@ -46,7 +46,7 @@ def stamped_but_incomplete_engine() -> Engine:
     """A database at the pre-repair head whose edp_boundary_layer never got
     created — the state left behind by stamping onto the squashed baseline.
     """
-    admin_url = "postgresql://postgres@localhost:5432/postgres"  # NOSONAR
+    admin_url = "postgresql+psycopg2://postgres@localhost:5432/postgres"  # NOSONAR
     admin_engine = create_engine(admin_url)
     with admin_engine.connect() as conn:
         conn.execution_options(isolation_level="AUTOCOMMIT")
@@ -61,7 +61,7 @@ def stamped_but_incomplete_engine() -> Engine:
         conn.execute(text(f"CREATE DATABASE {REPAIR_DB}"))
 
     engine = create_engine(
-        f"postgresql://postgres@localhost:5432/{REPAIR_DB}"
+        f"postgresql+psycopg2://postgres@localhost:5432/{REPAIR_DB}"
     )  # NOSONAR
     with engine.connect() as conn:
         conn.execution_options(isolation_level="AUTOCOMMIT")
