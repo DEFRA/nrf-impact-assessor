@@ -393,8 +393,29 @@ def _warp_to_web_mercator(window: _SourceWindow, image_bytes: bytes) -> bytes:
 _ERROR_DETAIL_READ_BYTES = 4096
 _ERROR_DETAIL_MAX_CHARS = 300
 
-# Configured query values shorter than this are protocol constants such as
-# "WMS" or "1.3.0"; longer ones may be access keys.
+# Standard WMS/WMTS query parameters; their values (layer names, formats,
+# CRSs) are public protocol values, not credentials.
+_PROTOCOL_PARAMS = frozenset(
+    {
+        "service",
+        "request",
+        "version",
+        "layer",
+        "layers",
+        "style",
+        "styles",
+        "format",
+        "crs",
+        "srs",
+        "tilematrixset",
+        "transparent",
+        "bgcolor",
+        "exceptions",
+    }
+)
+
+# Any other configured query value may be an access key, unless it is so
+# short that redacting it would garble ordinary text.
 _REDACT_MIN_VALUE_CHARS = 6
 
 _URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
@@ -405,7 +426,8 @@ def _configured_secrets() -> list[str]:
     """Strings from the upstream URLs that must never reach a log line.
 
     The URLs carry the access key, and a body may echo the request back,
-    so every non-trivial configured query value is treated as secret.
+    so every non-trivial configured value of a non-protocol query parameter
+    is treated as secret.
     """
     secrets: set[str] = set()
     for base_url in (_config.base_url, _config.wms_base_url):
@@ -415,8 +437,9 @@ def _configured_secrets() -> list[str]:
         secrets.update(filter(None, (parsed.username, parsed.password)))
         secrets.update(
             value
-            for _, value in parse_qsl(parsed.query, keep_blank_values=True)
-            if len(value) >= _REDACT_MIN_VALUE_CHARS
+            for name, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if name.lower() not in _PROTOCOL_PARAMS
+            and len(value) >= _REDACT_MIN_VALUE_CHARS
         )
     # Longest first, so a secret containing another is redacted whole.
     return sorted(secrets, key=len, reverse=True)

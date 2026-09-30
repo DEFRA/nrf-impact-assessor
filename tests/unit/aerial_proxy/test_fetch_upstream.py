@@ -589,6 +589,28 @@ async def test_upstream_error_log_never_contains_the_access_key(caplog):
 
 
 @pytest.mark.asyncio
+async def test_upstream_error_log_keeps_protocol_values(caplog):
+    base_url = (
+        "https://example.com/wmts?SERVICE=WMTS&REQUEST=GetTile&FORMAT=image%2Fjpeg"
+        f"&LAYER=APGB_Latest_UK_125mm&TILEMATRIXSET=EPSG:3857&token={_ACCESS_KEY}"
+    )
+    body = (
+        "Layer 'APGB_Latest_UK_125mm' not enabled for REQUEST=GetTile "
+        f"FORMAT=image/jpeg TILEMATRIXSET=EPSG:3857 token={_ACCESS_KEY}"
+    ).encode()
+    resp = _FakeStreamResponse(
+        status_code=400, chunks=[body], content_type="text/plain"
+    )
+    logged = await _logged_error(caplog, resp, base_url=base_url)
+
+    assert _ACCESS_KEY not in logged
+    assert (
+        "Layer 'APGB_Latest_UK_125mm' not enabled for REQUEST=GetTile "
+        "FORMAT=image/jpeg TILEMATRIXSET=EPSG:3857 token=<redacted>"
+    ) in logged
+
+
+@pytest.mark.asyncio
 async def test_upstream_error_detail_is_truncated(caplog):
     resp = _FakeStreamResponse(
         status_code=500, chunks=[b"x" * 10_000], content_type="text/plain"
