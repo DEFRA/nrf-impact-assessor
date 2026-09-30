@@ -496,6 +496,64 @@ async def _read_capped(resp: httpx.Response, tile_ref: str) -> bytes | None:
     return b"".join(chunks)
 
 
+async def _rejected_response(resp: httpx.Response, tile_ref: str) -> TileResult | None:
+    """The result to return instead of the body, or None if it is a tile."""
+    if resp.status_code == 404:
+        return _MISSING
+
+    if not (200 <= resp.status_code < 300):
+        logger.error(
+            "Aerial proxy upstream error %d for %s: %s",
+            resp.status_code,
+            tile_ref,
+            await _error_detail(resp),
+        )
+        return _UPSTREAM_ERROR
+
+    # An absent content-type is not assumed to be imagery: an
+    # untyped HTML error page must not be cached as a tile.
+    content_type = resp.headers.get("content-type", "")
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type not in _ALLOWED_MEDIA_TYPES:
+        # WMS servers report errors as a 200 ServiceException.
+        logger.error(
+            "Aerial proxy unexpected content-type %r for %s: %s",
+            content_type,
+            tile_ref,
+            await _error_detail(resp),
+        )
+        return _UPSTREAM_ERROR
+
+    declared_length = resp.headers.get("content-length")
+    if (
+        declared_length
+        and declared_length.isdigit()
+        and int(declared_length) > _config.max_tile_bytes
+    ):
+        logger.error(
+            "Aerial proxy upstream declared %s bytes (cap %d) for %s",
+            declared_length,
+            _config.max_tile_bytes,
+            tile_ref,
+        )
+        return _UPSTREAM_ERROR
+
+    return None
+
+
+async def _reproject(
+    window: _SourceWindow, tile_bytes: bytes, tile_ref: str
+) -> TileResult:
+    try:
+        # Off the event loop: numpy and Pillow release the GIL for the bulk.
+        warped = await asyncio.to_thread(_warp_to_web_mercator, window, tile_bytes)
+    except Exception:
+        logger.exception("Aerial proxy could not reproject WMS image: %s", tile_ref)
+        return _UPSTREAM_ERROR
+
+    return TileResult(TileOutcome.HIT, warped, "image/jpeg")
+
+
 async def _fetch_upstream(z: int, x: int, y: int) -> TileResult:
     tile_ref = f"{z}/{x}/{y}"
 
@@ -505,46 +563,11 @@ async def _fetch_upstream(z: int, x: int, y: int) -> TileResult:
         async with _get_client().stream(
             "GET", upstream_url, follow_redirects=True
         ) as resp:
-            if resp.status_code == 404:
-                return _MISSING
+            rejection = await _rejected_response(resp, tile_ref)
+            if rejection is not None:
+                return rejection
 
-            if not (200 <= resp.status_code < 300):
-                logger.error(
-                    "Aerial proxy upstream error %d for %s: %s",
-                    resp.status_code,
-                    tile_ref,
-                    await _error_detail(resp),
-                )
-                return _UPSTREAM_ERROR
-
-            # An absent content-type is not assumed to be imagery: an
-            # untyped HTML error page must not be cached as a tile.
-            content_type = resp.headers.get("content-type", "")
-            media_type = content_type.split(";", 1)[0].strip().lower()
-            if media_type not in _ALLOWED_MEDIA_TYPES:
-                # WMS servers report errors as a 200 ServiceException.
-                logger.error(
-                    "Aerial proxy unexpected content-type %r for %s: %s",
-                    content_type,
-                    tile_ref,
-                    await _error_detail(resp),
-                )
-                return _UPSTREAM_ERROR
-
-            declared_length = resp.headers.get("content-length")
-            if (
-                declared_length
-                and declared_length.isdigit()
-                and int(declared_length) > _config.max_tile_bytes
-            ):
-                logger.error(
-                    "Aerial proxy upstream declared %s bytes (cap %d) for %s",
-                    declared_length,
-                    _config.max_tile_bytes,
-                    tile_ref,
-                )
-                return _UPSTREAM_ERROR
-
+            content_type = resp.headers["content-type"]
             tile_bytes = await _read_capped(resp, tile_ref)
             if tile_bytes is None:
                 return _UPSTREAM_ERROR
@@ -563,14 +586,7 @@ async def _fetch_upstream(z: int, x: int, y: int) -> TileResult:
     if window is None:
         return TileResult(TileOutcome.HIT, tile_bytes, content_type)
 
-    try:
-        # Off the event loop: numpy and Pillow release the GIL for the bulk.
-        warped = await asyncio.to_thread(_warp_to_web_mercator, window, tile_bytes)
-    except Exception:
-        logger.exception("Aerial proxy could not reproject WMS image: %s", tile_ref)
-        return _UPSTREAM_ERROR
-
-    return TileResult(TileOutcome.HIT, warped, "image/jpeg")
+    return await _reproject(window, tile_bytes, tile_ref)
 
 
 async def _get_tile(z: int, x: int, y: int) -> TileResult:
