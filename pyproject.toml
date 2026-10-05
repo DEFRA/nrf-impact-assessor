@@ -23,6 +23,7 @@ dependencies = [
     "numpy>=2.5.3",
     "pillow>=12.3.0",
     "psycopg2-binary>=2.9.12",
+    "pyogrio>=0.13.0",
     "pydantic-settings==2.15.0",
     "pymongo[aws,encryption,snappy,zstd]==4.18.2",
     "pyproj>=3.8.0",
