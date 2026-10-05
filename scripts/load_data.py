@@ -104,11 +104,15 @@ def _gdal_readonly(path: Path):
     at the same time (e.g. Tilt's own retry firing while a developer
     manually re-runs the load), and GDAL can silently drop or corrupt
     geometries when it hits a permission error mid-read.
+
+    A shapefile is spread across sibling files (.shx, .dbf, .prj, ...) that
+    share its stem, so those are copied alongside it.
     """
     with tempfile.TemporaryDirectory() as scratch_dir:
-        scratch_path = Path(scratch_dir) / path.name
-        shutil.copy2(path, scratch_path)
-        yield scratch_path
+        for sibling in path.parent.iterdir():
+            if sibling.stem == path.stem and sibling.is_file():
+                shutil.copy2(sibling, Path(scratch_dir) / sibling.name)
+        yield Path(scratch_dir) / path.name
 
 
 def clean_nan_values(obj: Any) -> Any:

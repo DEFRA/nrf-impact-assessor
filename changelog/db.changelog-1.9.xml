@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- Alembic revision: e5f9a2b3c4d6 -->
+
+    <changeSet id="09-audit-model-results" author="nrf">
+        <createTable tableName="audit_model_results" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="status" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="nrl_reference" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="assessment_type" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="model_version" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="model_output" type="jsonb"/>
+            <column name="error_details" type="varchar"/>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex indexName="ix_public_audit_model_results_nrl_reference"
+                     tableName="audit_model_results" schemaName="public">
+            <column name="nrl_reference"/>
+        </createIndex>
+        <rollback>
+            <dropTable tableName="audit_model_results" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
