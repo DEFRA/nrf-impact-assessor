@@ -220,9 +220,10 @@ def test_process_job_passes_the_levy_to_the_callback(orch, lookups, mocker):
 def test_levy_failure_writes_failed_model_result(orch, lookups, mocker):
     record = mocker.patch("app.orchestrator.record_model_result")
     lookups["charge"].return_value = None
+    job = _job()
 
     with pytest.raises(LevyChargeUnavailableError) as exc:
-        orch.process_job(_job(), AssessmentType.NUTRIENT)
+        orch.process_job(job, AssessmentType.NUTRIENT)
 
     record.assert_called_once()
     _, ref, assessment_type, dataframes, error = record.call_args.args
@@ -235,6 +236,7 @@ def test_model_result_audit_failure_does_not_mask_job_error(orch, lookups, mocke
         "app.orchestrator.record_model_result", side_effect=RuntimeError("db down")
     )
     lookups["charge"].return_value = None
+    job = _job()
 
     with pytest.raises(LevyChargeUnavailableError):
-        orch.process_job(_job(), AssessmentType.NUTRIENT)
+        orch.process_job(job, AssessmentType.NUTRIENT)
