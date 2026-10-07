@@ -87,7 +87,7 @@ from app.repositories.repository import Repository  # noqa: E402
 
 CRS_BRITISH_NATIONAL_GRID = "EPSG:27700"
 
-# Features read into memory at a time. The coefficient layer is 5.4M polygons,
+# Features read into memory at a time. The coefficient layer is ~31.4M polygons,
 # far more than fits in one GeoDataFrame on a developer machine, so every layer
 # is read and written in batches of this size.
 DEFAULT_BATCH_SIZE = 100_000
@@ -516,28 +516,15 @@ class SpatialDataLoader:
             count = session.scalar(count_stmt)
             print(f"Verified {count} records in database")
 
-    # Source column names in the coefficient GeoPackage -> model column names.
+    # Source column names in the coefficient GeoPackage
+    # (NMSCoefficientLayer_England_v2_IAT.gpkg) -> model column names.
     _COEFFICIENT_COLUMN_MAPPING = {
-        "Land_use_cat": "land_use_cat",
-        "NN_Catchment": "nn_catchment",
-        "SubCatchment": "subcatchment",
+        "cromeid": "crome_id",
         "LU_CurrNcoeff": "lu_curr_n_coeff",
         "LU_CurrPcoeff": "lu_curr_p_coeff",
         "N_ResiCoeff": "n_resi_coeff",
         "P_ResiCoeff": "p_resi_coeff",
-        "cromeid": "crome_id",  # Normalize to snake_case
     }
-    _COEFFICIENT_COLUMNS = (
-        "crome_id",
-        "land_use_cat",
-        "nn_catchment",
-        "subcatchment",
-        "lu_curr_n_coeff",
-        "lu_curr_p_coeff",
-        "n_resi_coeff",
-        "p_resi_coeff",
-        "geometry",
-    )
     _COEFFICIENT_NUMERIC_COLUMNS = (
         "lu_curr_n_coeff",
         "lu_curr_p_coeff",
@@ -550,22 +537,19 @@ class SpatialDataLoader:
     ) -> gpd.GeoDataFrame:
         """Map source columns to the CoefficientLayer model and clean values.
 
-        Null counts from cleaning accumulate into null_totals rather than being
-        printed, so a 55-batch load reports them once.
+        Source columns outside the mapping are dropped. Null counts from
+        cleaning accumulate into null_totals rather than being printed, so a
+        multi-batch load reports them once.
         """
         gdf = gdf.rename(columns=self._COEFFICIENT_COLUMN_MAPPING)
 
-        available_columns = [c for c in self._COEFFICIENT_COLUMNS if c in gdf.columns]
-        missing_columns = [
-            c
-            for c in self._COEFFICIENT_COLUMNS
-            if c not in available_columns and c != "geometry"
-        ]
+        columns = [*self._COEFFICIENT_COLUMN_MAPPING.values(), "geometry"]
+        missing_columns = [c for c in columns if c not in gdf.columns]
         if missing_columns:
             msg = f"Missing expected columns: {missing_columns}"
             raise ValueError(msg)
 
-        gdf = gdf[available_columns]
+        gdf = gdf[columns]
         for col, nulls in self._clean_coeff_columns(
             gdf, list(self._COEFFICIENT_NUMERIC_COLUMNS)
         ).items():
@@ -576,7 +560,7 @@ class SpatialDataLoader:
         return gdf
 
     def load_coefficient_layer(self) -> None:
-        """Load the coefficient layer (5.4M polygons) in batches."""
+        """Load the coefficient layer (~31.4M polygons) in batches."""
         if not self.coefficient_gpkg.exists():
             print(f"Skipping coefficients: File not found at {self.coefficient_gpkg}")
             return
@@ -964,7 +948,7 @@ def main(
         int,
         typer.Option(
             help="Features read and written at a time. Keeps memory bounded on "
-            "large layers such as the 5.4M-polygon coefficient layer. "
+            "large layers such as the ~31.4M-polygon coefficient layer. "
             "Use 0 to load each layer in a single read."
         ),
     ] = DEFAULT_BATCH_SIZE,

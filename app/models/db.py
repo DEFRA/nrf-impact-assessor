@@ -49,7 +49,7 @@ class SpatialLayerMixin:
 
 
 class CoefficientLayer(Base):
-    """Dedicated model for coefficient polygons (5.4M records)."""
+    """Dedicated model for coefficient polygons (~31.4M records)."""
 
     __tablename__ = "coefficient_layer"
     __table_args__ = {"schema": "public"}
@@ -63,9 +63,6 @@ class CoefficientLayer(Base):
     )
 
     crome_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
-    land_use_cat: Mapped[str | None] = mapped_column(String, nullable=True)
-    nn_catchment: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
-    subcatchment: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
     lu_curr_n_coeff: Mapped[float | None] = mapped_column(Float, nullable=True)
     lu_curr_p_coeff: Mapped[float | None] = mapped_column(Float, nullable=True)

@@ -59,36 +59,19 @@ _EDP_CLIP_LAYERS = frozenset(
 # Slack for floating-point noise when checking the blanket covers its inputs.
 _COVERAGE_TOLERANCE_M2 = 1.0
 
-# Verbatim attributes of coefficient polygon RPA619486299391 — the most common
-# coefficient profile in the layer (RESIDENTIAL URBAN LAND / THE BROADS SAC /
-# YARE, 5,670 of 111,898 polygons). Taking one real row whole keeps the values
-# internally consistent, satisfies the coefficient_ranges and referential checks
-# in app/data_sync/qc_rules.yaml, and keeps the fixture schema identical to the
+# Verbatim attributes of coefficient polygon RPA619486299391 from the England v2
+# layer (NMSCoefficientLayer_England_v2_IAT.gpkg) — the most common coefficient
+# profile in the EDP (RESIDENTIAL URBAN LAND / THE BROADS SAC / YARE in the
+# earlier layer). Taking one real row whole keeps the values internally
+# consistent, satisfies the coefficient_ranges checks in
+# app/data_sync/qc_rules.yaml, and keeps the fixture schema identical to the
 # source layer.
 _COEFFICIENT_ATTRIBUTES = {
     "cromeid": "RPA619486299391",
-    "AvgLuRes": "NA01",
-    "Urban_check": "TRUE",
-    "Urban_open_check": "FALSE",
-    "June_Ag": "Grazing",
-    "RPA_check": "FALSE",
-    "Land_use_cat": "RESIDENTIAL URBAN LAND",
-    "NN_Catchment": "THE BROADS SAC",
-    "SubCatchment": "YARE",
-    "NVZ_check": 0,
-    "major_soilscape": (
-        "Slowly permeable seasonally wet slightly acid but base-rich loamy "
-        "and clayey soils"
-    ),
-    "Soil_category": "DRAINEDARGR",
-    "Rainfall_value": 676.9270088710244,
-    "Rain_Band": "675.1 - 700",
-    "LU_CurrNcoeff": "12.79",
-    "LU_CurrPcoeff": "1.37",
-    "Match_Source": "Land Cover + Rainfall",
-    "ResiRainfallBand": "675.1 - 700",
     "N_ResiCoeff": "12.79",
     "P_ResiCoeff": "1.37",
+    "LU_CurrNcoeff": 12.79,
+    "LU_CurrPcoeff": 1.37,
 }
 
 app = typer.Typer(help="Extract test fixture data from reference layers")
@@ -252,8 +235,8 @@ def _fill_holes(geom: MultiPolygon | Polygon) -> MultiPolygon:
 def _write_coefficient_blanket(output_dir: Path) -> None:
     """Synthesise coefficient_layer.gpkg as one polygon blanketing the EDP.
 
-    The real coefficient layer is ~5.4M polygons nationally; clipped to the EDP
-    it is still ~563k features (~281MB), too large to commit. This fixture
+    The real coefficient layer is ~31.4M polygons nationally; even clipped to
+    the EDP it is far too large to commit. This fixture
     replaces it with a single polygon covering the EDP boundary and the excluded
     areas, so any test parcel inside the EDP resolves to a coefficient.
 

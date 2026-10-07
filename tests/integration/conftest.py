@@ -151,12 +151,12 @@ def repository(test_engine: Engine, clean_reference_tables: None) -> Repository:
 def sample_coefficient_data(repository: Repository) -> gpd.GeoDataFrame:
     """Load minimal coefficient layer test data.
 
-    Creates 3 sample coefficient polygons covering different land uses
-    and catchments for testing spatial queries.
+    Creates 3 sample coefficient polygons with distinct coefficients for
+    testing spatial queries.
     """
     # Create 3 sample coefficient polygons
     polygons = [
-        # Polygon 1: Arable land in Solent catchment
+        # Polygon 1
         {
             "id": uuid4(),
             "version": 1,
@@ -174,15 +174,12 @@ def sample_coefficient_data(repository: Repository) -> gpd.GeoDataFrame:
                 ]
             ),
             "crome_id": "CROME_001",
-            "land_use_cat": "Arable",
-            "nn_catchment": "Solent",
-            "subcatchment": "Test Sub 1",
             "lu_curr_n_coeff": 15.5,
             "lu_curr_p_coeff": 1.2,
             "n_resi_coeff": 5.0,
             "p_resi_coeff": 0.5,
         },
-        # Polygon 2: Grassland in Solent catchment (overlapping)
+        # Polygon 2: overlaps polygon 1
         {
             "id": uuid4(),
             "version": 1,
@@ -200,15 +197,12 @@ def sample_coefficient_data(repository: Repository) -> gpd.GeoDataFrame:
                 ]
             ),
             "crome_id": "CROME_002",
-            "land_use_cat": "Grassland",
-            "nn_catchment": "Solent",
-            "subcatchment": "Test Sub 1",
             "lu_curr_n_coeff": 8.0,
             "lu_curr_p_coeff": 0.8,
             "n_resi_coeff": 5.0,
             "p_resi_coeff": 0.5,
         },
-        # Polygon 3: Woodland in different catchment
+        # Polygon 3: disjoint from 1 and 2
         {
             "id": uuid4(),
             "version": 1,
@@ -226,9 +220,6 @@ def sample_coefficient_data(repository: Repository) -> gpd.GeoDataFrame:
                 ]
             ),
             "crome_id": "CROME_003",
-            "land_use_cat": "Woodland",
-            "nn_catchment": "Avon",
-            "subcatchment": "Test Sub 2",
             "lu_curr_n_coeff": 2.0,
             "lu_curr_p_coeff": 0.1,
             "n_resi_coeff": 5.0,
