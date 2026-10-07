@@ -15,9 +15,9 @@ def _get_git_hash() -> str:
         return "unknown"
 
 
-_git_hash = _get_git_hash()
+GIT_HASH = _get_git_hash()
 
 
 @router.get("/version")
 async def version():
-    return {"version": _git_hash}
+    return {"version": GIT_HASH}

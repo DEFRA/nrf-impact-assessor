@@ -25,6 +25,7 @@ from app.config import AWSConfig
 from app.data_sync.service import resolve_active_provenance
 from app.models.enums import AssessmentType
 from app.models.job import ImpactAssessmentJob
+from app.repositories.audit import record_model_result
 from app.repositories.levy import (
     get_inflation_index,
     get_levy_charge,
@@ -111,6 +112,7 @@ class JobOrchestrator:
             )
         logger.info(f"Job {job_id} started (assessment type: {assessment_type.value})")
 
+        dataframes = None
         try:
             # The levy is the first step of the job (NRF2-913 decision 9): a
             # missing charge fails in milliseconds before the geometry check,
@@ -145,6 +147,7 @@ class JobOrchestrator:
             logger.info(
                 f"Job {job_id} completed successfully in {processing_time:.2f}s"
             )
+            self._record_model_result(job_id, assessment_type, dataframes)
 
             return dataframes
 
@@ -155,10 +158,31 @@ class JobOrchestrator:
             logger.error(  # NOSONAR - intentional: no traceback, see above
                 f"Job {job_id} not started, levy unavailable: {e}"
             )
+            self._record_model_result(job_id, assessment_type, dataframes, e)
             raise
-        except Exception:
+        except Exception as e:
             logger.exception(f"Job {job_id} failed with exception")
+            self._record_model_result(job_id, assessment_type, dataframes, e)
             raise
+
+    def _record_model_result(
+        self,
+        job_id: str,
+        assessment_type: AssessmentType,
+        dataframes: dict | None,
+        error: BaseException | None = None,
+    ) -> None:
+        """Write the audit_model_results row. Failures are logged, not raised:
+        the audit must not change the job's outcome, and on the error path it
+        would mask the original exception."""
+        try:
+            with self.repository.session() as session:
+                record_model_result(
+                    session, job_id, assessment_type.value, dataframes, error
+                )
+                session.commit()
+        except Exception:
+            logger.exception(f"Could not write model result audit row for {job_id}")
 
     def _process_inline_geometry(
         self, job: ImpactAssessmentJob, assessment_type: AssessmentType

@@ -55,8 +55,8 @@ All file paths are read from `scripts/.env.local`. This file is gitignored and m
 | Variable | Description | Example value |
 |---|---|---|
 | `BASE_PATH` | Root directory containing all source data files | `./iat_input` |
-| `COEFFICIENT_GPKG` | Coefficient layer GeoPackage (relative to `BASE_PATH`) | `nutrients/NMSCoefficientLayerTEST.gpkg` |
-| `COEFFICIENT_LAYER` | Layer name inside the GeoPackage | `NMSCoefficientLayer` |
+| `COEFFICIENT_GPKG` | Coefficient layer GeoPackage (relative to `BASE_PATH`) | `nutrients/NMSCoefficientLayer_England_v2_IAT.gpkg` |
+| `COEFFICIENT_LAYER` | Layer name inside the GeoPackage | `NMSCoefficientLayer_England_v2_IAT` |
 | `WWTW_SHAPEFILE` | WwTW catchments shapefile (relative to `BASE_PATH`) | `nutrients/wwtw files/WwTW_all_features.shp` |
 | `LPA_SHAPEFILE` | LPA boundaries shapefile (relative to `BASE_PATH`) | `nutrients/LPA/LPA_National.shp` |
 | `NN_CATCHMENT_SHAPEFILE` | NN catchments shapefile (relative to `BASE_PATH`) | `nutrients/Catchments/NN_Catchments_03_2024.shp` |
@@ -115,7 +115,7 @@ Valid `--layer` / `LAYER` values:
 | `gcn_risk_zones` | Great crested newt habitat risk zones | `gcn_risk_zones` |
 | `gcn_ponds` | GCN pond locations | `gcn_ponds` |
 | `edp_edges` | EDP edge geometries | `edp_edges` |
-| `coefficients` | Nutrient mitigation coefficient polygons (~5.4M features) | `coefficient_layer` |
+| `coefficients` | Nutrient mitigation coefficient polygons (~31.4M features) | `coefficient_layer` |
 | `edp_boundary_layer` | EDP boundary extent polygon | `edp_boundary_layer` |
 | `edp_excluded_areas` | Buffered SSSI areas excluded from EDP mitigation | `edp_excluded_areas` |
 
@@ -157,7 +157,7 @@ The table below lists every source file consumed by the script and what it maps 
 
 | Source file (relative to `BASE_PATH`) | Layer / table | Format |
 |---|---|---|
-| `nutrients/NMSCoefficientLayerTEST.gpkg` | `coefficient_layer` | GeoPackage |
+| `nutrients/NMSCoefficientLayer_England_v2_IAT.gpkg` | `coefficient_layer` | GeoPackage |
 | `nutrients/wwtw files/WwTW_all_features.shp` | `wwtw_catchments` | Shapefile |
 | `nutrients/LPA/LPA_National.shp` | `lpa_boundaries` | Shapefile |
 | `nutrients/Catchments/NN_Catchments_03_2024.shp` | `nn_catchments` | Shapefile |
@@ -231,7 +231,7 @@ All nine share an identical column set:
 
 ### `public.coefficient_layer`
 
-Dedicated table for the nutrient mitigation coefficient polygons (~5.4M rows).
+Dedicated table for the nutrient mitigation coefficient polygons (~31.4M rows).
 
 | Column | Type | Description |
 |---|---|---|
@@ -239,9 +239,6 @@ Dedicated table for the nutrient mitigation coefficient polygons (~5.4M rows).
 | `version` | `INTEGER` | Data version |
 | `geometry` | `MULTIPOLYGON (EPSG:27700)` | Geometry with spatial index |
 | `crome_id` | `VARCHAR` | CROME land use identifier |
-| `land_use_cat` | `VARCHAR` | Land use category |
-| `nn_catchment` | `VARCHAR` | NN catchment identifier |
-| `subcatchment` | `VARCHAR` | Subcatchment identifier |
 | `lu_curr_n_coeff` | `FLOAT` | Current land use nitrogen coefficient |
 | `lu_curr_p_coeff` | `FLOAT` | Current land use phosphorus coefficient |
 | `n_resi_coeff` | `FLOAT` | Residential nitrogen coefficient |
@@ -392,7 +389,7 @@ All files within a single `make` invocation share the same timestamp, making it 
 | `Connection refused` / DB error | PostGIS is not running | Run `docker compose up db` and re-run the script |
 | `relation "public.nn_catchments" does not exist` | Migrations have not been applied | Run `uv run alembic upgrade head` |
 | Load completes but row count is 0 | Source file is empty or CRS mismatch caused all geometries to be dropped | Open the source file in QGIS to verify it contains data; check CRS |
-| Coefficient load is very slow | ~5.4M polygons is expected to take several minutes | This is normal; use `--sample` for quick tests |
+| Coefficient load is very slow | ~31.4M polygons is expected to take several minutes | This is normal; use `--sample` for quick tests |
 | `db-backup-tables` produces empty files | Container not running or DB name wrong | Confirm `docker compose up db` is running and `nrf-postgis` is the container name (override with `DB_CONTAINER=`, or clear it to use a host postgres) |
 | `zcat: can't stat` on restore | Wrong path passed to `BACKUP_FILE` | Use the full or relative path, e.g. `make db-restore BACKUP_FILE=./backups/foo.sql.gz` |
 | GRANT errors after per-table restore | Used `db-restore` instead of `db-restore-tables` | Use `make db-restore-tables BACKUP_DIR=./backups` — it applies schema grants before data |

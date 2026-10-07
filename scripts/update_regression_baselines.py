@@ -65,7 +65,12 @@ def main() -> None:
             repository=repository,
         )
 
-        df = dataframes["impact_summary"].rename(columns=INTERNAL_TO_BASELINE_COLUMNS)
+        # nn_catchment_entries holds Python lists, which don't round-trip via CSV
+        df = (
+            dataframes["impact_summary"]
+            .drop(columns=["nn_catchment_entries"], errors="ignore")
+            .rename(columns=INTERNAL_TO_BASELINE_COLUMNS)
+        )
         df.to_csv(output_path, index=False)
         print(
             f"  OK    {output_path.relative_to(Path(__file__).parent.parent)} ({len(df)} rows)"
