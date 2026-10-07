@@ -11,7 +11,7 @@ import geopandas as gpd
 import pytest
 from load_data import SpatialDataLoader
 from shapely.geometry import Polygon
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app.models.db import EdpExcludedAreas
 from app.repositories.repository import Repository
@@ -88,3 +88,23 @@ def test_invalid_geometry_in_a_later_batch_rolls_back_the_whole_load(
     with repository.session() as session:
         names = session.scalars(select(EdpExcludedAreas.name)).all()
     assert sorted(names) == [f"site-{i}" for i in range(4)]
+
+
+def test_writing_fewer_features_than_counted_rolls_back_the_delete(
+    repository: Repository, tmp_path: Path
+):
+    good = _write_gpkg(tmp_path / "good.gpkg", [_square(i) for i in range(4)])
+    loader = _loader(repository, batch_size=2)
+    _load(loader, good)
+    assert _count(repository) == 4
+
+    with pytest.raises(RuntimeError, match="wrote 0 of 4"):
+        loader._clear_load_verify(
+            iter(()),
+            EdpExcludedAreas.__tablename__,
+            4,
+            delete(EdpExcludedAreas),
+            select(func.count()).select_from(EdpExcludedAreas),
+        )
+
+    assert _count(repository) == 4

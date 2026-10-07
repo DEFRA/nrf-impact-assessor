@@ -208,6 +208,9 @@ class SpatialDataLoader:
             batch_size: Features read and written at a time; 0 loads each layer
                 in a single read, as this script did before batching.
         """
+        if batch_size < 0:
+            msg = f"batch_size must be 0 or positive, got {batch_size}"
+            raise ValueError(msg)
         self.repository = repository
         self.settings = settings
         self.sample_mode = sample_mode
@@ -412,6 +415,9 @@ class SpatialDataLoader:
             limit: Stop after this many features (sample mode). Reading stops
                 early rather than reading everything and truncating after.
         """
+        if batch_size < 0:
+            msg = f"batch_size must be 0 or positive, got {batch_size}"
+            raise ValueError(msg)
         read_kwargs: dict[str, Any] = {"layer": layer} if layer else {}
 
         if not batch_size:
@@ -488,8 +494,9 @@ class SpatialDataLoader:
         """Delete existing rows and stream batches to PostGIS, then verify.
 
         The DELETE and every batch share one transaction, so a batch that
-        fails validation leaves the table exactly as it was rather than
-        half-loaded.
+        fails validation, or a load that writes fewer features than the
+        source holds, leaves the table exactly as it was rather than
+        half-loaded or empty.
         """
         print(f"Loading {total_features} features to PostGIS...")
         written = 0
@@ -509,6 +516,13 @@ class SpatialDataLoader:
                 )
                 written += len(batch)
                 print(f"  batch {batch_number}: {written}/{total_features} features")
+
+            if written != total_features:
+                msg = (
+                    f"{table_name}: wrote {written} of {total_features} features; "
+                    "rolling back so the existing rows are kept"
+                )
+                raise RuntimeError(msg)
 
         print(f"Successfully loaded {written} records")
 
@@ -947,9 +961,10 @@ def main(
     batch_size: Annotated[
         int,
         typer.Option(
+            min=0,
             help="Features read and written at a time. Keeps memory bounded on "
             "large layers such as the ~31.4M-polygon coefficient layer. "
-            "Use 0 to load each layer in a single read."
+            "Use 0 to load each layer in a single read.",
         ),
     ] = DEFAULT_BATCH_SIZE,
     yes: Annotated[

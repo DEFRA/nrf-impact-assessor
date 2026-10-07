@@ -100,6 +100,35 @@ def test_cli_batch_size_option_reaches_the_loader(monkeypatch, tmp_path: Path):
     assert captured["batch_size"] == 7
 
 
+def test_negative_batch_size_is_rejected_by_the_loader():
+    """A negative size would yield no batches, so the load would delete the
+    table's rows and write nothing back."""
+    fixtures_dir = Path(__file__).resolve().parents[2] / "data" / "fixtures"
+
+    with pytest.raises(ValueError, match="batch_size"):
+        SpatialDataLoader(repository=None, fixtures_dir=fixtures_dir, batch_size=-1)
+
+
+def test_negative_batch_size_is_rejected_by_read_batches(five_feature_gpkg: Path):
+    batches = SpatialDataLoader._read_batches(
+        five_feature_gpkg, layer="layer", batch_size=-1
+    )
+
+    with pytest.raises(ValueError, match="batch_size"):
+        next(batches)
+
+
+def test_cli_rejects_a_negative_batch_size(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(load_data, "ScriptSettings", lambda: _StubSettings(tmp_path))
+
+    result = CliRunner().invoke(
+        load_data.app, ["--layer", "wwtw_catchments", "--batch-size", "-1", "--yes"]
+    )
+
+    assert result.exit_code != 0
+    assert "batch-size" in result.output
+
+
 class _NullRepository:
     def close(self):
         pass
