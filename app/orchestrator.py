@@ -374,8 +374,6 @@ class JobOrchestrator:
             f"units={levy.units} calculation_date={levy.calculation_date} "
             f"provisional_amount={levy.provisional_amount} "
             f"inflation_adjusted_amount={levy.inflation_adjusted_amount} "
-            "inflation_adjusted_charge_per_unit="
-            f"{levy.inflation_adjusted_charge_per_unit} "
             f"levy_charge_id={levy.levy_charge_id} "
             f"edp_start_year_index_id={levy.edp_start_year_index_id} "
             f"edp_start_year_index_factor={levy.edp_start_year_index_factor} "
