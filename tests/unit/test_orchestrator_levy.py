@@ -37,7 +37,7 @@ def _charge() -> MagicMock:
     charge.edp_id = 1
     charge.edp_name = EDP_NAME
     charge.edp_start_date = date(2026, 1, 1)
-    charge.base_charge_per_unit = Decimal("2193.6649")
+    charge.base_charge_per_unit = Decimal("2675.0000")
     return charge
 
 
@@ -69,7 +69,7 @@ def test_success_returns_calculation_and_logs_audit_record(orch, lookups, caplog
     assert recorded.audit_id == lookups["record"].return_value.id
     assert levy.edp_id == 1
     assert levy.units == 10
-    assert levy.provisional_amount == Decimal("21936.60")
+    assert levy.provisional_amount == Decimal("26750.00")
     session = orch.repository.session.return_value.__enter__.return_value
     lookups["record"].assert_called_once_with(session, "NRL-000001", levy)
     session.commit.assert_called_once()
@@ -81,11 +81,11 @@ def test_success_returns_calculation_and_logs_audit_record(orch, lookups, caplog
         "edp_id=1",
         "edp_start_date=2026-01-01",
         "calculator_version=1",
-        "base_charge_per_unit=2193.6649",
+        "base_charge_per_unit=2675.0000",
         "units=10",
         "calculation_date=",
-        "provisional_amount=21936.60",
-        "inflation_adjusted_amount=21936.60",
+        "provisional_amount=26750.00",
+        "inflation_adjusted_amount=26750.00",
         f"levy_charge_id={lookups['charge'].return_value.id}",
         "inflation_adjusted_charge_per_unit=None",
         "edp_start_year_index_id=None",
@@ -129,8 +129,8 @@ def test_applies_inflation_index_when_calculation_year_differs(orch, lookups):
 
     assert lookups["index"].call_count == 2
     assert levy.inflation_adjusted_amount != levy.provisional_amount
-    # round_gbp(2193.6649 * 400 / 300) = 2924.89
-    assert levy.inflation_adjusted_charge_per_unit == Decimal("2924.89")
+    # round_gbp(2675 * 400 / 300) = 3566.67
+    assert levy.inflation_adjusted_charge_per_unit == Decimal("3566.67")
     assert levy.edp_start_year_index_id == start.id
     assert levy.calculation_year_index_id == calc.id
 

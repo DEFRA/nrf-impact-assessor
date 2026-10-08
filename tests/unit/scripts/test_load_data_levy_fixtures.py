@@ -22,7 +22,7 @@ def test_levy_charge_from_row_parses_types():
         "edp_start_date": "2026-01-01",
         "charge_valid_from": "2026-01-01",
         "charge_valid_to": "2027-12-31",
-        "base_charge_per_unit": "2193.6649",
+        "base_charge_per_unit": "2675.0000",
     }
 
     charge = _levy_charge_from_row(row)
@@ -32,7 +32,7 @@ def test_levy_charge_from_row_parses_types():
     assert charge.edp_start_date == date(2026, 1, 1)
     assert charge.charge_valid_from == date(2026, 1, 1)
     assert charge.charge_valid_to == date(2027, 12, 31)
-    assert charge.base_charge_per_unit == Decimal("2193.6649")
+    assert charge.base_charge_per_unit == Decimal("2675.0000")
 
 
 def test_levy_index_from_row_parses_types():
@@ -50,7 +50,7 @@ def _csv(tmp_path, charge_valid_from: str):
     path.write_text(
         "edp_id,edp_name,edp_start_date,charge_valid_from,charge_valid_to,"
         "base_charge_per_unit\n"
-        f"1,Norfolk EDP,2026-01-01,{charge_valid_from},2027-12-31,2193.6649\n"
+        f"1,Norfolk EDP,2026-01-01,{charge_valid_from},2027-12-31,2675.0000\n"
     )
     return path
 
@@ -65,7 +65,7 @@ def test_removing_a_priced_charge_explains_the_fk_failure(tmp_path):
             "edp_start_date": "2026-01-01",
             "charge_valid_from": "2026-01-01",
             "charge_valid_to": "2027-12-31",
-            "base_charge_per_unit": "2193.6649",
+            "base_charge_per_unit": "2675.0000",
         }
     )
     session = MagicMock()
