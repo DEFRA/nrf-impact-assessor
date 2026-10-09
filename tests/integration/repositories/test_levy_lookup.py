@@ -206,8 +206,8 @@ def test_record_levy_calculation_round_trips(repository: Repository):
         ).all()
 
     assert len(rows) == 1
-    assert rows[0].base_charge_per_unit == Decimal("2193.6649")
-    assert rows[0].provisional_amount == Decimal("21936.60")
+    assert rows[0].base_charge_per_unit == Decimal("2675.0000")
+    assert rows[0].provisional_amount == Decimal("26750.00")
     assert rows[0].created_at is not None
     assert rows[0].levy_charge_id == charge_id
     assert rows[0].edp_start_year_index_id == start_id

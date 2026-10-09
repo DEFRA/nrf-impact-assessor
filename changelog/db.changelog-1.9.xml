@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- Alembic revision: e5f9a2b4c6d7 -->
+
+    <changeSet id="09-levy-base-charge-correction" author="nrf">
+        <sql>DO $$
+            BEGIN
+                UPDATE public.levy_charges
+                   SET base_charge_per_unit = 2675.0000
+                 WHERE edp_id = 1
+                   AND charge_valid_from = DATE '2026-01-01';
+                IF NOT FOUND AND EXISTS (SELECT 1 FROM public.levy_charges) THEN
+                    RAISE EXCEPTION 'no levy_charges row for edp_id=1, charge_valid_from=2026-01-01';
+                END IF;
+            END
+            $$;
+        </sql>
+        <rollback>
+            <sql>DO $$
+                BEGIN
+                    UPDATE public.levy_charges
+                       SET base_charge_per_unit = 2193.6649
+                     WHERE edp_id = 1
+                       AND charge_valid_from = DATE '2026-01-01';
+                    IF NOT FOUND AND EXISTS (SELECT 1 FROM public.levy_charges) THEN
+                        RAISE EXCEPTION 'no levy_charges row for edp_id=1, charge_valid_from=2026-01-01';
+                    END IF;
+                END
+                $$;
+            </sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

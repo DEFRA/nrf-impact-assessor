@@ -52,8 +52,8 @@ def make_levy_calculation(**overrides) -> LevyCalculation:
         "calculation_date": date(2026, 9, 14),
         "calculator_version": 1,
         "units": 10,
-        "base_charge_per_unit": Decimal("2193.6649"),
-        "provisional_amount": Decimal("21936.60"),
-        "inflation_adjusted_amount": Decimal("21936.60"),
+        "base_charge_per_unit": Decimal("2675.0000"),
+        "provisional_amount": Decimal("26750.00"),
+        "inflation_adjusted_amount": Decimal("26750.00"),
     }
     return LevyCalculation(**(fields | overrides))
