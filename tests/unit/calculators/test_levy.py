@@ -1,4 +1,5 @@
-"""Scenario 1 and 3 of NRF2-913: half-up rounding to 2 dp, then units x rounded."""
+"""Scenarios 1 and 3 of NRF2-913: a whole-pound base charge times units, and
+half-up rounding to 2 dp of the inflation-adjusted charge only."""
 
 from datetime import date
 from decimal import Decimal
@@ -52,7 +53,7 @@ def test_round_gbp_keeps_two_place_scale():
     assert str(round_gbp(Decimal("10"))) == "10.00"
 
 
-def test_worked_example_from_ticket():
+def test_provisional_is_whole_base_charge_times_units():
     # NRF2-1242: the NE-approved base charge, 10 units.
     result = calculate_levy(_charge("2675.0000"), units=10, calculation_date=CALC_DATE)
 
@@ -61,11 +62,52 @@ def test_worked_example_from_ticket():
     assert str(result.provisional_amount) == "26750.00"
 
 
-def test_rounds_the_charge_before_multiplying_not_after():
-    # 3 x 1234.565 = 3703.695 -> 3703.70 if rounded after; the rule rounds first.
-    result = calculate_levy(_charge("1234.565"), units=3, calculation_date=CALC_DATE)
+@pytest.mark.parametrize("price", ["2675", "2675.00"])
+def test_accepts_whole_base_charge_at_any_scale(price):
+    result = calculate_levy(_charge(price), units=3, calculation_date=CALC_DATE)
 
-    assert result.provisional_amount == Decimal("3703.71")
+    assert result.provisional_amount == Decimal("8025.00")
+
+
+@pytest.mark.parametrize("price", ["2193.6649", "2675.01", "0.5"])
+def test_rejects_fractional_base_charge(price):
+    charge = _charge(price)
+
+    with pytest.raises(LevyChargeUnavailableError, match="whole number"):
+        calculate_levy(charge, units=10, calculation_date=CALC_DATE)
+
+
+@pytest.mark.parametrize(
+    ("price", "start_factor", "expected"),
+    [
+        ("1000", "6", "333.33"),  # 2 x 1000 / 6 = 333.333...: third decimal 3, down
+        ("17", "16", "2.13"),  # 2 x 17 / 16 = 2.125: 5, up (banker's gives 2.12)
+    ],
+)
+def test_inflation_adjusted_total_is_rounded_half_up(price, start_factor, expected):
+    result = calculate_levy(
+        _charge(price),
+        units=2,
+        calculation_date=EARLIER_CALC_DATE,
+        edp_start_year_index=_index(start_factor),
+        calculation_year_index=_index("1"),
+    )
+
+    assert result.inflation_adjusted_amount == Decimal(expected)
+
+
+def test_rounds_the_inflated_total_not_the_per_unit_charge():
+    # 1000 / 3 = 333.333... per unit. Rounding per unit first would give
+    # 333.33 x 2 = 666.66; the rule rounds the total, 666.666... -> 666.67.
+    result = calculate_levy(
+        _charge("1000"),
+        units=2,
+        calculation_date=EARLIER_CALC_DATE,
+        edp_start_year_index=_index("3"),
+        calculation_year_index=_index("1"),
+    )
+
+    assert result.inflation_adjusted_amount == Decimal("666.67")
 
 
 @pytest.mark.parametrize(
@@ -87,7 +129,6 @@ def test_no_adjustment_when_calculation_year_equals_edp_start_year(
 
     assert result.inflation_adjusted_amount == result.provisional_amount
     # Indices passed but not applied are not recorded as used.
-    assert result.inflation_adjusted_charge_per_unit is None
     assert result.edp_start_year_index_id is None
     assert result.edp_start_year_index_factor is None
     assert result.calculation_year_index_id is None
@@ -104,8 +145,7 @@ def test_applies_index_ratio_when_calculation_year_differs():
         calculation_year_index=_index("0.8300"),  # 2022 factor
     )
 
-    # round_gbp(2675 * 0.83) * 10 = 2220.25 * 10
-    assert result.inflation_adjusted_charge_per_unit == Decimal("2220.25")
+    # round_gbp(2675 * 10 * 0.83) = 22202.50
     assert result.inflation_adjusted_amount == Decimal("22202.50")
     assert result.provisional_amount == Decimal("26750.00")
 

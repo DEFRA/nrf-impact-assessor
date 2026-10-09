@@ -289,9 +289,9 @@ class LevyCalculationRecord(Base):
     two against the current row shows whether a value was corrected after the
     event or the wrong row was picked up. The foreign keys are RESTRICT, so a
     row that has priced a quote cannot be deleted from under its audit trail.
-    The index columns are NULL when no inflation step applied. The rounded
-    per-unit charges are not stored: calculator_version pins the rounding rule
-    that derives them from base_charge_per_unit and the index factors.
+    The index columns are NULL when no inflation step applied.
+    calculator_version pins the rounding rule that derives the amounts from
+    base_charge_per_unit, units and the index factors.
 
     sent_at is set once nrf-backend accepts the quote PATCH priced from this
     row. NULL means delivery was never confirmed: not sent, or sent but the

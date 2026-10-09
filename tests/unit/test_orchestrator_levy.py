@@ -87,7 +87,6 @@ def test_success_returns_calculation_and_logs_audit_record(orch, lookups, caplog
         "provisional_amount=26750.00",
         "inflation_adjusted_amount=26750.00",
         f"levy_charge_id={lookups['charge'].return_value.id}",
-        "inflation_adjusted_charge_per_unit=None",
         "edp_start_year_index_id=None",
         "calculation_year_index_id=None",
     ):
@@ -129,8 +128,8 @@ def test_applies_inflation_index_when_calculation_year_differs(orch, lookups):
 
     assert lookups["index"].call_count == 2
     assert levy.inflation_adjusted_amount != levy.provisional_amount
-    # round_gbp(2675 * 400 / 300) = 3566.67
-    assert levy.inflation_adjusted_charge_per_unit == Decimal("3566.67")
+    # round_gbp(2675 * 10 * 400 / 300) = round_gbp(35666.666...) = 35666.67
+    assert levy.inflation_adjusted_amount == Decimal("35666.67")
     assert levy.edp_start_year_index_id == start.id
     assert levy.calculation_year_index_id == calc.id
 
