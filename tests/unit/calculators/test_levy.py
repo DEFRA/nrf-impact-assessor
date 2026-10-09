@@ -71,8 +71,10 @@ def test_accepts_whole_base_charge_at_any_scale(price):
 
 @pytest.mark.parametrize("price", ["2193.6649", "2675.01", "0.5"])
 def test_rejects_fractional_base_charge(price):
+    charge = _charge(price)
+
     with pytest.raises(LevyChargeUnavailableError, match="whole number"):
-        calculate_levy(_charge(price), units=10, calculation_date=CALC_DATE)
+        calculate_levy(charge, units=10, calculation_date=CALC_DATE)
 
 
 @pytest.mark.parametrize(
