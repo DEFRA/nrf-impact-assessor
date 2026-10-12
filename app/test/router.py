@@ -408,8 +408,9 @@ _STUB_CATCHMENTS = [
 
 
 _STUB_EDP_LABEL = (
-    "Broads SAC, Broadland Ramsar and River Wensum SAC Environmental "
-    "Delivery Plan addressing nutrient pollution (2026 to 2036)"
+    "Norfolk: Broads Special Area of Conservation (SAC) (Yare and Bure), "
+    "Broadland Ramsar and River Wensum SAC Environmental Delivery Plan "
+    "addressing nutrient pollution (2027 to 2037)"
 )
 
 
