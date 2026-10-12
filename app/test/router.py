@@ -408,8 +408,9 @@ _STUB_CATCHMENTS = [
 
 
 _STUB_EDP_LABEL = (
-    "Broads SAC, Broadland Ramsar and River Wensum SAC Environmental "
-    "Delivery Plan addressing nutrient pollution (2026 to 2036)"
+    "Norfolk: Broads Special Area of Conservation (SAC) (Yare and Bure), "
+    "Broadland Ramsar and River Wensum SAC Environmental Delivery Plan "
+    "addressing nutrient pollution (2027 to 2037)"
 )
 
 
@@ -478,9 +479,9 @@ def _build_stub_patch_payload(stub_edps: int = 1) -> dict:
         calculation_date=datetime.now(UTC).date(),
         calculator_version=LEVY_CALCULATOR_VERSION,
         units=1,
-        base_charge_per_unit=Decimal("2193.6649"),
-        provisional_amount=Decimal("2193.66"),
-        inflation_adjusted_amount=Decimal("2193.66"),
+        base_charge_per_unit=Decimal("2675.0000"),
+        provisional_amount=Decimal("2675.00"),
+        inflation_adjusted_amount=Decimal("2675.00"),
     )
     payload = build_quote_patch_payload(
         [stub_result], [IntersectingEdp(label=_STUB_EDP_LABEL)], levy=stub_levy

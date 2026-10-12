@@ -29,8 +29,9 @@ def _bypass_api_key_auth():
 
 # The EDP_Name attribute carried by the edp_boundary_extents GeoPackage.
 EDP_NAME = (
-    "Broads SAC, Broadland Ramsar and River Wensum SAC Environmental "
-    "Delivery Plan addressing nutrient pollution (2026 to 2036)"
+    "Norfolk: Broads Special Area of Conservation (SAC) (Yare and Bure), "
+    "Broadland Ramsar and River Wensum SAC Environmental Delivery Plan "
+    "addressing nutrient pollution (2027 to 2037)"
 )
 
 
@@ -52,8 +53,8 @@ def make_levy_calculation(**overrides) -> LevyCalculation:
         "calculation_date": date(2026, 9, 14),
         "calculator_version": 1,
         "units": 10,
-        "base_charge_per_unit": Decimal("2193.6649"),
-        "provisional_amount": Decimal("21936.60"),
-        "inflation_adjusted_amount": Decimal("21936.60"),
+        "base_charge_per_unit": Decimal("2675.0000"),
+        "provisional_amount": Decimal("26750.00"),
+        "inflation_adjusted_amount": Decimal("26750.00"),
     }
     return LevyCalculation(**(fields | overrides))

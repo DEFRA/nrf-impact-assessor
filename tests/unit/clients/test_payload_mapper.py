@@ -117,9 +117,9 @@ def test_build_payload_derives_edp_from_result():
     assert edp_out["impact"]["phosphorusTotal"]["unit"] == "mg/I TP"
     assert edp_out["impact"]["phosphorusTotal"]["band"] == {"min": 3, "max": 3}
     assert edp_out["levyGbp"] == {
-        "amountExcludingVat": 21936.60,
-        "amountInflationAdjusted": 21936.60,
-        "baseAmount": 21936.60,
+        "amountExcludingVat": 26750.00,
+        "amountInflationAdjusted": 26750.00,
+        "baseAmount": 26750.00,
         "modelVersion": 1,
     }
 

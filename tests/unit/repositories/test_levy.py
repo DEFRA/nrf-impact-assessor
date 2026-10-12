@@ -94,11 +94,11 @@ def test_record_maps_every_audit_field_and_adds_to_session():
     assert row.edp_name == EDP_NAME
     assert row.edp_start_date == date(2026, 1, 1)
     assert row.calculator_version == 1
-    assert row.base_charge_per_unit == Decimal("2193.6649")
+    assert row.base_charge_per_unit == Decimal("2675.0000")
     assert row.units == 10
     assert row.calculation_date == date(2026, 9, 14)
-    assert row.provisional_amount == Decimal("21936.60")
-    assert row.inflation_adjusted_amount == Decimal("21936.60")
+    assert row.provisional_amount == Decimal("26750.00")
+    assert row.inflation_adjusted_amount == Decimal("26750.00")
     assert row.levy_charge_id == LEVY_CHARGE_ID
     assert row.edp_start_year_index_id is None
     assert row.edp_start_year_index_factor is None

@@ -1,15 +1,18 @@
 """Nature restoration levy calculation (NRF2-913).
 
-Provisional levy = units x round_gbp(base_charge_per_unit), rounded again to 2 dp.
-Rounding is half-up (scenario 3): the third decimal 0-4 rounds down, 5-9 rounds
-up. Python's built-in round() is banker's rounding, so it is never used here.
+The published base charge per unit is always a whole number of pounds, so
+provisional levy = units x base_charge_per_unit with no rounding. A
+fractional base charge is bad data and fails the calculation rather than
+being rounded silently.
 
 Inflation adjustment: the charging year is the calendar year. If
 calculation_date falls in the EDP's own charging year (edp_start_date's
-year), the published base charge is used unadjusted. Otherwise it is scaled
-by the ratio of the RICS CIL Index for the calculation year to the index for
-the EDP's charging year, rounded half-up to 2 dp before multiplying by units,
-same as the unadjusted charge.
+year), the base charge is used unadjusted. Otherwise it is scaled by the
+ratio of the RICS CIL Index for the calculation year to the index for the
+EDP's charging year, and the inflated total (units x base charge x ratio)
+is rounded to 2 dp. That is the only rounding step. It is half-up (scenario 3): the third decimal 0-4
+rounds down, 5-9 rounds up. Python's built-in round() is banker's rounding,
+so it is never used here.
 """
 
 from datetime import date
@@ -59,9 +62,7 @@ class LevyCalculation(BaseModel):
 
     The *_id fields name the rows the inputs came from, so the audit record can
     tell a later correction to a row from the wrong row being picked up. The
-    index fields and inflation_adjusted_charge_per_unit (the rounded per-unit
-    charge the inflation-adjusted amount multiplies) are None when no
-    inflation step applied.
+    index fields are None when no inflation step applied.
     """
 
     levy_charge_id: UUID
@@ -74,7 +75,6 @@ class LevyCalculation(BaseModel):
     base_charge_per_unit: Decimal
     provisional_amount: Decimal
     inflation_adjusted_amount: Decimal
-    inflation_adjusted_charge_per_unit: Decimal | None = None
     edp_start_year_index_id: UUID | None = None
     edp_start_year_index_factor: Decimal | None = None
     calculation_year_index_id: UUID | None = None
@@ -97,7 +97,8 @@ def calculate_levy(
 
     Args:
         charge: A levy charge row (LevyCharge) with id, edp_id, edp_name,
-            edp_start_date and base_charge_per_unit (Decimal, 4 dp).
+            edp_start_date and base_charge_per_unit (Decimal, a whole
+            number of pounds).
         units: Number of dwellings; must be positive.
         calculation_date: The date the quote is calculated on.
         edp_start_year_index: RICS CIL Index row (LevyInflationIndex) for
@@ -110,21 +111,27 @@ def calculate_levy(
 
     Raises:
         ValueError: units is not a positive integer.
-        LevyChargeUnavailableError: calculation_date falls in a different
-            charging year than the EDP's publication and either index is
-            missing.
+        LevyChargeUnavailableError: base_charge_per_unit is not a whole
+            number, or calculation_date falls in a different charging year
+            than the EDP's publication and either index is missing.
     """
     if units <= 0:
         msg = f"units must be positive, got {units}"
         raise ValueError(msg)
 
-    rounded = round_gbp(charge.base_charge_per_unit)
-    provisional = round_gbp(rounded * units)
+    base = charge.base_charge_per_unit
+    if base != base.to_integral_value():
+        msg = (
+            f"base_charge_per_unit for edp_id={charge.edp_id} must be a whole "
+            f"number, got {base}"
+        )
+        raise LevyChargeUnavailableError(msg)
+    # Exact: a whole number times units needs no rounding, only a 2-place scale.
+    provisional = (base * units).quantize(_PENNY)
 
     # Only indices that were actually applied go on the audit record.
     start_index: LevyIndexRow | None = None
     calc_index: LevyIndexRow | None = None
-    indexed_per_unit: Decimal | None = None
     if calculation_date.year == charge.edp_start_date.year:
         inflation_adjusted = provisional
     else:
@@ -137,9 +144,10 @@ def calculate_levy(
             raise LevyChargeUnavailableError(msg)
         start_index = edp_start_year_index
         calc_index = calculation_year_index
-        factor = calc_index.index_factor / start_index.index_factor
-        indexed_per_unit = round_gbp(charge.base_charge_per_unit * factor)
-        inflation_adjusted = round_gbp(indexed_per_unit * units)
+        # Divide last so the unrounded total stays exact whenever it can be.
+        inflation_adjusted = round_gbp(
+            base * units * calc_index.index_factor / start_index.index_factor
+        )
 
     return LevyCalculation(
         levy_charge_id=charge.id,
@@ -152,7 +160,6 @@ def calculate_levy(
         base_charge_per_unit=charge.base_charge_per_unit,
         provisional_amount=provisional,
         inflation_adjusted_amount=inflation_adjusted,
-        inflation_adjusted_charge_per_unit=indexed_per_unit,
         edp_start_year_index_id=start_index.id if start_index else None,
         edp_start_year_index_factor=start_index.index_factor if start_index else None,
         calculation_year_index_id=calc_index.id if calc_index else None,
