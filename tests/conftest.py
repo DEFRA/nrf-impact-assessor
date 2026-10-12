@@ -29,8 +29,9 @@ def _bypass_api_key_auth():
 
 # The EDP_Name attribute carried by the edp_boundary_extents GeoPackage.
 EDP_NAME = (
-    "Broads SAC, Broadland Ramsar and River Wensum SAC Environmental "
-    "Delivery Plan addressing nutrient pollution (2026 to 2036)"
+    "Norfolk: Broads Special Area of Conservation (SAC) (Yare and Bure), "
+    "Broadland Ramsar and River Wensum SAC Environmental Delivery Plan "
+    "addressing nutrient pollution (2027 to 2037)"
 )
 
 
