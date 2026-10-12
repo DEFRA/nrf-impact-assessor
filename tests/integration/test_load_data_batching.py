@@ -98,13 +98,12 @@ def test_writing_fewer_features_than_counted_rolls_back_the_delete(
     _load(loader, good)
     assert _count(repository) == 4
 
+    no_batches = iter(())
+    clear = delete(EdpExcludedAreas)
+    count = select(func.count()).select_from(EdpExcludedAreas)
     with pytest.raises(RuntimeError, match="wrote 0 of 4"):
         loader._clear_load_verify(
-            iter(()),
-            EdpExcludedAreas.__tablename__,
-            4,
-            delete(EdpExcludedAreas),
-            select(func.count()).select_from(EdpExcludedAreas),
+            no_batches, EdpExcludedAreas.__tablename__, 4, clear, count
         )
 
     assert _count(repository) == 4
