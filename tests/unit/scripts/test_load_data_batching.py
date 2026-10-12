@@ -6,6 +6,7 @@ needs more RAM than the machines that run this script have.
 
 from pathlib import Path
 
+import click
 import geopandas as gpd
 import load_data
 import pytest
@@ -126,7 +127,8 @@ def test_cli_rejects_a_negative_batch_size(monkeypatch, tmp_path: Path):
     )
 
     assert result.exit_code != 0
-    assert "batch-size" in result.output
+    # Rich colours the error panel when CI forces colour; match the plain text.
+    assert "batch-size" in click.unstyle(result.output)
 
 
 class _NullRepository:
