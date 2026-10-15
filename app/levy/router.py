@@ -70,7 +70,6 @@ def _recalculate(body: LevyRecalculationRequest) -> LevyCalculation | None:
 
 @router.post(
     "/levy/recalculate",
-    response_model=LevyRecalculationResponse,
     response_model_by_alias=True,
     openapi_extra={
         "requestBody": {

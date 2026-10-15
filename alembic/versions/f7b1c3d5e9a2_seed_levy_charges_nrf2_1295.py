@@ -47,4 +47,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # No-op: a seeded row cannot be told apart from one loaded later, and
+    # audit_levy_calculations rows priced from it block its deletion.
     pass
