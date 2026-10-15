@@ -16,18 +16,16 @@ from app.boundary.catchments import find_intersecting_catchments
 from app.calculators.levy import (
     LevyCalculation,
     LevyChargeUnavailableError,
-    calculate_levy,
 )
 from app.clients.backend_client import BackendClient
 from app.clients.payload_mapper import build_quote_patch_payload
 from app.common.tracing import ctx_trace_id
 from app.config import AWSConfig
 from app.data_sync.service import resolve_active_provenance
+from app.levy.service import price_levy
 from app.models.enums import AssessmentType
 from app.models.job import ImpactAssessmentJob
 from app.repositories.levy import (
-    get_inflation_index,
-    get_levy_charge,
     mark_levy_calculation_sent,
     record_levy_calculation,
     resolve_edp_id,
@@ -43,7 +41,6 @@ _NO_EDP_MATCH = "boundary intersects no EDP"
 _MULTIPLE_EDPS = "boundary intersects multiple EDPs"
 _NO_EDP_ID = "no EDP_id for label in edp_boundary_layer"
 _NO_CHARGE = "no charge for EDP on date in levy_charges"
-_NO_INFLATION_INDEX = "no RICS CIL index for edp start year or calculation year"
 
 
 class RecordedLevy(NamedTuple):
@@ -331,34 +328,13 @@ class JobOrchestrator:
             edp_id = resolve_edp_id(session, label)
             if edp_id is None:
                 raise unavailable(_NO_EDP_ID, f"edp={label!r}")
-            charge = get_levy_charge(session, edp_id, calculation_date)
-            if charge is None:
-                raise unavailable(_NO_CHARGE, f"edp={label!r}, edp_id={edp_id}")
-
-            edp_start_year_index = None
-            calculation_year_index = None
-            if calculation_date.year != charge.edp_start_date.year:
-                edp_start_year_index = get_inflation_index(
-                    session, charge.edp_start_date.year
-                )
-                calculation_year_index = get_inflation_index(
-                    session, calculation_date.year
-                )
-                if edp_start_year_index is None or calculation_year_index is None:
-                    raise unavailable(
-                        _NO_INFLATION_INDEX,
-                        f"edp={label!r}, edp_id={edp_id}, "
-                        f"edp_start_year={charge.edp_start_date.year}, "
-                        f"calculation_year={calculation_date.year}",
-                    )
-
-            levy = calculate_levy(
-                charge,
-                units=units,
-                calculation_date=calculation_date,
-                edp_start_year_index=edp_start_year_index,
-                calculation_year_index=calculation_year_index,
-            )
+            where = f"edp={label!r}, edp_id={edp_id}"
+            try:
+                levy = price_levy(session, edp_id, units, calculation_date)
+            except LevyChargeUnavailableError as e:
+                raise unavailable(str(e), where) from e
+            if levy is None:
+                raise unavailable(_NO_CHARGE, where)
             record = record_levy_calculation(session, job_id, levy)
             session.commit()
             audit_id = record.id

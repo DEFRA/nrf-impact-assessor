@@ -1,15 +1,16 @@
 """Lookups and the audit record the levy calculation needs: the EDP id for a
-label, the charge row for an EDP on a date, the RICS CIL inflation index for
-a charging year, and the audit record of a calculation. Kept out of the
+label, the charge and RICS CIL inflation index rows that price an EDP on a
+date, and the audit record of a calculation. Kept out of the
 Repository class, which is large and spatial; these are small ORM
 operations."""
 
 import logging
 from datetime import date
+from typing import NamedTuple
 from uuid import UUID
 
-from sqlalchemy import func, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy import Integer, cast, extract, func, select, update
+from sqlalchemy.orm import Session, aliased
 
 from app.calculators.levy import LevyCalculation
 from app.data_sync.active_version import get_active_version
@@ -60,31 +61,42 @@ def resolve_edp_id(session: Session, label: str) -> int | None:
     return int(text)
 
 
-def get_levy_charge(session: Session, edp_id: int, on_date: date) -> LevyCharge | None:
-    """The charge row whose validity window contains on_date, or None.
+class LevyPricingRows(NamedTuple):
+    """The charge row and the RICS CIL index rows that price a levy."""
 
-    ex_levy_charges_edp_window stops an EDP's windows overlapping, so at most
-    one row can match.
+    charge: LevyCharge
+    edp_start_year_index: LevyInflationIndex | None
+    calculation_year_index: LevyInflationIndex | None
+
+
+def get_levy_pricing_rows(
+    session: Session, edp_id: int, on_date: date
+) -> LevyPricingRows | None:
+    """The charge row covering on_date with the index rows for its EDP start
+    year and on_date's year, in one round trip. None when there is no charge.
+
+    Either index is None when that year has none. Both are fetched even in
+    the EDP start year, where calculate_levy ignores them; a lookup by the
+    unique charging_year costs less than a second query.
     """
-    stmt = select(LevyCharge).where(
-        LevyCharge.edp_id == edp_id,
-        LevyCharge.charge_valid_from <= on_date,
-        LevyCharge.charge_valid_to >= on_date,
+    start_index = aliased(LevyInflationIndex)
+    calculation_index = aliased(LevyInflationIndex)
+    stmt = (
+        select(LevyCharge, start_index, calculation_index)
+        .outerjoin(
+            start_index,
+            start_index.charging_year
+            == cast(extract("year", LevyCharge.edp_start_date), Integer),
+        )
+        .outerjoin(calculation_index, calculation_index.charging_year == on_date.year)
+        .where(
+            LevyCharge.edp_id == edp_id,
+            LevyCharge.charge_valid_from <= on_date,
+            LevyCharge.charge_valid_to >= on_date,
+        )
     )
-    return session.execute(stmt).scalar_one_or_none()
-
-
-def get_inflation_index(
-    session: Session, charging_year: int
-) -> LevyInflationIndex | None:
-    """The RICS CIL Index row (factor vs the 2026 base) for a charging year.
-
-    Returns the row, not just the factor, so the audit record can name it.
-    """
-    stmt = select(LevyInflationIndex).where(
-        LevyInflationIndex.charging_year == charging_year
-    )
-    return session.execute(stmt).scalar_one_or_none()
+    row = session.execute(stmt).one_or_none()
+    return LevyPricingRows(*row) if row else None
 
 
 def record_levy_calculation(

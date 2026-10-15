@@ -17,6 +17,7 @@ from app.calculators.levy import LevyCalculation, LevyChargeUnavailableError
 from app.models.enums import AssessmentType
 from app.models.job import BoundaryGeojson, ImpactAssessmentJob, IntersectingEdp
 from app.orchestrator import JobOrchestrator
+from app.repositories.levy import LevyPricingRows
 from tests.conftest import EDP_NAME
 
 
@@ -52,10 +53,10 @@ def orch() -> JobOrchestrator:
 def lookups(mocker) -> dict:
     return {
         "resolve": mocker.patch("app.orchestrator.resolve_edp_id", return_value=1),
-        "charge": mocker.patch(
-            "app.orchestrator.get_levy_charge", return_value=_charge()
+        "pricing": mocker.patch(
+            "app.levy.service.get_levy_pricing_rows",
+            return_value=LevyPricingRows(_charge(), None, None),
         ),
-        "index": mocker.patch("app.orchestrator.get_inflation_index"),
         "record": mocker.patch("app.orchestrator.record_levy_calculation"),
     }
 
@@ -73,8 +74,6 @@ def test_success_returns_calculation_and_logs_audit_record(orch, lookups, caplog
     session = orch.repository.session.return_value.__enter__.return_value
     lookups["record"].assert_called_once_with(session, "NRL-000001", levy)
     session.commit.assert_called_once()
-    # Same charging year: no index lookup needed.
-    lookups["index"].assert_not_called()
     audit = next(r.message for r in caplog.records if "Levy calculated" in r.message)
     for fragment in (
         "quote=NRL-000001",
@@ -86,7 +85,7 @@ def test_success_returns_calculation_and_logs_audit_record(orch, lookups, caplog
         "calculation_date=",
         "provisional_amount=26750.00",
         "inflation_adjusted_amount=26750.00",
-        f"levy_charge_id={lookups['charge'].return_value.id}",
+        f"levy_charge_id={lookups['pricing'].return_value.charge.id}",
         "edp_start_year_index_id=None",
         "calculation_year_index_id=None",
     ):
@@ -109,7 +108,7 @@ def test_no_edp_id_raises(orch, lookups):
 
 
 def test_no_charge_row_raises(orch, lookups):
-    lookups["charge"].return_value = None
+    lookups["pricing"].return_value = None
     job = _job()
 
     with pytest.raises(LevyChargeUnavailableError, match="no charge"):
@@ -119,14 +118,12 @@ def test_no_charge_row_raises(orch, lookups):
 def test_applies_inflation_index_when_calculation_year_differs(orch, lookups):
     charge = _charge()
     charge.edp_start_date = date(2020, 1, 1)
-    lookups["charge"].return_value = charge
     start = SimpleNamespace(id=uuid4(), index_factor=Decimal("300"))
     calc = SimpleNamespace(id=uuid4(), index_factor=Decimal("400"))
-    lookups["index"].side_effect = [start, calc]
+    lookups["pricing"].return_value = LevyPricingRows(charge, start, calc)
 
     levy = orch._calculate_levy(_job()).levy
 
-    assert lookups["index"].call_count == 2
     assert levy.inflation_adjusted_amount != levy.provisional_amount
     # round_gbp(2675 * 10 * 400 / 300) = round_gbp(35666.666...) = 35666.67
     assert levy.inflation_adjusted_amount == Decimal("35666.67")
@@ -137,11 +134,10 @@ def test_applies_inflation_index_when_calculation_year_differs(orch, lookups):
 def test_no_inflation_index_raises(orch, lookups):
     charge = _charge()
     charge.edp_start_date = date(2020, 1, 1)
-    lookups["charge"].return_value = charge
-    lookups["index"].return_value = None
+    lookups["pricing"].return_value = LevyPricingRows(charge, None, None)
     job = _job()
 
-    with pytest.raises(LevyChargeUnavailableError, match="RICS CIL index"):
+    with pytest.raises(LevyChargeUnavailableError, match="RICS CIL inflation index"):
         orch._calculate_levy(job)
     lookups["record"].assert_not_called()
 
@@ -172,7 +168,7 @@ def test_missing_boundary_returns_none(orch, lookups):
 
 
 def test_failure_does_not_record_an_audit_row(orch, lookups):
-    lookups["charge"].return_value = None
+    lookups["pricing"].return_value = None
     job = _job()
 
     with pytest.raises(LevyChargeUnavailableError):
@@ -182,7 +178,7 @@ def test_failure_does_not_record_an_audit_row(orch, lookups):
 
 
 def test_process_job_fails_before_anything_else_runs(orch, lookups, mocker, caplog):
-    lookups["charge"].return_value = None
+    lookups["pricing"].return_value = None
     guard = mocker.patch("app.orchestrator.assert_reference_data_present")
     run = mocker.patch.object(JobOrchestrator, "_process_inline_geometry")
     callback = mocker.patch.object(JobOrchestrator, "_send_results_callback")
