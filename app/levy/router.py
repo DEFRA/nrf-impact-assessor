@@ -11,6 +11,7 @@ from pydantic.alias_generators import to_camel
 from app.calculators.levy import LevyCalculation, LevyChargeUnavailableError
 from app.levy.service import price_levy
 from app.repositories.engine import get_shared_repository
+from app.repositories.repository import Repository
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +63,14 @@ async def _parse_request(request: Request) -> LevyRecalculationRequest:
         ) from None
 
 
+def _get_repository() -> Repository:
+    """Return the process-wide shared Repository."""
+    return get_shared_repository()
+
+
 def _recalculate(body: LevyRecalculationRequest) -> LevyCalculation | None:
     """Price the levy for the requested EDP, units and date."""
-    with get_shared_repository().session() as session:
+    with _get_repository().session() as session:
         return price_levy(session, body.edp_id, body.units, body.request_date)
 
 
@@ -93,7 +99,7 @@ async def recalculate_levy(request: Request) -> LevyRecalculationResponse:
     try:
         levy = await asyncio.to_thread(_recalculate, body)
     except LevyChargeUnavailableError as e:
-        logger.error(  # NOSONAR
+        logger.error(  # NOSONAR - intentional: the reason is the whole story, no traceback
             f"Levy unavailable for EDP {body.edp_id}: {e}"
         )
         raise HTTPException(
