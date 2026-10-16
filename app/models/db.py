@@ -49,7 +49,7 @@ class SpatialLayerMixin:
 
 
 class CoefficientLayer(Base):
-    """Dedicated model for coefficient polygons (5.4M records)."""
+    """Dedicated model for coefficient polygons (~31.4M records)."""
 
     __tablename__ = "coefficient_layer"
     __table_args__ = {"schema": "public"}
@@ -63,9 +63,6 @@ class CoefficientLayer(Base):
     )
 
     crome_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
-    land_use_cat: Mapped[str | None] = mapped_column(String, nullable=True)
-    nn_catchment: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
-    subcatchment: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
     lu_curr_n_coeff: Mapped[float | None] = mapped_column(Float, nullable=True)
     lu_curr_p_coeff: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -439,5 +436,27 @@ class DataRollbackEvent(Base):
     from_version: Mapped[int] = mapped_column(Integer, nullable=False)
     to_version: Mapped[int] = mapped_column(Integer, nullable=False)
     rolled_back_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ModelResultRecord(Base):
+    """Audit row for one assessment run: its output, or why it failed.
+
+    status is 'success' | 'failed'. One row per process_job attempt, so a
+    redelivered job records one row per try.
+    """
+
+    __tablename__ = "audit_model_results"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    nrl_reference: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    assessment_type: Mapped[str] = mapped_column(String, nullable=False)
+    model_version: Mapped[str] = mapped_column(String, nullable=False)
+    model_output: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    error_details: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

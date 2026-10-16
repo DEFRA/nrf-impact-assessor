@@ -154,7 +154,7 @@ correct it with a visible update or a new row.
 
 `coefficient_layer` has its own column set — the per-parcel nutrient
 coefficients the levy calculation multiplies through, and by far the largest
-table (~5.4M polygons).
+table (~31.4M polygons).
 
 ```mermaid
 erDiagram
@@ -163,9 +163,6 @@ erDiagram
         integer version "indexed, no DB default"
         geometry geometry "MultiPolygon, SRID 27700, GiST"
         varchar crome_id "nullable, indexed"
-        varchar land_use_cat "nullable"
-        varchar nn_catchment "nullable, indexed"
-        varchar subcatchment "nullable, indexed"
         double lu_curr_n_coeff "nullable, current land use N"
         double lu_curr_p_coeff "nullable, current land use P"
         double n_resi_coeff "nullable, residential N"

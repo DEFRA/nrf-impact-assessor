@@ -63,9 +63,8 @@ _QC_TABLE_RULES = load_qc_rules().tables
 
 _SPATIAL_COLUMNS = "id, version, geometry, name, attributes, created_at"
 _COEFFICIENT_COLUMNS = (
-    "id, version, geometry, crome_id, land_use_cat, nn_catchment, "
-    "subcatchment, lu_curr_n_coeff, lu_curr_p_coeff, n_resi_coeff, "
-    "p_resi_coeff, created_at"
+    "id, version, geometry, crome_id, lu_curr_n_coeff, lu_curr_p_coeff, "
+    "n_resi_coeff, p_resi_coeff, created_at"
 )
 
 
@@ -128,8 +127,7 @@ def _good_dumps() -> dict[str, bytes]:
         _COEFFICIENT_COLUMNS,
         [
             (
-                f"{uuid4()}\t1\t{_good_geom('coefficient_layer')}\tCROME1\tARABLE"
-                "\tSite A\tCatchment A"
+                f"{uuid4()}\t1\t{_good_geom('coefficient_layer')}\tCROME1"
                 "\t10\t0.5\t12\t1.2\t2026-01-01 00:00:00+00\n"
             )
         ],
@@ -245,8 +243,7 @@ def test_bad_manifest_rolls_back_every_table_and_records_per_table_detail(
         _COEFFICIENT_COLUMNS,
         [
             (
-                f"{uuid4()}\t1\t{_good_geom('coefficient_layer')}\tCROME1\tARABLE"
-                "\tSite A\tCatchment A"
+                f"{uuid4()}\t1\t{_good_geom('coefficient_layer')}\tCROME1"
                 "\t9999\t0.5\t12\t1.2\t2026-01-01 00:00:00+00\n"
             )
         ],
@@ -339,15 +336,23 @@ def test_subset_qc_referential_uses_active_version_not_retained_inactive(
     pass by matching stale rows.
 
     Setup (seeded directly to isolate the version-pinning behaviour from the
-    referential web of a full sync): nn_catchments has "Site A" active; the
-    subcatchment "OLD" exists only in subcatchments version 1, which is retained
-    but inactive (active pointer is version 2, carrying "NEW"). A subset sync of
-    coefficient_layer referencing subcatchment "OLD" must fail QC.
+    referential web of a full sync): wwtw_catchments has WwTw_ID 1 and
+    nn_catchments has "Site A" active; the subcatchment "OLD" exists only in
+    subcatchments version 1, which is retained but inactive (active pointer is
+    version 2, carrying "NEW"). A subset sync of lookup_table whose wwtw_lookup
+    references subcatchment "OLD" must fail QC.
     """
     _reset_sync_state(test_engine)
     geom = _good_geom("subcatchments")
     with test_engine.begin() as conn:
-        # nn_catchments: one active row carrying the referenced "Site A".
+        # wwtw_catchments / nn_catchments: one active row each carrying the
+        # referenced WwTw_ID 1 and "Site A".
+        _insert_row(
+            conn,
+            "wwtw_catchments",
+            "id, version, geometry, name, attributes, created_at",
+            f"gen_random_uuid(), 1, '{geom}', 'W', '{{\"WwTw_ID\": 1}}', now()",
+        )
         _insert_row(
             conn,
             "nn_catchments",
@@ -375,39 +380,47 @@ def test_subset_qc_referential_uses_active_version_not_retained_inactive(
             text(
                 "INSERT INTO public.data_active_version "
                 "(table_name, active_version) VALUES "
-                "('nn_catchments', 1), ('subcatchments', 2)"
+                "('wwtw_catchments', 1), ('nn_catchments', 1), "
+                "('subcatchments', 2)"
             )
         )
 
-    # coefficient_layer references nn_catchment "Site A" (active) and
-    # subcatchment "OLD" (only in the inactive subcatchments version 1).
+    # wwtw_lookup references WwTw_ID 1 (active) and subcatchment "OLD" (only in
+    # the inactive subcatchments version 1); rates_lookup references "Site A".
     body = _dump(
-        "coefficient_layer",
-        _COEFFICIENT_COLUMNS,
+        "lookup_table",
+        "id, name, version, data, schema, description, source, license, created_at",
         [
             (
-                f"{uuid4()}\t1\t{_good_geom('coefficient_layer')}\tCROME1\tARABLE"
-                "\tSite A\tOLD"
-                "\t10\t0.5\t12\t1.2\t2026-01-01 00:00:00+00\n"
-            )
+                f"{uuid4()}\twwtw_lookup\t1\t"
+                '[{"wwtw_code": "1", "wwtw_subcatchment": "OLD"}]'
+                "\t\\N\t\\N\t\\N\t\\N\t2026-01-01 00:00:00+00\n"
+            ),
+            (
+                f"{uuid4()}\trates_lookup\t1\t"
+                '[{"nn_catchment": "Site A", "occupancy_rate": 2.4}]'
+                "\t\\N\t\\N\t\\N\t\\N\t2026-01-01 00:00:00+00\n"
+            ),
         ],
     )
-    manifest = _publish(s3_localstack, {"coefficient_layer": body}, "20260701_160000")
+    manifest = _publish(s3_localstack, {"lookup_table": body}, "20260701_160000")
     run_id = _start_run(test_engine)
 
     run_data_sync(run_id, manifest, force=False)
 
     with test_engine.connect() as conn:
         run_row = _run_row(conn, run_id)
-        coeff_count = conn.execute(
-            text("SELECT count(*) FROM public.coefficient_layer")
+        lookup_count = conn.execute(
+            text("SELECT count(*) FROM public.lookup_table")
         ).scalar()
 
     # Active subcatchments (version 2) has only "NEW", so "OLD" is unmatched and
     # the referential check fails — the subset load rolls back.
     assert run_row.status == "failed"
-    assert "referential" in (run_row.error or "")
-    assert coeff_count == 0
+    assert "referential_wwtw_lookup_subcatchment" in (run_row.error or "")
+    assert "referential_wwtw_lookup_wwtw_code" not in (run_row.error or "")
+    assert "referential_rates_lookup_nn_catchment" not in (run_row.error or "")
+    assert lookup_count == 0
 
     _reset_sync_state(test_engine)
 

@@ -33,7 +33,6 @@ class TestRepositoryCoefficientQueries:
         assert result.crs.to_string() == "EPSG:27700"
         assert "geometry" in result.columns
         assert "crome_id" in result.columns
-        assert "land_use_cat" in result.columns
 
     def test_query_all_coefficients_as_orm(
         self, repository: Repository, sample_coefficient_data: gpd.GeoDataFrame
@@ -48,28 +47,16 @@ class TestRepositoryCoefficientQueries:
         assert all(isinstance(obj, CoefficientLayer) for obj in result)
         assert result[0].crome_id in ["CROME_001", "CROME_002", "CROME_003"]
 
-    def test_filter_by_catchment(
+    def test_filter_by_crome_id(
         self, repository: Repository, sample_coefficient_data: gpd.GeoDataFrame
     ):
-        """Test filtering coefficients by NN catchment."""
-        stmt = select(CoefficientLayer).where(CoefficientLayer.nn_catchment == "Solent")
-
-        result = repository.execute_query(stmt, as_gdf=True)
-
-        assert len(result) == 2
-        assert all(result["nn_catchment"] == "Solent")
-
-    def test_filter_by_land_use(
-        self, repository: Repository, sample_coefficient_data: gpd.GeoDataFrame
-    ):
-        """Test filtering coefficients by land use category."""
-        stmt = select(CoefficientLayer).where(CoefficientLayer.land_use_cat == "Arable")
+        """Test filtering coefficients by CROME identifier."""
+        stmt = select(CoefficientLayer).where(CoefficientLayer.crome_id == "CROME_001")
 
         result = repository.execute_query(stmt, as_gdf=True)
 
         assert len(result) == 1
-        assert result.iloc[0]["land_use_cat"] == "Arable"
-        assert result.iloc[0]["crome_id"] == "CROME_001"
+        assert result.iloc[0]["lu_curr_n_coeff"] == 15.5
 
     def test_spatial_intersection_query(
         self, repository: Repository, sample_coefficient_data: gpd.GeoDataFrame
@@ -218,7 +205,7 @@ class TestRepositoryMultiTableQueries:
 
             # Query 2: Filter
             stmt_filter = select(CoefficientLayer).where(
-                CoefficientLayer.nn_catchment == "Solent"
+                CoefficientLayer.lu_curr_n_coeff > 5
             )
             result = session.scalars(stmt_filter).all()
 
