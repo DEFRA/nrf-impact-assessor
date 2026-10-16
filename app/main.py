@@ -19,6 +19,7 @@ from app.common.tracing import TraceIdMiddleware
 from app.config import ApiServerConfig, DatabaseSettings, DataSyncConfig, config
 from app.data_sync.service import log_startup_table_status
 from app.health.router import router as health_router
+from app.levy.router import router as levy_router
 from app.repositories.engine import warm_shared_engine
 from app.repositories.keepalive import start_keepalive, stop_keepalive
 from app.tiles.router import router as tiles_router
@@ -92,6 +93,7 @@ app.include_router(boundary_router, dependencies=protected_dependencies)
 app.include_router(tiles_router, dependencies=protected_dependencies)
 app.include_router(aerial_proxy_router, dependencies=protected_dependencies)
 app.include_router(wwtw_router, dependencies=protected_dependencies)
+app.include_router(levy_router, dependencies=protected_dependencies)
 
 if ApiServerConfig().testing_enabled:
     from app.test.router import router as test_router

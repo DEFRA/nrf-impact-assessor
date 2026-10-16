@@ -13,8 +13,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.models.db import LevyCalculationRecord
 from app.repositories.levy import (
-    get_inflation_index,
-    get_levy_charge,
+    get_levy_pricing_rows,
     mark_levy_calculation_sent,
     record_levy_calculation,
     resolve_edp_id,
@@ -107,24 +106,14 @@ def test_a_label_with_two_ids_means_none(repository: Repository):
         assert resolve_edp_id(session, LABEL) is None
 
 
-def test_charge_lookup_honours_validity_window(repository: Repository):
-    _insert_charge(repository, 7, date(2026, 1, 1), date(2027, 12, 31))
-
-    with repository.session() as session:
-        assert get_levy_charge(session, 7, date(2026, 9, 14)) is not None
-        assert get_levy_charge(session, 7, date(2028, 1, 1)) is None
-        assert get_levy_charge(session, 99, date(2026, 9, 14)) is None
-
-
 def test_adjacent_charge_windows_are_allowed(repository: Repository):
     _insert_charge(repository, 7, date(2026, 1, 1), date(2026, 12, 31))
     _insert_charge(repository, 7, date(2027, 1, 1), date(2027, 12, 31))
     _insert_charge(repository, 8, date(2026, 6, 1), date(2027, 5, 31))
 
     with repository.session() as session:
-        assert get_levy_charge(session, 7, date(2027, 1, 1)).charge_valid_from == (
-            date(2027, 1, 1)
-        )
+        rows = get_levy_pricing_rows(session, 7, date(2027, 1, 1))
+        assert rows.charge.charge_valid_from == date(2027, 1, 1)
 
 
 @pytest.mark.parametrize(
@@ -151,9 +140,6 @@ def test_a_window_ending_before_it_starts_is_rejected(repository: Repository):
         _insert_charge(repository, 7, valid_from, valid_to)
 
 
-# --- get_inflation_index ------------------------------------------------------
-
-
 def _insert_index(
     repository: Repository, year: int, factor: str, cil_index: str = "400"
 ) -> UUID:
@@ -170,14 +156,43 @@ def _insert_index(
     return index_id
 
 
-def test_inflation_index_lookup_by_charging_year(repository: Repository):
-    index_id = _insert_index(repository, 2026, "1.0000")
+# --- get_levy_pricing_rows ---------------------------------------------------
+
+
+def test_pricing_rows_join_the_edp_start_and_calculation_year_indices(
+    repository: Repository,
+):
+    charge_id = _insert_charge(repository, 7, date(2026, 1, 1), date(2027, 12, 31))
+    start_id = _insert_index(repository, 2026, "1.0000")
+    calc_id = _insert_index(repository, 2027, "1.0500")
 
     with repository.session() as session:
-        row = get_inflation_index(session, 2026)
-        assert row.id == index_id
-        assert row.index_factor == Decimal("1.0000")
-        assert get_inflation_index(session, 2099) is None
+        rows = get_levy_pricing_rows(session, 7, date(2027, 3, 1))
+
+    assert rows.charge.id == charge_id
+    assert rows.edp_start_year_index.id == start_id
+    assert rows.calculation_year_index.id == calc_id
+
+
+def test_pricing_rows_leave_a_missing_index_none(repository: Repository):
+    _insert_charge(repository, 7, date(2026, 1, 1), date(2027, 12, 31))
+    start_id = _insert_index(repository, 2026, "1.0000")
+
+    with repository.session() as session:
+        rows = get_levy_pricing_rows(session, 7, date(2027, 3, 1))
+
+    assert rows.edp_start_year_index.id == start_id
+    assert rows.calculation_year_index is None
+
+
+def test_pricing_rows_honour_the_charge_validity_window(repository: Repository):
+    _insert_charge(repository, 7, date(2026, 1, 1), date(2027, 12, 31))
+    _insert_index(repository, 2026, "1.0000")
+
+    with repository.session() as session:
+        assert get_levy_pricing_rows(session, 7, date(2026, 9, 14)) is not None
+        assert get_levy_pricing_rows(session, 7, date(2028, 1, 1)) is None
+        assert get_levy_pricing_rows(session, 99, date(2026, 9, 14)) is None
 
 
 # --- record_levy_calculation -------------------------------------------------
