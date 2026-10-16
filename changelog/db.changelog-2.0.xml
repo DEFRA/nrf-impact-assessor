@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- Alembic revision: f7b1c3d5e9a2 -->
+
+    <changeSet id="10-levy-charges-seed" author="nrf">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">SELECT COUNT(*) FROM public.levy_charges</sqlCheck>
+        </preConditions>
+        <insert tableName="levy_charges" schemaName="public">
+            <column name="id" valueComputed="gen_random_uuid()"/>
+            <column name="edp_id" valueNumeric="1"/>
+            <column name="edp_name" value="Norfolk: Broads Special Area of Conservation (SAC) (Yare and Bure), Broadland Ramsar and River Wensum SAC Environmental Delivery Plan addressing nutrient pollution (2027 to 2037)"/>
+            <column name="edp_start_date" valueDate="2026-01-01"/>
+            <column name="charge_valid_from" valueDate="2026-01-01"/>
+            <column name="charge_valid_to" valueDate="2027-12-31"/>
+            <column name="base_charge_per_unit" valueNumeric="2675.0000"/>
+        </insert>
+        <!-- No-op: a seeded row cannot be told apart from one loaded later,
+             and priced quotes in audit_levy_calculations reference it. -->
+        <rollback/>
+    </changeSet>
+
+</databaseChangeLog>

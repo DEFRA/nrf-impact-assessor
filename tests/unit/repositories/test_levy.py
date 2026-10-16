@@ -11,7 +11,6 @@ import pytest
 
 from app.models.db import LevyCalculationRecord
 from app.repositories.levy import (
-    get_inflation_index,
     record_levy_calculation,
     resolve_edp_id,
 )
@@ -61,22 +60,6 @@ def test_queries_the_active_boundary_layer_version(active_version):
     resolve_edp_id(session, LABEL)
 
     active_version.assert_called_once_with(session, "edp_boundary_layer")
-
-
-# --- get_inflation_index -----------------------------------------------------
-
-
-def test_get_inflation_index_returns_the_row():
-    index_row = MagicMock()
-    session = _session_returning(index_row)
-
-    assert get_inflation_index(session, 2026) is index_row
-
-
-def test_get_inflation_index_returns_none_when_missing():
-    session = _session_returning(None)
-
-    assert get_inflation_index(session, 2099) is None
 
 
 # --- record_levy_calculation -------------------------------------------------
