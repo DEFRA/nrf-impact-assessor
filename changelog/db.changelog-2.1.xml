@@ -7,7 +7,7 @@
 
     <!-- Alembic revision: e5f9a2b3c4d6 -->
 
-    <changeSet id="10-audit-model-results" author="nrf">
+    <changeSet id="11-audit-model-results" author="nrf">
         <createTable tableName="audit_model_results" schemaName="public">
             <column name="id" type="uuid">
                 <constraints primaryKey="true" nullable="false"/>
@@ -39,7 +39,7 @@
         </rollback>
     </changeSet>
 
-    <changeSet id="10-drop-coefficient-descriptive-columns" author="nrf">
+    <changeSet id="11-drop-coefficient-descriptive-columns" author="nrf">
         <dropColumn tableName="coefficient_layer" schemaName="public">
             <column name="land_use_cat"/>
             <column name="nn_catchment"/>
