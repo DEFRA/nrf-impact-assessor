@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AppConfig(BaseSettings):
-    model_config = SettingsConfigDict()
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     python_env: str | None = None
     host: str = "127.0.0.1"
     port: int = 8086
@@ -77,11 +77,11 @@ class GreenspaceConfig(BaseSettings):
     )
 
     threshold_area_ha: float = Field(
-        default=1.0,
+        default=2.5,
         description="Development area (ha) above which greenspace is assumed",
     )
     greenspace_percent: float = Field(
-        default=20.0, description="Percentage of development assumed as greenspace"
+        default=10.0, description="Percentage of development assumed as greenspace"
     )
     nitrogen_coeff: float = Field(
         default=3.0, description="Greenspace nitrogen coefficient (kg/ha/year)"
@@ -102,16 +102,20 @@ class SuDsConfig(BaseSettings):
         extra="ignore",
     )
 
-    threshold_dwellings: int = Field(
-        default=50, description="Dwelling count at or above which SuDS is applied"
+    threshold_area_ha: float = Field(
+        default=2.5,
+        description="Development area (ha) at or above which SuDS is applied",
+    )
+    capture_percent: float = Field(
+        default=100.0, description="Share of runoff entering SuDS (%)"
     )
     removal_rate_percent: float = Field(
-        default=25.0, description="SuDS nutrient removal rate (%)"
+        default=15.0, description="SuDS nutrient removal rate (%)"
     )
 
     @property
     def total_reduction_factor(self) -> float:
-        return self.removal_rate_percent / 100
+        return (self.capture_percent / 100) * (self.removal_rate_percent / 100)
 
 
 class AssessmentConfig(BaseSettings):
@@ -138,6 +142,12 @@ class AssessmentConfig(BaseSettings):
     )
     fallback_wwtw_id: int = Field(
         default=141, description="WwTW ID for developments outside modeled catchments"
+    )
+    occupancy_rate: float = Field(
+        default=2.11, description="EDP-wide occupancy rate (people per dwelling)"
+    )
+    water_usage_L_per_person_day: float = Field(  # noqa: N815
+        default=110.0, description="EDP-wide water usage (litres per person per day)"
     )
 
     @property

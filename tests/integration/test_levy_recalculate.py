@@ -19,7 +19,7 @@ URL = "/levy/recalculate"
 
 @pytest.fixture
 def client(repository: Repository):
-    with patch("app.levy.router.get_shared_repository", return_value=repository):
+    with patch("app.levy.router._get_repository", return_value=repository):
         yield TestClient(app)
 
 

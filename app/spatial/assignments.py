@@ -99,13 +99,19 @@ def _slice_axis(
     axis_max: float,
     n_chunks: int,
 ) -> list[gpd.GeoDataFrame]:
-    """Slice a GeoDataFrame into n_chunks strips along one axis."""
+    """Slice a GeoDataFrame into n_chunks strips along one axis.
+
+    Strips are half-open ([lo, hi)) so that a coordinate sitting exactly on a
+    boundary lands in one chunk only; the final strip closes on axis_max.
+    """
     step = (axis_max - axis_min) / n_chunks
     chunks = []
     for i in range(n_chunks):
         lo = axis_min + i * step
-        hi = axis_max if i == n_chunks - 1 else axis_min + (i + 1) * step
-        chunk = gdf[(coords >= lo) & (coords <= hi)]
+        is_last = i == n_chunks - 1
+        hi = axis_max if is_last else axis_min + (i + 1) * step
+        upper = coords <= hi if is_last else coords < hi
+        chunk = gdf[(coords >= lo) & upper]
         if len(chunk) > 0:
             chunks.append(chunk)
     return chunks
