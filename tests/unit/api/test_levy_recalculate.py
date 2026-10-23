@@ -126,12 +126,25 @@ def test_returns_unprocessable_when_the_levy_is_unavailable(client, db):
     assert response.status_code == 422
 
 
-def test_returns_unprocessable_when_an_inflation_index_is_missing(client, db):
-    db["pricing"].return_value = LevyPricingRows(_charge(), None, _index("1.0500"))
+@pytest.mark.parametrize(
+    "rows",
+    [
+        LevyPricingRows(_charge(), None, None),
+        LevyPricingRows(_charge(), None, _index("1.0500")),
+        LevyPricingRows(_charge(), _index("1.0000"), None),
+    ],
+)
+def test_prices_a_later_charging_year_without_inflation_indices(client, db, rows):
+    db["pricing"].return_value = rows
 
-    response = client.post(URL, json=VALID_BODY | {"requestDate": "2027-03-01"})
+    response = client.post(URL, json=VALID_BODY | {"requestDate": "2027-06-15"})
 
-    assert response.status_code == 422
+    assert response.status_code == 200
+    assert response.json() == {
+        "calculationDate": "2027-06-15",
+        "provisionalAmount": 26750.0,
+        "inflationAdjustedAmount": 26750.0,
+    }
 
 
 @pytest.mark.parametrize(

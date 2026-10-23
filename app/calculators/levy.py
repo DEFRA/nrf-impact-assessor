@@ -92,6 +92,8 @@ def calculate_levy(
     calculation_date: date,
     edp_start_year_index: LevyIndexRow | None = None,
     calculation_year_index: LevyIndexRow | None = None,
+    *,
+    apply_inflation: bool = True,
 ) -> LevyCalculation:
     """Calculate the provisional and inflation-adjusted levy for one EDP.
 
@@ -108,12 +110,16 @@ def calculate_levy(
         calculation_year_index: RICS CIL Index row for calculation_date's
             charging year. Only required when calculation_date falls in a
             different charging year than the EDP's publication.
+        apply_inflation: False skips the inflation step whatever the year,
+            so the indices are neither needed nor recorded and the
+            inflation-adjusted amount is the provisional amount.
 
     Raises:
         ValueError: units is not a positive integer.
         LevyChargeUnavailableError: base_charge_per_unit is not a whole
-            number, or calculation_date falls in a different charging year
-            than the EDP's publication and either index is missing.
+            number, or inflation applies, calculation_date falls in a
+            different charging year than the EDP's publication and either
+            index is missing.
     """
     if units <= 0:
         msg = f"units must be positive, got {units}"
@@ -132,7 +138,7 @@ def calculate_levy(
     # Only indices that were actually applied go on the audit record.
     start_index: LevyIndexRow | None = None
     calc_index: LevyIndexRow | None = None
-    if calculation_date.year == charge.edp_start_date.year:
+    if not apply_inflation or calculation_date.year == charge.edp_start_date.year:
         inflation_adjusted = provisional
     else:
         if edp_start_year_index is None or calculation_year_index is None:
