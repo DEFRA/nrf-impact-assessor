@@ -24,7 +24,7 @@ dependencies = [
     "pillow>=12.3.0",
     "psycopg2-binary>=2.9.12",
     "pydantic-settings==2.15.0",
-    "pymongo[aws,encryption,snappy,zstd]==4.18.2",
+    "pymongo[aws,encryption,snappy,zstd]==4.19.0",
     "pyproj>=3.8.0",
     "python-multipart>=0.0.32",
     "pyyaml>=6.0.3",
