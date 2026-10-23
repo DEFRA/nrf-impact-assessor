@@ -36,7 +36,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "moto[s3,sqs]>=5.2.2",
-    "pre-commit==4.6.2",
+    "pre-commit==4.7.0",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
