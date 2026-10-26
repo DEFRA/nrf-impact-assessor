@@ -4,17 +4,46 @@ updates:
   # Update Python packages (uv-managed; keeps uv.lock in sync)
   - package-ecosystem: uv
     directory: /
+    open-pull-requests-limit: 10
+
+    # One PR for all minor and patch updates; majors arrive as separate PRs
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+    # Wait before proposing brand new releases
+    cooldown:
+      default-days: 3
+
+    # Schedule run every Monday, local time
     schedule:
       interval: weekly
       time: '08:30'
       timezone: 'Europe/London'
+
     versioning-strategy: increase
+
     allow:
+      # Include direct pyproject.toml updates
       - dependency-type: direct
 
   # Update Docker base images
   - package-ecosystem: docker
     directory: /
+
+    # Schedule run every Monday, local time
+    schedule:
+      interval: weekly
+      time: '08:30'
+      timezone: 'Europe/London'
+
+  # Update GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+
+    # Schedule run every Monday, local time
     schedule:
       interval: weekly
       time: '08:30'
