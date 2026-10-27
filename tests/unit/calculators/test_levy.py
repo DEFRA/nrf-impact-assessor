@@ -173,6 +173,20 @@ def test_raises_when_calculation_year_differs_and_index_missing():
         calculate_levy(charge, units=10, calculation_date=EARLIER_CALC_DATE)
 
 
+def test_skips_inflation_when_not_applied_even_if_indices_are_missing():
+    result = calculate_levy(
+        _charge("2675.0000"),
+        units=10,
+        calculation_date=EARLIER_CALC_DATE,
+        apply_inflation=False,
+    )
+
+    assert result.provisional_amount == Decimal("26750.00")
+    assert result.inflation_adjusted_amount == result.provisional_amount
+    assert result.edp_start_year_index_id is None
+    assert result.calculation_year_index_id is None
+
+
 def test_carries_audit_fields():
     result = calculate_levy(_charge("2675.0000"), units=10, calculation_date=CALC_DATE)
 
