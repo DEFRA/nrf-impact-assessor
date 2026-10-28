@@ -43,7 +43,7 @@ def session(mocker):
     session = MagicMock()
     repository = MagicMock()
     repository.session.return_value.__enter__.return_value = session
-    mocker.patch("app.levy.router.get_shared_repository", return_value=repository)
+    mocker.patch("app.levy.router._get_repository", return_value=repository)
     return session
 
 

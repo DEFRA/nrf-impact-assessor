@@ -202,6 +202,7 @@ coverage*
 .git-hash
 
 scripts/.env.local
+scripts/csv_export/
 
 iat_input
 /backups/

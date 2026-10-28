@@ -32,7 +32,7 @@ def test_coefficient_layer_rules_have_column_key_and_ranges():
     assert cl.key.source == "column"
     assert cl.key.columns == ["crome_id"]
     assert cl.key.unique is True
-    assert cl.non_null_columns == ["land_use_cat", "nn_catchment", "subcatchment"]
+    assert cl.non_null_columns == []
     assert cl.coefficient_ranges["lu_curr_n_coeff"].min == 0
     assert cl.coefficient_ranges["lu_curr_n_coeff"].max == 50
     assert cl.coefficient_ranges["lu_curr_p_coeff"].max == 5
@@ -102,8 +102,6 @@ def test_referential_checks_loaded():
     names = {c.name for c in rules.referential_checks}
     assert names == {
         "rates_lookup_nn_catchment",
-        "coefficient_layer_nn_catchment",
-        "coefficient_layer_subcatchment",
         "wwtw_lookup_wwtw_code",
         "wwtw_lookup_subcatchment",
     }

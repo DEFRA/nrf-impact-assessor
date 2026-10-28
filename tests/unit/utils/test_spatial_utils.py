@@ -333,3 +333,64 @@ def test_partition_by_bounds_no_duplicate_rows_on_chunk_boundary():
     combined_ids = pd.concat([chunk["RLB_ID"] for chunk in chunks], ignore_index=True)
     assert len(combined_ids) == len(input_gdf)
     assert combined_ids.nunique() == len(input_gdf)
+
+
+def test_partition_by_bounds_assigns_centroid_on_the_split_to_one_chunk():
+    """A centroid landing exactly on a chunk boundary belongs to one chunk only.
+
+    Both strips used to include their shared edge, so such a feature was
+    processed twice and the parallel majority_overlap merge emitted a
+    duplicate output row for it.
+    """
+    from app.spatial.assignments import _partition_by_bounds
+
+    # Unit squares centred on x = 0, 1, 2 give total bounds -0.5..2.5.
+    # With two chunks the split falls at x = 1.0, exactly on a centroid.
+    input_gdf = gpd.GeoDataFrame(
+        {"RLB_ID": [1, 2, 3]},
+        geometry=[
+            Polygon([(x - 0.5, 0), (x + 0.5, 0), (x + 0.5, 1), (x - 0.5, 1)])
+            for x in (0, 1, 2)
+        ],
+        crs="EPSG:27700",
+    )
+
+    chunks = _partition_by_bounds(input_gdf, n_chunks=2)
+
+    combined_ids = pd.concat([chunk["RLB_ID"] for chunk in chunks], ignore_index=True)
+    assert sorted(combined_ids) == [1, 2, 3]
+
+
+def test_majority_overlap_parallel_returns_one_row_per_input_feature():
+    """The parallel path must not duplicate features that sit on a chunk split."""
+    from app.spatial import majority_overlap
+
+    # 121 unit squares centred on x = 0..120 give total bounds -0.5..120.5,
+    # so a two-way split falls at x = 60.0, exactly on a centroid. The count
+    # is over the 100-feature threshold that switches on parallel processing.
+    centres = range(121)
+    input_gdf = gpd.GeoDataFrame(
+        {"RLB_ID": list(centres)},
+        geometry=[
+            Polygon([(x - 0.5, 0), (x + 0.5, 0), (x + 0.5, 1), (x - 0.5, 1)])
+            for x in centres
+        ],
+        crs="EPSG:27700",
+    )
+    overlay_gdf = gpd.GeoDataFrame(
+        {"WwTw_ID": [101]},
+        geometry=[Polygon([(-5, -5), (125, -5), (125, 5), (-5, 5)])],
+        crs="EPSG:27700",
+    )
+
+    result = majority_overlap(
+        input_gdf,
+        overlay_gdf,
+        input_id_col="RLB_ID",
+        overlay_attr_col="WwTw_ID",
+        output_field="wwtw",
+        parallel=True,
+        max_workers=2,
+    )
+
+    assert len(result) == len(input_gdf)

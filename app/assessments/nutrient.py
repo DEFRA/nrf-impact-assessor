@@ -16,7 +16,6 @@ from sqlalchemy import select
 
 from app.calculators import (
     apply_buffer,
-    apply_suds_mitigation,
     calculate_land_use_uplift,
     calculate_wastewater_load,
 )
@@ -37,8 +36,8 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Process-level lookup table cache
-# Lookup data (rates_lookup, wwtw_lookup) is static once loaded. Caching it
-# at module level avoids two round-trips + full JSONB deserialisation per job.
+# Lookup data (wwtw_lookup) is static once loaded. Caching it at module level
+# avoids a round-trip + full JSONB deserialisation per job.
 # Key: (table_name, version) → pd.DataFrame
 # ---------------------------------------------------------------------------
 _lookup_cache: dict[tuple[str, int], pd.DataFrame] = {}
@@ -321,7 +320,7 @@ class NutrientAssessment:
             rlb_gdf[["rlb_id", "dev_area_ha", "dwellings"]], on="rlb_id", how="left"
         )
 
-        n_uplift, p_uplift = calculate_land_use_uplift(
+        n_uplift, p_uplift, n_post_suds, p_post_suds = calculate_land_use_uplift(
             area_hectares=land_use_intersections["area_in_nn_catchment_ha"],
             dev_area_ha=land_use_intersections["dev_area_ha"],
             current_nitrogen_coeff=land_use_intersections["lu_curr_n_coeff"],
@@ -329,9 +328,12 @@ class NutrientAssessment:
             current_phosphorus_coeff=land_use_intersections["lu_curr_p_coeff"],
             residential_phosphorus_coeff=land_use_intersections["p_resi_coeff"],
             greenspace_config=self.config.greenspace,
+            suds_config=self.config.suds,
         )
         land_use_intersections["n_lu_uplift"] = n_uplift
         land_use_intersections["p_lu_uplift"] = p_uplift
+        land_use_intersections["n_lu_post_suds"] = n_post_suds
+        land_use_intersections["p_lu_post_suds"] = p_post_suds
 
         land_use_intersections["_nn_entry"] = [
             (s, n) if pd.notna(s) and pd.notna(n) else None
@@ -348,6 +350,8 @@ class NutrientAssessment:
                     "area_in_nn_catchment_ha": "sum",
                     "n_lu_uplift": "sum",
                     "p_lu_uplift": "sum",
+                    "n_lu_post_suds": "sum",
+                    "p_lu_post_suds": "sum",
                     "n2k_site_n": lambda x: "; ".join(sorted(set(x.dropna()))),
                     "_nn_entry": lambda x: (
                         sorted({e for e in x if e is not None}) or None
@@ -363,19 +367,7 @@ class NutrientAssessment:
             )
         )
 
-        rlb_gdf = rlb_gdf.merge(uplift_sum, on="rlb_id", how="left")
-
-        # Apply SuDS mitigation post-aggregation on per-RLB totals
-        n_post_suds, p_post_suds = apply_suds_mitigation(
-            n_lu_uplift=rlb_gdf["n_lu_uplift"],
-            p_lu_uplift=rlb_gdf["p_lu_uplift"],
-            dwellings=rlb_gdf["dwellings"],
-            suds_config=self.config.suds,
-        )
-        rlb_gdf["n_lu_post_suds"] = n_post_suds
-        rlb_gdf["p_lu_post_suds"] = p_post_suds
-
-        return rlb_gdf
+        return rlb_gdf.merge(uplift_sum, on="rlb_id", how="left")
 
     def _calculate_wastewater_impacts(
         self, rlb_gdf: gpd.GeoDataFrame
@@ -386,36 +378,14 @@ class NutrientAssessment:
             logger.warning(f"Dropping duplicate columns from rlb_gdf: {dupes}")
             rlb_gdf = rlb_gdf.loc[:, ~rlb_gdf.columns.duplicated()]
 
-        t0 = time.perf_counter()
-        rates_lookup = self._load_lookup("rates_lookup")
-        rates_lookup = rates_lookup[
-            ["nn_catchment", "occupancy_rate", "water_usage_L_per_person_day"]
-        ].drop_duplicates(subset=["nn_catchment"])
-        timings.record("rates_lookup", time.perf_counter() - t0)
-
-        t0 = time.perf_counter()
-        rlb_gdf = rlb_gdf.merge(rates_lookup, how="left", on="nn_catchment")
-
-        # Group-mean fallback: fill missing rates from the WwTW group average
-        for col in ["occupancy_rate", "water_usage_L_per_person_day"]:
-            rlb_gdf[col] = rlb_gdf.groupby("majority_wwtw_id")[col].transform(
-                lambda x: x.fillna(x.mean())
-            )
-
-        if "wwtw_catchment" in rlb_gdf.columns:
-            rates_by_catchment = rates_lookup.set_index("nn_catchment")[
-                ["occupancy_rate", "water_usage_L_per_person_day"]
-            ]
-            mask = rlb_gdf["nn_catchment"].isna() & rlb_gdf["wwtw_catchment"].notna()
-            for col in ["occupancy_rate", "water_usage_L_per_person_day"]:
-                rlb_gdf.loc[mask, col] = rlb_gdf.loc[mask, "wwtw_catchment"].map(
-                    rates_by_catchment[col]
-                )
-
+        # Rates are set EDP-wide rather than per catchment
+        rlb_gdf["occupancy_rate"] = self.config.occupancy_rate
+        rlb_gdf["water_usage_L_per_person_day"] = (
+            self.config.water_usage_L_per_person_day
+        )
         rlb_gdf["daily_water_usage_L"] = rlb_gdf["dwellings"] * (
             rlb_gdf["occupancy_rate"] * rlb_gdf["water_usage_L_per_person_day"]
         )
-        timings.record("merge_rates", time.perf_counter() - t0)
 
         t0 = time.perf_counter()
         wwtw_lookup = self._load_lookup("wwtw_lookup")
