@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import date
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -45,7 +45,7 @@ class LevyRecalculationResponse(BaseModel):
         frozen=True, alias_generator=to_camel, populate_by_name=True
     )
 
-    calculation_date: date
+    calculation_date: datetime
     provisional_amount: float
     inflation_adjusted_amount: float
 
@@ -71,7 +71,15 @@ def _get_repository() -> Repository:
 def _recalculate(body: LevyRecalculationRequest) -> LevyCalculation | None:
     """Price the levy for the requested EDP, units and date."""
     with _get_repository().session() as session:
-        return price_levy(session, body.edp_id, body.units, body.request_date)
+        # Inflation is out of scope here, so a missing RICS CIL index for a
+        # later charging year must not make the levy unavailable.
+        return price_levy(
+            session,
+            body.edp_id,
+            body.units,
+            body.request_date,
+            apply_inflation=False,
+        )
 
 
 @router.post(
@@ -112,15 +120,17 @@ async def recalculate_levy(request: Request) -> LevyRecalculationResponse:
             detail=f"No levy charge for EDP {body.edp_id} on {body.request_date}",
         )
 
+    calculated_at = datetime.now(UTC)
     logger.info(
         "Levy recalculated: "
         f"edp_id={body.edp_id} request_date={levy.calculation_date} "
+        f"calculation_date={calculated_at.isoformat().replace('+00:00', 'Z')} "
         f"provisional_amount={levy.provisional_amount} "
         f"inflation_adjusted_amount={levy.inflation_adjusted_amount}"
     )
     # Inflation is not applied yet: both amounts are the provisional levy.
     return LevyRecalculationResponse(
-        calculation_date=levy.calculation_date,
+        calculation_date=calculated_at,
         provisional_amount=float(levy.provisional_amount),
-        inflation_adjusted_amount=float(levy.provisional_amount),
+        inflation_adjusted_amount=float(levy.inflation_adjusted_amount),
     )

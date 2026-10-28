@@ -1,6 +1,6 @@
 """Tests for the POST /levy/recalculate endpoint."""
 
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -61,11 +61,21 @@ def test_returns_provisional_and_inflation_adjusted_levy(client, db):
     response = client.post(URL, json=VALID_BODY)
 
     assert response.status_code == 200
-    assert response.json() == {
-        "calculationDate": "2026-10-14",
+    assert response.json() | {"calculationDate": None} == {
+        "calculationDate": None,
         "provisionalAmount": 26750.0,
         "inflationAdjustedAmount": 26750.0,
     }
+
+
+def test_returns_the_calculation_time_as_utc_iso_datetime(client, db):
+    before = datetime.now(UTC)
+    response = client.post(URL, json=VALID_BODY)
+    after = datetime.now(UTC)
+
+    calculation_date = response.json()["calculationDate"]
+    assert calculation_date.endswith("Z")
+    assert before <= datetime.fromisoformat(calculation_date) <= after
 
 
 def test_prices_the_edp_on_the_requested_date(client, db):
@@ -126,12 +136,22 @@ def test_returns_unprocessable_when_the_levy_is_unavailable(client, db):
     assert response.status_code == 422
 
 
-def test_returns_unprocessable_when_an_inflation_index_is_missing(client, db):
-    db["pricing"].return_value = LevyPricingRows(_charge(), None, _index("1.0500"))
+@pytest.mark.parametrize(
+    "rows",
+    [
+        LevyPricingRows(_charge(), None, None),
+        LevyPricingRows(_charge(), None, _index("1.0500")),
+        LevyPricingRows(_charge(), _index("1.0000"), None),
+    ],
+)
+def test_prices_a_later_charging_year_without_inflation_indices(client, db, rows):
+    db["pricing"].return_value = rows
 
-    response = client.post(URL, json=VALID_BODY | {"requestDate": "2027-03-01"})
+    response = client.post(URL, json=VALID_BODY | {"requestDate": "2027-06-15"})
 
-    assert response.status_code == 422
+    assert response.status_code == 200
+    assert response.json()["provisionalAmount"] == 26750.0
+    assert response.json()["inflationAdjustedAmount"] == 26750.0
 
 
 @pytest.mark.parametrize(
