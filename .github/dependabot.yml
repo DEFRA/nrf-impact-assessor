@@ -41,7 +41,10 @@ updates:
 
   # Update GitHub Actions
   - package-ecosystem: github-actions
-    directory: /
+    # Include composite actions, which "/" alone does not scan
+    directories:
+      - /
+      - /.github/actions/*
 
     # Schedule run every Monday, local time
     schedule:
