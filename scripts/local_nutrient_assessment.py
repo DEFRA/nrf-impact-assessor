@@ -17,10 +17,16 @@ Usage:
     uv run python scripts/local_nutrient_assessment.py --file site.shp
     uv run python scripts/local_nutrient_assessment.py --file site.zip
     uv run python scripts/local_nutrient_assessment.py --example --dwellings 25 --name "Test Site"
+
+A file with a ``Dwellings`` field uses each feature's own dwelling count
+instead of --dwellings. Results are also written as CSV to --out-dir: one
+file per feature named after its ``ID`` field when the file has one,
+otherwise a single ``<job-id>.csv``.
 """
 
 import json
 import logging
+import re
 import sys
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -58,6 +64,10 @@ _EXAMPLE_WKT = (
 _CRS_BNG = "EPSG:27700"
 
 _FILE_SUFFIXES = (".geojson", ".json", ".shp", ".zip")
+
+# Attribute fields carried over from an input file (matched case-insensitively).
+_ID_FIELD = "id"
+_DWELLINGS_FIELD = "dwellings"
 
 
 def _resolve_wkt(wkt: str | None, example: bool) -> str:
@@ -108,7 +118,31 @@ def _file_to_gdf(path: Path, crs: str) -> gpd.GeoDataFrame:
         logger.warning("%s has no CRS; assuming %s", path, crs)
         gdf = gdf.set_crs(crs)
     logger.info("Read %d feature(s) from %s", len(gdf), path)
-    return _to_bng(gdf[["geometry"]])
+    return _to_bng(_keep_attribute_fields(gdf))
+
+
+def _keep_attribute_fields(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Keep geometry plus any ID/Dwellings fields, renamed to lower case."""
+    by_lower = {str(col).lower(): col for col in gdf.columns if col != "geometry"}
+    keep = {
+        by_lower[field]: field
+        for field in (_ID_FIELD, _DWELLINGS_FIELD)
+        if field in by_lower
+    }
+    gdf = gdf[[*keep, "geometry"]].rename(columns=keep)
+    if _DWELLINGS_FIELD in gdf.columns:
+        dwellings = gdf[_DWELLINGS_FIELD]
+        if dwellings.isna().any() or (dwellings < 1).any():
+            typer.echo(
+                "Error: Dwellings field must be a positive number for every feature.",
+                err=True,
+            )
+            raise typer.Exit(1)
+        gdf[_DWELLINGS_FIELD] = dwellings.astype(int)
+        logger.info("Using per-feature dwellings from the file's Dwellings field")
+    if _ID_FIELD in gdf.columns:
+        gdf[_ID_FIELD] = gdf[_ID_FIELD].astype(str)
+    return gdf
 
 
 def _zip_member_uri(path: Path) -> str:
@@ -140,6 +174,57 @@ def _to_bng(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return gdf
 
 
+def _apply_job_fields(
+    gdf: gpd.GeoDataFrame,
+    job_id: str,
+    name: str,
+    dwelling_type: str,
+    dwellings: int,
+) -> gpd.GeoDataFrame:
+    """Inject job fields, keeping any per-feature ID/Dwellings read from the file."""
+    file_fields = gdf[
+        [c for c in (_ID_FIELD, _DWELLINGS_FIELD) if c in gdf.columns]
+    ].copy()
+    gdf = inject_job_fields(gdf, job_id, name, dwelling_type, dwellings)
+    for column in file_fields.columns:
+        gdf[column] = file_fields[column]
+    return gdf
+
+
+def _csv_filename(stem: str) -> str:
+    """Make an ID safe to use as a filename (IDs like ``GNLP0337/0326`` contain slashes)."""
+    safe = re.sub(r"[^\w.\-]+", "_", stem).strip("._")
+    return f"{safe or 'result'}.csv"
+
+
+def _write_csv(
+    dataframes: dict, out_dir: Path, job_id: str, has_file_ids: bool
+) -> None:
+    """Write the impact summary as CSV: one file per ID when the input had IDs."""
+    summary = dataframes["impact_summary"]
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if not has_file_ids:
+        path = out_dir / _csv_filename(job_id)
+        summary.to_csv(path, index=False)
+        logger.info("Wrote %d row(s) to %s", len(summary), path)
+        return
+
+    used: set[str] = set()
+    for feature_id, rows in summary.groupby(_ID_FIELD, sort=False):
+        filename = _csv_filename(str(feature_id))
+        stem = filename.removesuffix(".csv")
+        suffix = 1
+        while filename in used:
+            suffix += 1
+            filename = f"{stem}_{suffix}.csv"
+        if suffix > 1:
+            logger.warning("Filename clash for ID %r; writing %s", feature_id, filename)
+        used.add(filename)
+        rows.to_csv(out_dir / filename, index=False)
+    logger.info("Wrote %d CSV file(s) to %s", len(used), out_dir)
+
+
 def _print_json(dataframes: dict) -> None:
     results = {}
     for key, df in dataframes.items():
@@ -159,11 +244,23 @@ def assess(
     example: bool = typer.Option(False, "--example", "-e"),
     crs: str = typer.Option(_CRS_BNG, "--crs"),
     dwelling_type: str = typer.Option("house", "--dwelling-type", "-d"),
-    dwellings: int = typer.Option(10, "--dwellings", "-n", min=1),
+    dwellings: int = typer.Option(
+        10,
+        "--dwellings",
+        "-n",
+        min=1,
+        help="Used when the input file has no Dwellings field.",
+    ),
     name: str = typer.Option("Test Development", "--name"),
     job_id: str = typer.Option("local-script-run", "--job-id"),
+    out_dir: Path = typer.Option(
+        Path(__file__).parent / "csv_export",
+        "--out-dir",
+        "-o",
+        help="Directory for CSV results.",
+    ),
 ):
-    """Run a nutrient assessment directly against the database and print results as JSON."""
+    """Run a nutrient assessment against the database; print JSON and write CSV."""
     if sum(bool(x) for x in (wkt, file, example)) > 1:
         typer.echo("Error: use only one of --wkt, --file or --example.", err=True)
         raise typer.Exit(1)
@@ -171,7 +268,8 @@ def assess(
         gdf = _file_to_gdf(file, crs)
     else:
         gdf = _wkt_to_gdf(_resolve_wkt(wkt, example), crs)
-    gdf = inject_job_fields(gdf, job_id, name, dwelling_type, dwellings)
+    has_file_ids = _ID_FIELD in gdf.columns
+    gdf = _apply_job_fields(gdf, job_id, name, dwelling_type, dwellings)
 
     settings = db_settings()
     engine = create_db_engine(settings)
@@ -198,6 +296,7 @@ def assess(
         engine.dispose()
 
     _print_json(dataframes)
+    _write_csv(dataframes, out_dir, job_id, has_file_ids)
 
 
 if __name__ == "__main__":
