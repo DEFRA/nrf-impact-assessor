@@ -17,13 +17,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check Alembic / Liquibase migration parity
         run: python scripts/check_migration_parity.py
 
       - name: Install uv
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
 
@@ -59,7 +59,7 @@ jobs:
       NOTIFY_API_KEY: ${{ secrets.NOTIFY_API_KEY }}
       OS_API_KEY: ${{ secrets.OS_API_KEY }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker build -t defradigital/nrf-impact-assessor:${{ github.sha }} .
       - uses: DEFRA/nrf-journey-tests/run-journey-tests@main
         with:

@@ -1,0 +1,37 @@
+name: Dependabot auto-approve
+
+# Approves minor and patch uv updates only; merging stays manual so the
+# push to main triggers publish.yml (merges made with GITHUB_TOKEN don't).
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  pull-requests: write
+
+jobs:
+  auto-approve:
+    name: Approve minor and patch uv updates
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Approve
+        if: steps.metadata.outputs.package-ecosystem == 'uv'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          UPDATED_DEPENDENCIES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          if jq -e 'any(.[]; .updateType == "version-update:semver-major")' <<< "$UPDATED_DEPENDENCIES" > /dev/null; then
+            echo "Major update present - leaving for manual review"
+            exit 0
+          fi
+          gh pr review --approve "$PR_URL"
