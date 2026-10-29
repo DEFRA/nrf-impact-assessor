@@ -18,18 +18,24 @@ from fastapi import APIRouter, Form, UploadFile
 from fastapi.responses import JSONResponse
 from geoalchemy2.functions import (
     ST_Area,
+    ST_Buffer,
     ST_CollectionExtract,
+    ST_CoveredBy,
+    ST_DWithin,
+    ST_Envelope,
+    ST_Expand,
     ST_GeomFromText,
     ST_Intersection,
     ST_Intersects,
     ST_Relate,
     ST_SetSRID,
+    ST_Union,
 )
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 from pyproj import CRS
 from pyproj.exceptions import CRSError
-from sqlalchemy import select
+from sqlalchemy import exists, select
 
 from app.boundary.catchments import (
     find_intersecting_catchments as _find_intersecting_catchments,
@@ -70,6 +76,24 @@ _UNNAMED_EXCLUDED_AREA = "Unnamed exclusion area"
 # deep and are therefore excluded. Raising it towards 0.1 m² would forgive
 # those too; that is a policy decision, not a numerical one.
 _MIN_EXCLUSION_OVERLAP_SQM = 0.001
+
+# Furthest any point of the boundary may lie outside the EDP area before it
+# counts as a breach of the EDP's outer edge.
+#
+# A distance, not an area like _MIN_EXCLUSION_OVERLAP_SQM: a boundary traced
+# along the EDP edge overshoots it by coordinate noise along the whole traced
+# length, so any area floor is eventually exceeded by a long enough edge. It
+# bounds how far the boundary reaches out, never how wide the part outside is,
+# so a narrow spur running far outside is still a breach.
+#
+# 10 cm covers the rounding of a WGS84 file at 6 decimal places (up to ~6 cm
+# in Norfolk) and is still far inside the ±25 m uncertainty of the EDP
+# outlines themselves, which are polygonised from a 50 m raster. Natural
+# England's rule is that any breach puts the boundary out, so this is a noise
+# floor only and must not grow into a drawing allowance. It deliberately
+# forgives a slip that _MIN_EXCLUSION_OVERLAP_SQM would not: an exclusion
+# protects a sensitive site, the EDP edge only bounds the scheme.
+_EDP_EDGE_TOLERANCE_M = 0.1
 
 
 router = APIRouter()
@@ -207,9 +231,8 @@ class IntersectingEdp(_WireModel):
 class CheckBoundaryResponse(_WireModel):
     """The /check-boundary body, returned on success and on every error.
 
-    A non-empty `intersectingExcludedAreas` is the sole signal that a
-    boundary is ineligible for an EDP; `intersectingEdps` is not, and is
-    populated even for an excluded boundary. See the endpoint docstring.
+    A boundary is eligible for an EDP only when `intersectingExcludedAreas` is
+    empty and `intersectingEdps` is not. See the endpoint docstring.
     """
 
     boundary_geometry_original: BoundaryGeometryOriginal | None = None
@@ -627,10 +650,11 @@ def _find_intersecting_edps(
             ST_Area(intersection).label("intersection_area_sqm"),
         ).where(
             EdpBoundaryLayer.version == version,
-            ST_Intersects(
-                EdpBoundaryLayer.geometry,
-                input_geom,
-            ),
+            ST_Intersects(EdpBoundaryLayer.geometry, input_geom),
+            # Interiors share area, as in _find_intersecting_excluded_areas: an
+            # EDP that only shares an edge with the boundary is not one the
+            # boundary lies in.
+            ST_Relate(EdpBoundaryLayer.geometry, input_geom, "2********"),
         )
         rows = session.execute(stmt).fetchall()
 
@@ -649,6 +673,52 @@ def _find_intersecting_edps(
             }
         )
     return results
+
+
+def _is_within_edp(gdf: gpd.GeoDataFrame, repository: Repository) -> bool:
+    """Return whether the whole uploaded geometry lies inside the EDP area.
+
+    Every point of the boundary must lie within `_EDP_EDGE_TOLERANCE_M` of the
+    EDP area, so an edge traced with coordinate noise stays within. Adjacent
+    EDPs count together, so a boundary spanning two of them is within even
+    though neither covers it alone. A boundary with no EDP at all is not
+    within.
+    """
+    input_geom = ST_SetSRID(ST_GeomFromText(gdf.union_all().wkt), 27700)
+
+    with repository.session() as session:
+        version = get_active_version(session, "edp_boundary_layer")
+        # Common case first: one EDP covers the boundary outright. Index-backed,
+        # and it builds no geometry.
+        covered_by_one_edp = exists().where(
+            EdpBoundaryLayer.version == version,
+            ST_CoveredBy(input_geom, EdpBoundaryLayer.geometry),
+        )
+        if session.execute(select(covered_by_one_edp)).scalar():
+            return True
+
+        # Otherwise test the boundary against the EDP area grown by the
+        # tolerance. Only EDP within the tolerance of the boundary's extent can
+        # be nearest to any of its points, so the EDPs are clipped to that box
+        # first: growing a full-size EDP polygon is the expensive part.
+        search_box = ST_Expand(ST_Envelope(input_geom), _EDP_EDGE_TOLERANCE_M)
+        nearby_edp_area = select(
+            ST_Union(ST_Intersection(EdpBoundaryLayer.geometry, search_box))
+        ).where(
+            EdpBoundaryLayer.version == version,
+            ST_DWithin(EdpBoundaryLayer.geometry, input_geom, _EDP_EDGE_TOLERANCE_M),
+        )
+        # With no EDP nearby the union is NULL, and so is this.
+        result = session.execute(
+            select(
+                ST_CoveredBy(
+                    input_geom,
+                    ST_Buffer(nearby_edp_area.scalar_subquery(), _EDP_EDGE_TOLERANCE_M),
+                )
+            )
+        ).scalar()
+
+    return bool(result)
 
 
 def _attach_catchments(
@@ -738,20 +808,26 @@ async def check_boundary(
     format-agnostic. This service then opens that specific file rather than
     re-implementing a picking rule of its own.
 
-    Returns the uploaded geometry as GeoJSON along with any intersecting EDP
-    areas and any intersecting EDP exclusion zones.
+    Returns the uploaded geometry as GeoJSON along with the EDPs the boundary
+    lies within and any intersecting EDP exclusion zones.
 
-    A boundary that overlaps an exclusion zone (a buffered SSSI polygon) is not
-    eligible for the EDP and must be routed to HRA. Such a response is a normal
-    200 with `error: null`, and a non-empty `intersectingExcludedAreas` is the
-    *sole* signal of that. Sharing a zone edge exactly does not exclude;
-    anything past it does, down to a centimetre.
+    Two signals make a boundary ineligible, and both arrive as a normal 200
+    with `error: null`. Consumers must check them in this order:
 
-    `intersectingEdps` is NOT that signal and must not be read as one. The
-    zones are clipped SSSI extents lying inside the EDP boundary, so an
-    excluded boundary overlaps the EDP too and that overlap is reported like
-    any other. Gating eligibility on a non-empty `intersectingEdps` would route
-    an excluded boundary down the EDP path instead of to HRA.
+    1. A non-empty `intersectingExcludedAreas`: the boundary overlaps an
+       exclusion zone (a buffered SSSI polygon) and must be routed to HRA.
+       Sharing a zone edge exactly does not exclude; anything past it does,
+       down to a centimetre.
+    2. An empty `intersectingEdps`: some part of the boundary lies outside the
+       EDP area. Running along the EDP's outer edge is within; crossing it is
+       not, and such a boundary reports no EDPs, exactly as one entirely
+       outside the EDP does.
+
+    The order matters because an excluded boundary still lists its EDPs: the
+    zones are clipped SSSI extents lying inside the EDP boundary, so the
+    overlap is real, and the excluded-area page reads it for analytics.
+    Gating eligibility on a non-empty `intersectingEdps` alone would route an
+    excluded boundary down the EDP path instead of to HRA.
     """
     content = await geometry_file.read(_max_upload_bytes + 1)
     if len(content) > _max_upload_bytes:
@@ -851,11 +927,17 @@ def _assess_boundary(gdf: gpd.GeoDataFrame) -> JSONResponse:
     already-validated geometry."""
     repository = _get_repository()
     intersecting_excluded_areas = _find_intersecting_excluded_areas(gdf, repository)
-    # Reported even when the boundary is excluded. The zones are clipped SSSI
-    # extents lying inside the EDP, so an excluded boundary really does overlap
-    # it and an empty list here would be a geometric falsehood. Ineligibility
-    # is carried by intersecting_excluded_areas alone.
     intersecting_edps = _find_intersecting_edps(gdf, repository)
+    # Any breach of the EDP's outer edge takes the boundary out of the EDP's
+    # scope, so it reports no EDPs and reads as not in the EDP. An excluded
+    # boundary is left alone: the exclusion already makes it ineligible, and
+    # it keeps its EDPs as described in the endpoint docstring.
+    if (
+        intersecting_edps
+        and not intersecting_excluded_areas
+        and not _is_within_edp(gdf, repository)
+    ):
+        intersecting_edps = []
     _attach_catchments(intersecting_edps, gdf, repository)
 
     # Extract the first Polygon/MultiPolygon geometry, stripping user-supplied

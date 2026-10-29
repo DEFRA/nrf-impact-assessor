@@ -793,6 +793,64 @@ class TestCheckBoundaryEdpIntersection:
         assert response.json()["intersectingExcludedAreas"] == []
 
 
+class TestCheckBoundaryCrossingEdpEdge:
+    """The whole boundary must lie inside the EDP area to be eligible.
+
+    A boundary that crosses the EDP's outer edge reports no EDPs, so it reads
+    exactly like one entirely outside the EDP and consumers route it to the
+    not-in-EDP page.
+    """
+
+    @patch("app.boundary.router._is_within_edp", return_value=False)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    def test_boundary_crossing_the_edp_edge_reports_no_edps(self, mock_within, client):
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"] is None
+        assert body["intersectingEdps"] == []
+
+    @patch("app.boundary.router._find_intersecting_catchments")
+    @patch("app.boundary.router._is_within_edp", return_value=False)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    def test_boundary_crossing_the_edp_edge_skips_the_catchment_query(
+        self, mock_within, mock_catchments, client
+    ):
+        _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        mock_catchments.assert_not_called()
+
+    @patch(
+        "app.boundary.router._find_intersecting_excluded_areas", _mock_excluded_areas
+    )
+    @patch("app.boundary.router._is_within_edp", return_value=False)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    def test_excluded_boundary_crossing_the_edp_edge_keeps_its_edps(
+        self, mock_within, client
+    ):
+        """The excluded-area page reads the first EDP and its catchments for
+        analytics, so an excluded boundary keeps them. The exclusion list
+        already makes it ineligible."""
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        body = response.json()
+        assert body["intersectingExcludedAreas"] == ["mid-Norfolk SSSI"]
+        assert len(body["intersectingEdps"]) == 2
+
+    @patch(
+        "app.boundary.router._find_intersecting_excluded_areas", _mock_excluded_areas
+    )
+    @patch("app.boundary.router._is_within_edp")
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    def test_excluded_boundary_skips_the_within_edp_query(self, mock_within, client):
+        """The exclusion already decides the outcome, so the costlier
+        within-EDP query is not run."""
+        _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        mock_within.assert_not_called()
+
+
 class TestFindIntersectingEdpsMapping:
     """Regression tests for the row -> dict mapping in _find_intersecting_edps.
 
@@ -846,7 +904,8 @@ class TestCheckBoundaryExcludedAreas:
 
     The zones are clipped SSSI extents lying inside the EDP boundary, so an
     excluded boundary does intersect the EDP and the overlap is reported.
-    Ineligibility is carried by intersectingExcludedAreas alone.
+    Ineligibility is carried by intersectingExcludedAreas, which consumers
+    check before intersectingEdps.
     """
 
     @patch(
