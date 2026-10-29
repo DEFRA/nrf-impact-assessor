@@ -485,6 +485,11 @@ class NutrientAssessment:
 
         round_cols = [
             "area_in_nn_catchment_ha",
+            "dwelling_density",
+            "n_lu_uplift",
+            "p_lu_uplift",
+            "n_lu_post_suds",
+            "p_lu_post_suds",
             "n_wwtw_temp",
             "p_wwtw_temp",
             "n_wwtw_perm",
