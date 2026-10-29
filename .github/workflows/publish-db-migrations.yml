@@ -1,0 +1,39 @@
+name: Publish Database Schema
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag to publish the changelog from, and the schema version to publish it as (e.g. 1.2.3)
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-west-2
+  AWS_ACCOUNT_ID: "094954420758"
+
+jobs:
+  publish-db-migrations:
+    name: CDP-publish-db-migrations-workflow
+    runs-on: ubuntu-24.04
+    steps:
+      # Publishes ./changelog as it is at that tag, so the schema matches the
+      # released service version.
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.version }}
+
+      # force: a manual run has no previous commit to diff ./changelog against.
+      # version: without it the action would pick the next, unreleased tag.
+      - name: Publish Database Schema
+        uses: DEFRA/cdp-build-action/publish-db-migrations@550c4792fac07cfd59eaea469bc0a17ce202cced # main
+        with:
+          path: ./changelog
+          version: ${{ inputs.version }}
+          force: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}

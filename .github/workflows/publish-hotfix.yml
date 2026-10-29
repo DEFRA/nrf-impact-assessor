@@ -15,7 +15,7 @@ env:
 jobs:
   build:
     name: CDP-build-hotfix-workflow
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,8 +42,3 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish Database Schema
-        uses: DEFRA/cdp-build-action/publish-db-migrations@550c4792fac07cfd59eaea469bc0a17ce202cced # main
-        with:
-          path: ./changelog
-          github-token: ${{ secrets.GITHUB_TOKEN }}
