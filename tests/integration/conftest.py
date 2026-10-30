@@ -1,8 +1,12 @@
 """Integration test fixtures for PostGIS repository tests."""
 
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import geopandas as gpd
 import pytest
@@ -13,6 +17,7 @@ from sqlalchemy.engine import Engine
 from app.repositories.repository import Repository
 
 CRS_BNG = "EPSG:27700"
+TEST_DATABASE = "test_nrf_impact"
 
 # Every reference table an integration test may leave committed rows in.
 # Truncated before each test that declares `clean_reference_tables`.
@@ -36,90 +41,13 @@ REFERENCE_TABLES = (
 
 
 @pytest.fixture(scope="session")
-def test_engine() -> Engine:
-    """Create test database and return engine.
-
-    This is a session-scoped fixture that:
-    1. Creates test_nrf_impact database
-    2. Runs migrations (creates schema and tables)
-    3. Returns engine for test use
-    4. Drops database after all tests complete
+def test_engine() -> Iterator[Engine]:
+    """Create the test_nrf_impact database, migrate it to head with Alembic (the
+    same migration logic as production) and drop it after all tests complete.
     """
-    from app.config import DatabaseSettings
-
-    db = DatabaseSettings()
-    admin_db_url = (
-        f"postgresql+psycopg2://{db.user}@{db.host}:{db.port}/postgres"  # NOSONAR
-    )
-    test_db_url = f"postgresql+psycopg2://{db.user}@{db.host}:{db.port}/test_nrf_impact"  # NOSONAR
-
-    # Connect to default postgres database to create test database
-    admin_engine = create_engine(admin_db_url)
-
-    # Drop and recreate test database
-    with admin_engine.connect() as conn:
-        conn.execution_options(isolation_level="AUTOCOMMIT")
-        # Terminate existing connections
-        conn.execute(
-            text(
-                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                "WHERE datname = 'test_nrf_impact' AND pid <> pg_backend_pid()"
-            )
-        )
-        # Drop if exists
-        conn.execute(text("DROP DATABASE IF EXISTS test_nrf_impact"))
-        # Create fresh
-        conn.execute(text("CREATE DATABASE test_nrf_impact"))
-
-    admin_engine.dispose()
-
-    # Create engine for test database
-    engine = create_engine(test_db_url, echo=False)
-
-    # Enable PostGIS extension (required before running migrations)
-    with engine.connect() as conn:
-        conn.execution_options(isolation_level="AUTOCOMMIT")
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
-
-    # Run Alembic migrations to create schema and tables
-    # This ensures tests use the same migration logic as production
-    alembic_ini = Path(__file__).parent.parent.parent / "alembic.ini"
-    env = {
-        "DB_HOST": db.host,
-        "DB_PORT": str(db.port),
-        "DB_DATABASE": "test_nrf_impact",
-        "DB_IAM_AUTHENTICATION": "false",
-        "DB_LOCAL_PASSWORD": "",
-    }
-
-    cmd = ["alembic", "-c", str(alembic_ini), "upgrade", "head"]
-    result = subprocess.run(  # noqa: S603, S607
-        cmd,
-        env={**subprocess.os.environ, **env},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    if result.returncode != 0:
-        msg = f"Alembic migration failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
-        raise RuntimeError(msg)
-
-    yield engine
-
-    # Cleanup: drop test database
-    engine.dispose()
-    admin_engine = create_engine(admin_db_url)
-    with admin_engine.connect() as conn:
-        conn.execution_options(isolation_level="AUTOCOMMIT")
-        conn.execute(
-            text(
-                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                "WHERE datname = 'test_nrf_impact' AND pid <> pg_backend_pid()"
-            )
-        )
-        conn.execute(text("DROP DATABASE IF EXISTS test_nrf_impact"))
-    admin_engine.dispose()
+    with scratch_database(TEST_DATABASE) as engine:
+        run_alembic(TEST_DATABASE, "upgrade", "head")
+        yield engine
 
 
 @pytest.fixture
@@ -505,3 +433,110 @@ def set_active_version(repository: Repository, table: str, version: int) -> None
             {"t": table, "v": version},
         )
         session.commit()
+
+
+def insert_levy_charge(
+    repository: Repository,
+    edp_id: int = 1,
+    valid_from: date = date(2026, 1, 1),
+    valid_to: date = date(2026, 12, 31),
+    price: str = "2675",
+) -> UUID:
+    """Insert a committed levy_charges row and return its id.
+
+    Shared because the levy endpoint, lookup and constraint tests all seed
+    their own charge rows.
+    """
+    with repository.session() as session:
+        charge_id = session.execute(
+            text(
+                "INSERT INTO public.levy_charges "
+                "(id, edp_id, edp_name, edp_start_date, charge_valid_from, "
+                "charge_valid_to, base_charge_per_unit) VALUES "
+                "(gen_random_uuid(), :id, 'Test EDP', :f, :f, :t, :price) "
+                "RETURNING id"
+            ),
+            {
+                "id": edp_id,
+                "f": valid_from,
+                "t": valid_to,
+                "price": Decimal(price),
+            },
+        ).scalar_one()
+        session.commit()
+    return charge_id
+
+
+def _database_url(database: str) -> str:
+    from app.config import DatabaseSettings
+
+    db = DatabaseSettings()
+    return f"postgresql+psycopg2://{db.user}@{db.host}:{db.port}/{database}"  # NOSONAR
+
+
+def run_alembic(database: str, *args: str) -> None:
+    """Run an Alembic command (e.g. "upgrade", "head") against `database`.
+
+    Raises RuntimeError with Alembic's output when the command fails.
+    """
+    from app.config import DatabaseSettings
+
+    db = DatabaseSettings()
+    alembic_ini = Path(__file__).parent.parent.parent / "alembic.ini"
+    env = {
+        "DB_HOST": db.host,
+        "DB_PORT": str(db.port),
+        "DB_DATABASE": database,
+        "DB_IAM_AUTHENTICATION": "false",
+        "DB_LOCAL_PASSWORD": "",
+    }
+    cmd = ["alembic", "-c", str(alembic_ini), *args]  # noqa: S607
+    result = subprocess.run(  # noqa: S603
+        cmd,
+        env={**subprocess.os.environ, **env},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        msg = f"alembic {' '.join(args)} failed:\n{result.stdout}\n{result.stderr}"
+        raise RuntimeError(msg)
+
+
+def _drop_database(admin_engine: Engine, database: str) -> None:
+    with admin_engine.connect() as conn:
+        conn.execution_options(isolation_level="AUTOCOMMIT")
+        conn.execute(
+            text(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE datname = :db AND pid <> pg_backend_pid()"
+            ),
+            {"db": database},
+        )
+        conn.execute(text(f"DROP DATABASE IF EXISTS {database}"))
+
+
+@contextmanager
+def scratch_database(database: str) -> Iterator[Engine]:
+    """Create an empty PostGIS database, and drop it afterwards.
+
+    Used for test_nrf_impact and for migration tests that need a database they
+    can migrate to any revision.
+    """
+    admin_engine = create_engine(_database_url("postgres"))
+    _drop_database(admin_engine, database)
+    with admin_engine.connect() as conn:
+        conn.execution_options(isolation_level="AUTOCOMMIT")
+        conn.execute(text(f"CREATE DATABASE {database}"))
+
+    engine = create_engine(_database_url(database))
+    with engine.connect() as conn:
+        conn.execution_options(isolation_level="AUTOCOMMIT")
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+        _drop_database(admin_engine, database)
+        admin_engine.dispose()
