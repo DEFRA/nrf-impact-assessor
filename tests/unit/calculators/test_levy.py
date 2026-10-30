@@ -98,8 +98,10 @@ def test_prices_a_levy_up_to_the_largest_audit_amount():
 
 
 def test_rejects_a_provisional_levy_too_large_for_the_audit_record():
+    charge = _charge("99999999.99")
+
     with pytest.raises(LevyAmountTooLargeError, match="exceeds") as exc:
-        calculate_levy(_charge("99999999.99"), units=101, calculation_date=CALC_DATE)
+        calculate_levy(charge, units=101, calculation_date=CALC_DATE)
 
     assert exc.value.amount == Decimal("10099999998.99")
     assert exc.value.units == 101
@@ -109,13 +111,17 @@ def test_rejects_a_provisional_levy_too_large_for_the_audit_record():
 
 def test_rejects_an_inflated_levy_too_large_for_the_audit_record():
     # Provisional 9,999,999,999.00 fits; inflated by 1.0000001 it does not.
+    charge = _charge("99999999.99")
+    edp_start_year_index = _index("1")
+    calculation_year_index = _index("1.0000001")
+
     with pytest.raises(LevyAmountTooLargeError, match="exceeds"):
         calculate_levy(
-            _charge("99999999.99"),
+            charge,
             units=100,
             calculation_date=EARLIER_CALC_DATE,
-            edp_start_year_index=_index("1"),
-            calculation_year_index=_index("1.0000001"),
+            edp_start_year_index=edp_start_year_index,
+            calculation_year_index=calculation_year_index,
         )
 
 
@@ -130,10 +136,10 @@ def test_prices_up_to_the_most_units_the_audit_record_holds():
 def test_rejects_more_units_than_the_audit_record_holds():
     # £0.01 x 2**31 units is well under MAX_LEVY_AMOUNT, but
     # audit_levy_calculations.units is a PostgreSQL integer.
+    charge = _charge("0.01")
+
     with pytest.raises(LevyUnitsTooLargeError, match="exceeds") as exc:
-        calculate_levy(
-            _charge("0.01"), units=MAX_LEVY_UNITS + 1, calculation_date=CALC_DATE
-        )
+        calculate_levy(charge, units=MAX_LEVY_UNITS + 1, calculation_date=CALC_DATE)
 
     assert exc.value.units == 2_147_483_648
     assert isinstance(exc.value, LevyChargeUnavailableError)
@@ -141,18 +147,24 @@ def test_rejects_more_units_than_the_audit_record_holds():
 
 def test_rejects_a_levy_with_more_digits_than_decimal_precision():
     # Rounding 10**24 x £2,675.12 to pence needs more than 28 digits.
+    charge = _charge("2675.12")
+
     with pytest.raises(LevyAmountTooLargeError, match="exceeds"):
-        calculate_levy(_charge("2675.12"), units=10**24, calculation_date=CALC_DATE)
+        calculate_levy(charge, units=10**24, calculation_date=CALC_DATE)
 
 
 def test_rejects_an_inflated_levy_with_more_digits_than_decimal_precision():
+    charge = _charge("2675.12")
+    edp_start_year_index = _index("3")
+    calculation_year_index = _index("7")
+
     with pytest.raises(LevyAmountTooLargeError, match="exceeds"):
         calculate_levy(
-            _charge("2675.12"),
+            charge,
             units=10**24,
             calculation_date=EARLIER_CALC_DATE,
-            edp_start_year_index=_index("3"),
-            calculation_year_index=_index("7"),
+            edp_start_year_index=edp_start_year_index,
+            calculation_year_index=calculation_year_index,
         )
 
 
