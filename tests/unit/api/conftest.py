@@ -34,6 +34,20 @@ def _no_catchments():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _within_edp():
+    """Default every endpoint test to "wholly within the EDP".
+
+    /check-boundary runs the within-EDP query for every valid geometry, so
+    without this each test that gets past validation would fall through to a
+    real PostGIS connection. Defaulting to within leaves the EDP list as
+    `_find_intersecting_edps` returned it; tests of a boundary crossing the EDP
+    edge override it with their own @patch, which takes precedence.
+    """
+    with patch("app.boundary.router._is_within_edp", return_value=True):
+        yield
+
+
 def _make_geojson_bytes(
     coordinates: list | None = None,
     crs: str | None = None,
