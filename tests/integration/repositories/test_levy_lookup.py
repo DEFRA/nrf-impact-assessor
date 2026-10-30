@@ -1,7 +1,8 @@
 """The levy lookups and audit record against PostGIS: id resolution reads the
 active edp_boundary_layer version, the charge lookup honours the validity
 window, and a recorded calculation reads back with every field intact and
-names the charge and index rows it used, which then cannot be deleted."""
+names the charge and index rows it used, which then cannot be deleted. A
+charge that is not positive pounds and pence is rejected by the table."""
 
 from datetime import date
 from decimal import Decimal
@@ -9,8 +10,9 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy import select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 
+from app.calculators.levy import MAX_LEVY_AMOUNT, MAX_LEVY_UNITS
 from app.models.db import LevyCalculationRecord
 from app.repositories.levy import (
     get_levy_pricing_rows,
@@ -20,7 +22,7 @@ from app.repositories.levy import (
 )
 from app.repositories.repository import Repository
 from tests.conftest import make_levy_calculation
-from tests.integration.conftest import set_active_version
+from tests.integration.conftest import insert_levy_charge, set_active_version
 
 pytestmark = pytest.mark.integration
 
@@ -57,23 +59,6 @@ def _insert_edp(repository: Repository, label: str, edp_id, version: int = 1) ->
         session.commit()
 
 
-def _insert_charge(
-    repository: Repository, edp_id: int, valid_from: date, valid_to: date
-) -> UUID:
-    with repository.session() as session:
-        charge_id = session.execute(
-            text(
-                "INSERT INTO public.levy_charges "
-                "(id, edp_id, edp_name, edp_start_date, charge_valid_from, "
-                "charge_valid_to, base_charge_per_unit) VALUES "
-                "(gen_random_uuid(), :id, 'x', :f, :f, :t, 100.1234) RETURNING id"
-            ),
-            {"id": edp_id, "f": valid_from, "t": valid_to},
-        ).scalar_one()
-        session.commit()
-    return charge_id
-
-
 def test_resolves_id_from_active_version_only(repository: Repository):
     _insert_edp(repository, LABEL, edp_id=7, version=1)
     _insert_edp(repository, LABEL, edp_id=8, version=2)
@@ -107,9 +92,9 @@ def test_a_label_with_two_ids_means_none(repository: Repository):
 
 
 def test_adjacent_charge_windows_are_allowed(repository: Repository):
-    _insert_charge(repository, 7, date(2026, 1, 1), date(2026, 12, 31))
-    _insert_charge(repository, 7, date(2027, 1, 1), date(2027, 12, 31))
-    _insert_charge(repository, 8, date(2026, 6, 1), date(2027, 5, 31))
+    insert_levy_charge(repository, 7, date(2026, 1, 1), date(2026, 12, 31))
+    insert_levy_charge(repository, 7, date(2027, 1, 1), date(2027, 12, 31))
+    insert_levy_charge(repository, 8, date(2026, 6, 1), date(2027, 5, 31))
 
     with repository.session() as session:
         rows = get_levy_pricing_rows(session, 7, date(2027, 1, 1))
@@ -127,17 +112,47 @@ def test_adjacent_charge_windows_are_allowed(repository: Repository):
 def test_overlapping_charge_windows_are_rejected(
     repository: Repository, valid_from: date, valid_to: date
 ):
-    _insert_charge(repository, 7, date(2026, 1, 1), date(2026, 12, 31))
+    insert_levy_charge(repository, 7, date(2026, 1, 1), date(2026, 12, 31))
 
     with pytest.raises(IntegrityError, match="ex_levy_charges_edp_window"):
-        _insert_charge(repository, 7, valid_from, valid_to)
+        insert_levy_charge(repository, 7, valid_from, valid_to)
 
 
 def test_a_window_ending_before_it_starts_is_rejected(repository: Repository):
     valid_from, valid_to = date(2026, 12, 31), date(2026, 1, 1)
 
     with pytest.raises(IntegrityError, match="ck_levy_charges_valid_window"):
-        _insert_charge(repository, 7, valid_from, valid_to)
+        insert_levy_charge(repository, 7, valid_from, valid_to)
+
+
+@pytest.mark.parametrize(
+    "price",
+    [
+        "2675.555",
+        "2675.54999",  # numeric(12,4) would round this to 2675.5500 and pass
+        "0",
+        "-2675",
+        "100000000",  # beyond the numeric(12,4) range the column had
+        "NaN",
+        "Infinity",
+    ],
+)
+def test_an_invalid_base_charge_is_rejected(repository: Repository, price: str):
+    with pytest.raises(IntegrityError, match="ck_levy_charges_base_charge_per_unit"):
+        insert_levy_charge(repository, price=price)
+
+
+@pytest.mark.parametrize("price", ["0.01", "2675.55", "2675.5000", "99999999.99"])
+def test_a_base_charge_in_pounds_and_pence_is_stored_unchanged(
+    repository: Repository, price: str
+):
+    insert_levy_charge(repository, price=price)
+
+    with repository.session() as session:
+        stored = session.execute(
+            text("SELECT base_charge_per_unit FROM public.levy_charges")
+        ).scalar_one()
+    assert stored == Decimal(price)
 
 
 def _insert_index(
@@ -162,7 +177,7 @@ def _insert_index(
 def test_pricing_rows_join_the_edp_start_and_calculation_year_indices(
     repository: Repository,
 ):
-    charge_id = _insert_charge(repository, 7, date(2026, 1, 1), date(2027, 12, 31))
+    charge_id = insert_levy_charge(repository, 7, date(2026, 1, 1), date(2027, 12, 31))
     start_id = _insert_index(repository, 2026, "1.0000")
     calc_id = _insert_index(repository, 2027, "1.0500")
 
@@ -175,7 +190,7 @@ def test_pricing_rows_join_the_edp_start_and_calculation_year_indices(
 
 
 def test_pricing_rows_leave_a_missing_index_none(repository: Repository):
-    _insert_charge(repository, 7, date(2026, 1, 1), date(2027, 12, 31))
+    insert_levy_charge(repository, 7, date(2026, 1, 1), date(2027, 12, 31))
     start_id = _insert_index(repository, 2026, "1.0000")
 
     with repository.session() as session:
@@ -186,7 +201,7 @@ def test_pricing_rows_leave_a_missing_index_none(repository: Repository):
 
 
 def test_pricing_rows_honour_the_charge_validity_window(repository: Repository):
-    _insert_charge(repository, 7, date(2026, 1, 1), date(2027, 12, 31))
+    insert_levy_charge(repository, 7, date(2026, 1, 1), date(2027, 12, 31))
     _insert_index(repository, 2026, "1.0000")
 
     with repository.session() as session:
@@ -199,7 +214,7 @@ def test_pricing_rows_honour_the_charge_validity_window(repository: Repository):
 
 
 def test_record_levy_calculation_round_trips(repository: Repository):
-    charge_id = _insert_charge(repository, 1, date(2026, 1, 1), date(2027, 12, 31))
+    charge_id = insert_levy_charge(repository, 1, date(2026, 1, 1), date(2027, 12, 31))
     start_id = _insert_index(repository, 2026, "1.0000")
     calc_id = _insert_index(repository, 2028, "1.0512")
     levy = make_levy_calculation(
@@ -232,7 +247,7 @@ def test_record_levy_calculation_round_trips(repository: Repository):
 
 
 def test_record_without_inflation_leaves_index_columns_null(repository: Repository):
-    charge_id = _insert_charge(repository, 1, date(2026, 1, 1), date(2027, 12, 31))
+    charge_id = insert_levy_charge(repository, 1, date(2026, 1, 1), date(2027, 12, 31))
     with repository.session() as session:
         record_levy_calculation(
             session, "NRL-000002", make_levy_calculation(levy_charge_id=charge_id)
@@ -251,7 +266,7 @@ def test_record_without_inflation_leaves_index_columns_null(repository: Reposito
 
 
 def test_mark_sent_stamps_only_the_named_row(repository: Repository):
-    charge_id = _insert_charge(repository, 1, date(2026, 1, 1), date(2027, 12, 31))
+    charge_id = insert_levy_charge(repository, 1, date(2026, 1, 1), date(2027, 12, 31))
     levy = make_levy_calculation(levy_charge_id=charge_id)
     with repository.session() as session:
         # A redelivered job records a second row for the same quote.
@@ -278,6 +293,64 @@ def test_mark_sent_stamps_only_the_named_row(repository: Repository):
     assert sent[second.id] is not None
 
 
+def test_record_holds_the_largest_levy_the_calculator_prices(repository: Repository):
+    charge_id = insert_levy_charge(repository, price="99999999.99")
+    with repository.session() as session:
+        record_levy_calculation(
+            session,
+            "NRL-000006",
+            make_levy_calculation(
+                levy_charge_id=charge_id,
+                base_charge_per_unit=Decimal("99999999.99"),
+                provisional_amount=MAX_LEVY_AMOUNT,
+                inflation_adjusted_amount=MAX_LEVY_AMOUNT,
+            ),
+        )
+        session.commit()
+
+    with repository.session() as session:
+        row = session.scalars(
+            select(LevyCalculationRecord).where(
+                LevyCalculationRecord.quote_reference == "NRL-000006"
+            )
+        ).one()
+
+    assert row.provisional_amount == MAX_LEVY_AMOUNT
+    assert row.inflation_adjusted_amount == MAX_LEVY_AMOUNT
+    assert row.base_charge_per_unit == Decimal("99999999.99")
+
+
+def test_record_holds_the_most_units_the_calculator_prices(repository: Repository):
+    charge_id = insert_levy_charge(repository, price="0.01")
+    with repository.session() as session:
+        record_levy_calculation(
+            session,
+            "NRL-000007",
+            make_levy_calculation(levy_charge_id=charge_id, units=MAX_LEVY_UNITS),
+        )
+        session.commit()
+
+    with repository.session() as session:
+        row = session.scalars(
+            select(LevyCalculationRecord).where(
+                LevyCalculationRecord.quote_reference == "NRL-000007"
+            )
+        ).one()
+
+    assert row.units == MAX_LEVY_UNITS
+
+
+def test_record_rejects_one_more_unit_than_the_calculator_prices(
+    repository: Repository,
+):
+    charge_id = insert_levy_charge(repository, price="0.01")
+    levy = make_levy_calculation(levy_charge_id=charge_id, units=MAX_LEVY_UNITS + 1)
+    with repository.session() as session:
+        record_levy_calculation(session, "NRL-000008", levy)
+        with pytest.raises(DataError, match="out of range"):
+            session.flush()
+
+
 def test_record_rejects_an_unknown_charge_id(repository: Repository):
     with repository.session() as session:
         record_levy_calculation(session, "NRL-000003", make_levy_calculation())
@@ -289,7 +362,7 @@ def test_record_rejects_an_unknown_charge_id(repository: Repository):
 def test_a_row_that_priced_a_quote_cannot_be_deleted(
     repository: Repository, table: str
 ):
-    charge_id = _insert_charge(repository, 1, date(2026, 1, 1), date(2027, 12, 31))
+    charge_id = insert_levy_charge(repository, 1, date(2026, 1, 1), date(2027, 12, 31))
     start_id = _insert_index(repository, 2026, "1.0000")
     calc_id = _insert_index(repository, 2028, "1.0512")
     levy = make_levy_calculation(

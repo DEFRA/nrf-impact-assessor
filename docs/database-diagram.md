@@ -87,7 +87,7 @@ erDiagram
         date edp_start_date
         date charge_valid_from "charging year start; windows per edp_id never overlap"
         date charge_valid_to "charging year end, inclusive"
-        numeric base_charge_per_unit "numeric(12,4), GBP, unrounded"
+        numeric base_charge_per_unit "numeric, GBP; CHECK over 0, under 10^8, at most 2 dp"
         timestamptz created_at "default now()"
     }
 
@@ -129,16 +129,16 @@ All three levy tables are maintained by migration (`d4e8f1a2b3c5`), not by
 
 All three are created **empty** — the migration deliberately seeds no row.
 Finance has not confirmed a published base charge or charging year for any EDP,
-and an assumed value would let a real quote price against it (scenario 5). The
-assessor reads the `levy_charges` row whose validity window contains the
-calculation date (NRF2-913).
+and an assumed value would let a real quote price against it. The assessor
+reads the `levy_charges` row whose validity window contains the calculation
+date.
 
 `levy_inflation_index` holds the published RICS CIL Index per charging year and
 the factor it derives against the 2026 base (2026 = 1.0000). It is read when the
 calculation date falls in a later charging year than the EDP's publication, to
 inflation-adjust the provisional amount.
 
-`audit_levy_calculations` holds one audit row per calculation (scenario 7); it is
+`audit_levy_calculations` holds one audit row per calculation; it is
 written by the orchestrator and never truncated by data sync. Each row copies the
 values it used and names the `levy_charges` row and, when an inflation step
 applied, the two `levy_inflation_index` rows they came from (otherwise the index

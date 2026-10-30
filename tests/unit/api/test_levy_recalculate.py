@@ -126,14 +126,48 @@ def test_returns_not_found_when_no_charge_exists_for_the_edp(client, db):
     assert response.status_code == 404
 
 
-def test_returns_unprocessable_when_the_levy_is_unavailable(client, db):
+def test_prices_a_base_charge_with_pence(client, db):
     charge = _charge()
-    charge.base_charge_per_unit = Decimal("2675.50")
+    charge.base_charge_per_unit = Decimal("2675.55")
     db["pricing"].return_value = LevyPricingRows(charge, None, None)
 
     response = client.post(URL, json=VALID_BODY)
 
+    assert response.status_code == 200
+    assert response.json()["provisionalAmount"] == 26755.5
+    assert response.json()["inflationAdjustedAmount"] == 26755.5
+
+
+def test_returns_unprocessable_when_the_levy_is_too_large(client, db):
+    response = client.post(URL, json=VALID_BODY | {"units": 4_000_000})
+
     assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Levy of £10,700,000,000.00 for 4,000,000 units exceeds the maximum "
+        "of £9,999,999,999.99. Reduce the number of units."
+    )
+
+
+def test_returns_unprocessable_for_more_units_than_the_audit_record_holds(client, db):
+    charge = _charge()
+    charge.base_charge_per_unit = Decimal("0.01")
+    db["pricing"].return_value = LevyPricingRows(charge, None, None)
+
+    response = client.post(URL, json=VALID_BODY | {"units": 2_147_483_648})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "2,147,483,648 units exceeds the maximum of 2,147,483,647. "
+        "Reduce the number of units."
+    )
+
+
+def test_returns_unprocessable_for_more_units_than_decimal_precision(client, db):
+    # 10**24 units x £2,675 has more digits than rounding to pence can hold.
+    response = client.post(URL, json=VALID_BODY | {"units": 10**24})
+
+    assert response.status_code == 422
+    assert response.json()["detail"].startswith("Levy of £2,675,000,000,")
 
 
 @pytest.mark.parametrize(
