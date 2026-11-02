@@ -1,5 +1,5 @@
-"""Scenarios 1 and 3 of NRF2-913: a whole-pound base charge times units, and
-half-up rounding to 2 dp of the inflation-adjusted charge only."""
+"""A base charge of at most 2 dp times units, and half-up rounding to 2 dp of
+the inflation-adjusted charge only."""
 
 from datetime import date
 from decimal import Decimal
@@ -10,8 +10,11 @@ import pytest
 
 from app.calculators.levy import (
     LEVY_CALCULATOR_VERSION,
+    MAX_LEVY_UNITS,
+    LevyAmountTooLargeError,
     LevyCalculation,
     LevyChargeUnavailableError,
+    LevyUnitsTooLargeError,
     calculate_levy,
     round_gbp,
 )
@@ -53,8 +56,8 @@ def test_round_gbp_keeps_two_place_scale():
     assert str(round_gbp(Decimal("10"))) == "10.00"
 
 
-def test_provisional_is_whole_base_charge_times_units():
-    # NRF2-1242: the NE-approved base charge, 10 units.
+def test_provisional_is_base_charge_times_units():
+    # The NE-approved base charge, 10 units.
     result = calculate_levy(_charge("2675.0000"), units=10, calculation_date=CALC_DATE)
 
     assert result.base_charge_per_unit == Decimal("2675.0000")
@@ -69,12 +72,143 @@ def test_accepts_whole_base_charge_at_any_scale(price):
     assert result.provisional_amount == Decimal("8025.00")
 
 
-@pytest.mark.parametrize("price", ["2193.6649", "2675.01", "0.5"])
-def test_rejects_fractional_base_charge(price):
-    charge = _charge(price)
+@pytest.mark.parametrize(
+    ("price", "expected"),
+    [
+        ("2675.50", "8026.50"),
+        ("2675.5", "8026.50"),
+        ("2675.5000", "8026.50"),
+        ("2675.01", "8025.03"),
+        ("0.99", "2.97"),
+    ],
+)
+def test_prices_base_charge_with_pence(price, expected):
+    result = calculate_levy(_charge(price), units=3, calculation_date=CALC_DATE)
 
-    with pytest.raises(LevyChargeUnavailableError, match="whole number"):
-        calculate_levy(charge, units=10, calculation_date=CALC_DATE)
+    assert result.provisional_amount == Decimal(expected)
+    assert str(result.provisional_amount) == expected
+
+
+def test_prices_a_levy_up_to_the_largest_audit_amount():
+    result = calculate_levy(
+        _charge("99999999.99"), units=100, calculation_date=CALC_DATE
+    )
+
+    assert result.provisional_amount == Decimal("9999999999.00")
+
+
+def test_rejects_a_provisional_levy_too_large_for_the_audit_record():
+    charge = _charge("99999999.99")
+
+    with pytest.raises(LevyAmountTooLargeError, match="exceeds") as exc:
+        calculate_levy(charge, units=101, calculation_date=CALC_DATE)
+
+    assert exc.value.amount == Decimal("10099999998.99")
+    assert exc.value.units == 101
+    # Still a LevyChargeUnavailableError, so the quote job stops as before.
+    assert isinstance(exc.value, LevyChargeUnavailableError)
+
+
+def test_rejects_an_inflated_levy_too_large_for_the_audit_record():
+    # Provisional 9,999,999,999.00 fits; inflated by 1.0000001 it does not.
+    charge = _charge("99999999.99")
+    edp_start_year_index = _index("1")
+    calculation_year_index = _index("1.0000001")
+
+    with pytest.raises(LevyAmountTooLargeError, match="exceeds"):
+        calculate_levy(
+            charge,
+            units=100,
+            calculation_date=EARLIER_CALC_DATE,
+            edp_start_year_index=edp_start_year_index,
+            calculation_year_index=calculation_year_index,
+        )
+
+
+def test_prices_up_to_the_most_units_the_audit_record_holds():
+    result = calculate_levy(
+        _charge("0.01"), units=MAX_LEVY_UNITS, calculation_date=CALC_DATE
+    )
+
+    assert result.units == 2_147_483_647
+
+
+def test_rejects_more_units_than_the_audit_record_holds():
+    # £0.01 x 2**31 units is well under MAX_LEVY_AMOUNT, but
+    # audit_levy_calculations.units is a PostgreSQL integer.
+    charge = _charge("0.01")
+
+    with pytest.raises(LevyUnitsTooLargeError, match="exceeds") as exc:
+        calculate_levy(charge, units=MAX_LEVY_UNITS + 1, calculation_date=CALC_DATE)
+
+    assert exc.value.units == 2_147_483_648
+    assert isinstance(exc.value, LevyChargeUnavailableError)
+
+
+def test_rejects_a_levy_with_more_digits_than_decimal_precision():
+    # Rounding 10**24 x £2,675.12 to pence needs more than 28 digits.
+    charge = _charge("2675.12")
+
+    with pytest.raises(LevyAmountTooLargeError, match="exceeds"):
+        calculate_levy(charge, units=10**24, calculation_date=CALC_DATE)
+
+
+def test_rejects_an_inflated_levy_with_more_digits_than_decimal_precision():
+    charge = _charge("2675.12")
+    edp_start_year_index = _index("3")
+    calculation_year_index = _index("7")
+
+    with pytest.raises(LevyAmountTooLargeError, match="exceeds"):
+        calculate_levy(
+            charge,
+            units=10**24,
+            calculation_date=EARLIER_CALC_DATE,
+            edp_start_year_index=edp_start_year_index,
+            calculation_year_index=calculation_year_index,
+        )
+
+
+@pytest.mark.parametrize(
+    ("calculation_year_factor", "fits"),
+    [
+        # 9,999,999,999.00 inflated to exactly 9,999,999,999.994 rounds down to
+        # the largest audit amount; to 9,999,999,999.995 it rounds past it.
+        ("9999999999994", True),
+        ("9999999999995", False),
+    ],
+)
+def test_inflated_levy_that_rounds_to_the_largest_audit_amount_fits(
+    calculation_year_factor, fits
+):
+    def calculate():
+        return calculate_levy(
+            _charge("99999999.99"),
+            units=100,
+            calculation_date=EARLIER_CALC_DATE,
+            edp_start_year_index=_index("9999999999000"),
+            calculation_year_index=_index(calculation_year_factor),
+        )
+
+    if fits:
+        assert calculate().inflation_adjusted_amount == Decimal("9999999999.99")
+    else:
+        with pytest.raises(LevyAmountTooLargeError):
+            calculate()
+
+
+def test_provisional_rounds_half_up_like_the_inflated_total():
+    # The levy_charges CHECK keeps such a charge out of the database; a caller
+    # that bypasses it still gets the module's half-up rule, not banker's.
+    result = calculate_levy(
+        _charge("2675.125"),
+        units=1,
+        calculation_date=EARLIER_CALC_DATE,
+        edp_start_year_index=_index("1"),
+        calculation_year_index=_index("1"),
+    )
+
+    assert result.provisional_amount == Decimal("2675.13")
+    assert result.inflation_adjusted_amount == Decimal("2675.13")
 
 
 @pytest.mark.parametrize(

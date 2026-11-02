@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- Alembic revision: a8c2e4f6b1d3 -->
+
+    <!-- Unconstrained numeric: a declared scale rounds a 3+ dp value before the CHECK
+         runs. The upper bound is the old numeric(12,4) range, so rollback cannot overflow. -->
+    <changeSet id="12-levy-base-charge-per-unit" author="nrf">
+        <modifyDataType tableName="levy_charges" schemaName="public"
+                        columnName="base_charge_per_unit" newDataType="numeric"/>
+        <sql>ALTER TABLE public.levy_charges
+            ADD CONSTRAINT ck_levy_charges_base_charge_per_unit
+            CHECK (base_charge_per_unit &gt; 0
+                   AND base_charge_per_unit &lt; 100000000
+                   AND base_charge_per_unit = round(base_charge_per_unit, 2))</sql>
+        <rollback>
+            <sql>ALTER TABLE public.levy_charges
+                DROP CONSTRAINT ck_levy_charges_base_charge_per_unit</sql>
+            <modifyDataType tableName="levy_charges" schemaName="public"
+                            columnName="base_charge_per_unit" newDataType="numeric(12,4)"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
