@@ -260,6 +260,22 @@ def test_edp_query_ignores_non_active_version_rows(repository: Repository):
     assert [r["label"] for r in results] == ["Current EDP"]
 
 
+def test_edp_sharing_only_an_edge_is_not_listed(repository: Repository):
+    """Only the EDPs the boundary lies in are listed.
+
+    The boundary sits inside West EDP and runs along its border with East EDP,
+    so East EDP shares an edge with it but none of its area.
+    """
+    _insert_edp(repository, "West EDP", box(600000, 300000, 601000, 301000).wkt)
+    _insert_edp(repository, "East EDP", box(601000, 300000, 602000, 301000).wkt)
+
+    results = _find_intersecting_edps(
+        _gdf(box(600800, 300400, 601000, 300600)), repository
+    )
+
+    assert [r["label"] for r in results] == ["West EDP"]
+
+
 # ---------------------------------------------------------------------------
 # Overlap detection must not depend on name quality (fail-closed)
 # ---------------------------------------------------------------------------
