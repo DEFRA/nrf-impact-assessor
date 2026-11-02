@@ -207,7 +207,7 @@ class LookupTable(Base):
 class LevyCharge(Base):
     """Published base charge per unit for an EDP over one charging year.
 
-    Seeded by migration, not by data sync (NRF2-913 decision 1). The lookup is
+    Seeded by migration, not by data sync. The lookup is
     `edp_id = :id AND :on_date BETWEEN charge_valid_from AND charge_valid_to`.
     """
 
@@ -216,6 +216,11 @@ class LevyCharge(Base):
         CheckConstraint(
             "charge_valid_to >= charge_valid_from",
             name="ck_levy_charges_valid_window",
+        ),
+        CheckConstraint(
+            "base_charge_per_unit > 0 AND base_charge_per_unit < 100000000"
+            " AND base_charge_per_unit = round(base_charge_per_unit, 2)",
+            name="ck_levy_charges_base_charge_per_unit",
         ),
         ExcludeConstraint(
             ("edp_id", "="),
@@ -232,9 +237,10 @@ class LevyCharge(Base):
     edp_start_date: Mapped[date] = mapped_column(Date, nullable=False)
     charge_valid_from: Mapped[date] = mapped_column(Date, nullable=False)
     charge_valid_to: Mapped[date] = mapped_column(Date, nullable=False)
-    base_charge_per_unit: Mapped[Decimal] = mapped_column(
-        Numeric(12, 4), nullable=False
-    )
+    # Positive pounds and pence, enforced by ck_levy_charges_base_charge_per_unit.
+    # No precision or scale: either would round a 3+ dp value before the CHECK
+    # sees it, so the CHECK bounds the magnitude instead.
+    base_charge_per_unit: Mapped[Decimal] = mapped_column(Numeric(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -276,7 +282,7 @@ class LevyInflationIndex(Base):
 
 
 class LevyCalculationRecord(Base):
-    """Audit row for one levy calculation (NRF2-913 scenario 7).
+    """Audit row for one levy calculation.
 
     One row per successful calculation. A redelivered job that calculates again
     writes another row; the history is the point.
