@@ -299,8 +299,8 @@ class NutrientAssessment:
             rlb_gdf["p_lu_uplift"] = np.nan
             rlb_gdf["nn_catchment"] = None
             rlb_gdf["nn_catchment_entries"] = None
-            rlb_gdf["n_lu_post_suds"] = 0.0
-            rlb_gdf["p_lu_post_suds"] = 0.0
+            rlb_gdf["n_lu_post_suds"] = np.nan
+            rlb_gdf["p_lu_post_suds"] = np.nan
             return rlb_gdf
 
         land_use_intersections["n_resi_coeff"] = pd.to_numeric(
@@ -440,12 +440,11 @@ class NutrientAssessment:
             water_usage_litres_per_person_per_day=rlb_gdf[
                 "water_usage_L_per_person_day"
             ].fillna(0),
-            nitrogen_conc_mg_per_litre=rlb_gdf["nitrogen_conc_2025_2030_mg_L"].fillna(
-                0
-            ),
-            phosphorus_conc_mg_per_litre=rlb_gdf[
-                "phosphorus_conc_2025_2030_mg_L"
-            ].fillna(0),
+            # No fillna on concentrations: a WwTW missing from the lookup, or
+            # with a blank concentration, gives a null load (as IATScript does);
+            # totals treat it as zero.
+            nitrogen_conc_mg_per_litre=rlb_gdf["nitrogen_conc_2025_2030_mg_L"],
+            phosphorus_conc_mg_per_litre=rlb_gdf["phosphorus_conc_2025_2030_mg_L"],
         )
         rlb_gdf["n_wwtw_temp"] = n_wwtw_temp
         rlb_gdf["p_wwtw_temp"] = p_wwtw_temp
@@ -456,12 +455,8 @@ class NutrientAssessment:
             water_usage_litres_per_person_per_day=rlb_gdf[
                 "water_usage_L_per_person_day"
             ].fillna(0),
-            nitrogen_conc_mg_per_litre=rlb_gdf[
-                "nitrogen_conc_2030_onwards_mg_L"
-            ].fillna(0),
-            phosphorus_conc_mg_per_litre=rlb_gdf[
-                "phosphorus_conc_2030_onwards_mg_L"
-            ].fillna(0),
+            nitrogen_conc_mg_per_litre=rlb_gdf["nitrogen_conc_2030_onwards_mg_L"],
+            phosphorus_conc_mg_per_litre=rlb_gdf["phosphorus_conc_2030_onwards_mg_L"],
         )
         rlb_gdf["n_wwtw_perm"] = n_wwtw_perm
         rlb_gdf["p_wwtw_perm"] = p_wwtw_perm
