@@ -805,7 +805,6 @@ def _compare_boundaries(body: CompareBoundariesRequest) -> CompareBoundariesResp
 
 @router.post(
     "/compare-boundaries",
-    response_model=CompareBoundariesResponse,
     response_model_by_alias=True,
     openapi_extra={
         "requestBody": {
