@@ -77,7 +77,7 @@ def _has_holes(geom) -> bool:
 def validate_geometry(gdf: gpd.GeoDataFrame) -> str | None:
     """Validate geometry data, returning a failure code on invalid input.
 
-    Checks for unsupported geometry types, null geometries,
+    Checks for unsupported geometry types, null and empty geometries,
     invalid geometries (e.g. self-intersections), interior holes,
     and duplicate consecutive vertices.
 
@@ -92,6 +92,9 @@ def validate_geometry(gdf: gpd.GeoDataFrame) -> str | None:
     invalid_types = geom_types - _VALID_GEOM_TYPES
     if invalid_types:
         return "unsupported_geometry_type"
+
+    if gdf.geometry.is_empty.any():
+        return "no_polygon_found"
 
     invalid_count = (~gdf.geometry.is_valid).sum()
     if invalid_count > 0:
