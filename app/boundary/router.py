@@ -1,20 +1,18 @@
-"""Boundary checking endpoint.
+"""Boundary checking and comparison endpoints.
 
-Accepts a geometry file (.geojson, .kml, or .zip containing shapefile components)
-and checks whether the uploaded geometry intersects with EDP areas.
+`/check-boundary` accepts a geometry file (.geojson, .kml, or .zip containing
+shapefile components) and checks whether the uploaded geometry intersects with
+EDP areas. `/compare-boundaries` accepts two GeoJSON boundaries and reports
+whether they cover substantially the same land.
 """
 
 import asyncio
 import json
 import logging
-import tempfile
-import zipfile
-from io import BytesIO
-from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import geopandas as gpd
-from fastapi import APIRouter, Form, UploadFile
+from fastapi import APIRouter, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 from geoalchemy2.functions import (
     ST_Area,
@@ -31,32 +29,26 @@ from geoalchemy2.functions import (
     ST_SetSRID,
     ST_Union,
 )
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic.alias_generators import to_camel
-from pyproj import CRS
-from pyproj.exceptions import CRSError
+from pydantic_core import ErrorDetails
+from shapely.geometry.base import BaseGeometry
 from sqlalchemy import exists, select
 
 from app.boundary.catchments import (
     find_intersecting_catchments as _find_intersecting_catchments,
 )
-from app.boundary.validation import (
-    SUPPORTED_CRS,
-    validate_coordinate_range,
-    validate_geometry,
-)
+from app.boundary.loading import WGS84, BoundaryRejectedError, load_boundary
+from app.boundary.validation import validate_coordinate_range
 from app.config import ApiServerConfig
 from app.data_sync.active_version import get_active_version
 from app.models.db import EdpBoundaryLayer, EdpExcludedAreas
 from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
-from app.spatial.utils import UnsupportedCRSError, ensure_crs
 
 logger = logging.getLogger(__name__)
 
 _VALID_GEOM_TYPES = {"Polygon"}
-_WGS84 = "EPSG:4326"
-
 # Stands in for an exclusion zone whose name is missing or blank. The boundary
 # is still ineligible, so the overlap must be reported even when we cannot say
 # which site caused it.
@@ -95,25 +87,44 @@ _MIN_EXCLUSION_OVERLAP_SQM = 0.001
 # protects a sensitive site, the EDP edge only bounds the scheme.
 _EDP_EDGE_TOLERANCE_M = 0.1
 
+# Smallest share of the two boundaries' combined area that must be common to
+# both for them to count as the same land: intersection over union, so the
+# answer does not depend on which boundary is passed first.
+_MIN_BOUNDARY_MATCH_RATIO = 0.95
+
+_SQM_PER_HECTARE = 10_000
+
+_BOUNDARY_ORIGINAL = "boundaryOriginal"
+_BOUNDARY_NEW = "boundaryNew"
+
+# Read after the name of the boundary at fault, e.g. "boundaryNew must not
+# contain holes". Codes shared with /check-boundary mean the same thing there.
+_BOUNDARY_ERROR_MESSAGES = {
+    "coordinates_out_of_range": "has coordinates outside Great Britain",
+    "duplicate_vertices": "repeats the same point consecutively",
+    "geometry_has_holes": "must not contain holes",
+    "invalid_geometry": "has a missing or invalid geometry",
+    "multiple_features": "must contain exactly one polygon",
+    "no_polygon_found": "does not contain a polygon",
+    "self_intersecting_geometry": "has edges that cross each other",
+    "unclosed_ring": "must end on the same point it starts on",
+    "unreadable_geometry_file": "is not readable as GeoJSON",
+    "unsupported_crs": "must use EPSG:4326 or EPSG:27700",
+    "unsupported_geometry_type": "must be a single polygon",
+}
+
 
 router = APIRouter()
 
 _config = ApiServerConfig()
 _max_upload_bytes = _config.max_upload_bytes
+# Each boundary in a comparison may be as large as an uploaded file.
+_max_compare_body_bytes = 2 * _max_upload_bytes
 
 
 def _get_repository() -> Repository:
     """Return the process-wide shared Repository."""
     return get_shared_repository()
-
-
-_EXT_GEOJSON = ".geojson"
-_EXT_JSON = ".json"
-_EXT_KML = ".kml"
-_EXT_ZIP = ".zip"
-_GEOJSON_EXTENSIONS = frozenset({_EXT_GEOJSON, _EXT_JSON})
-_WGS84_EXTENSIONS = frozenset({_EXT_GEOJSON, _EXT_JSON, _EXT_KML})
-_SUPPORTED_EXTENSIONS = frozenset({_EXT_ZIP, _EXT_GEOJSON, _EXT_JSON, _EXT_KML})
 
 
 class _WireModel(BaseModel):
@@ -307,258 +318,6 @@ def _make_response(
         status_code=status_code,
         content=payload.model_dump(by_alias=True),
     )
-
-
-def _validate_extension(filename: str) -> str:
-    """Validate the file extension and return it.
-
-    Only used for control flow (comparisons), never in path construction.
-    """
-    suffix = Path(filename).suffix.lower()
-    if suffix not in _SUPPORTED_EXTENSIONS:
-        code = "unsupported_file_type"
-        raise ValueError(code)
-    return suffix
-
-
-def _write_to_temp(content: bytes, tmpdir: Path, suffix: str) -> Path:
-    """Write content to a system-generated temporary file.
-
-    Uses tempfile.NamedTemporaryFile so the path is entirely OS-generated
-    with no user-controlled data in the filename.
-    """
-    with tempfile.NamedTemporaryFile(dir=tmpdir, suffix=suffix, delete=False) as tmp:
-        tmp.write(content)
-        return Path(tmp.name)
-
-
-def _check_declared_geojson_crs(content: bytes, ext: str) -> None:
-    """Reject a GeoJSON/JSON file that declares an unresolvable CRS.
-
-    GDAL honours a valid, resolvable "crs" member on read, but when the
-    declared CRS name can't be resolved at all (e.g. an EPSG code that
-    doesn't exist) it silently falls back to assuming WGS84 — as GeoJSON
-    (RFC 7946) deprecated the "crs" member and mandates WGS84 by default —
-    rather than surfacing an error. That leaves the file's real coordinates
-    misread as WGS84, so it fails a later, unrelated validation check
-    instead of a CRS one. We check the declared CRS ourselves before
-    handing the file to geopandas, so an unresolvable CRS is rejected with
-    the correct CRS error instead.
-
-    Raises:
-        UnsupportedCRSError: If a declared CRS is present but unrecognised
-            or not in SUPPORTED_CRS.
-    """
-    if ext not in _GEOJSON_EXTENSIONS:
-        return
-
-    try:
-        crs_name = json.loads(content)["crs"]["properties"]["name"]
-    except json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError:
-        return
-
-    try:
-        epsg = CRS(crs_name).to_epsg()
-    except CRSError as e:
-        msg = f"Unrecognised coordinate reference system: {e}"
-        raise UnsupportedCRSError(msg) from e
-
-    # A resolvable CRS with no EPSG mapping (e.g. OGC:CRS84, the RFC 7946
-    # canonical GeoJSON CRS) is left for GDAL/ensure_crs to normalise —
-    # only a name that fails to resolve at all is rejected here.
-    if epsg is not None and epsg not in SUPPORTED_CRS:
-        msg = f"Unsupported coordinate reference system: EPSG:{epsg}"
-        raise UnsupportedCRSError(msg)
-
-
-def _iter_polygon_geometries(node):
-    """Yield each Polygon geometry dict found in a GeoJSON Geometry,
-    Feature, or FeatureCollection."""
-    if not isinstance(node, dict):
-        return
-
-    node_type = node.get("type")
-    if node_type == "FeatureCollection":
-        for feature in node.get("features") or []:
-            yield from _iter_polygon_geometries(feature)
-    elif node_type == "Feature":
-        yield from _iter_polygon_geometries(node.get("geometry"))
-    elif node_type == "GeometryCollection":
-        for geometry in node.get("geometries") or []:
-            yield from _iter_polygon_geometries(geometry)
-    elif node_type == "Polygon":
-        yield node
-
-
-def _close_unclosed_rings(content: bytes, ext: str) -> tuple[bytes, bool]:
-    """Close any unclosed ring (exterior or interior/hole) in every Polygon
-    geometry in a GeoJSON/JSON file's raw bytes.
-
-    GDAL silently closes unclosed rings on read (RFC 7946 requires closed
-    rings) rather than surfacing an error — even with
-    OGR_GEOMETRY_ACCEPT_UNCLOSED_RING=NO it just drops the ring, producing a
-    valid-but-empty geometry with no way to tell what went wrong. We close
-    rings ourselves first so GDAL/validate_geometry can parse and check the
-    shape normally.
-
-    Only the *exterior* ring's closure state is reported back. An unclosed
-    interior ring (hole) is still closed here so GDAL can parse the
-    geometry, but is left to be reported via the normal geometry_has_holes
-    validation error rather than unclosed_ring — the single-ring preview
-    built for unclosed_ring can't represent "a hole was unclosed" without
-    fabricating a break in an exterior ring that was never actually broken.
-
-    Returns:
-        A (content, exterior_was_unclosed) tuple. `content` reflects any
-        ring closures (exterior or interior); `exterior_was_unclosed`
-        reflects only the exterior ring.
-    """
-    if ext not in _GEOJSON_EXTENSIONS:
-        return content, False
-
-    try:
-        data = json.loads(content)
-    except json.JSONDecodeError, UnicodeDecodeError:
-        return content, False
-
-    any_ring_closed = False
-    exterior_was_unclosed = False
-    for polygon in _iter_polygon_geometries(data):
-        for index, ring in enumerate(polygon.get("coordinates") or []):
-            if isinstance(ring, list) and len(ring) >= 2 and ring[0] != ring[-1]:
-                ring.append(ring[0])
-                any_ring_closed = True
-                if index == 0:
-                    exterior_was_unclosed = True
-
-    if not any_ring_closed:
-        return content, False
-
-    return json.dumps(data).encode("utf-8"), exterior_was_unclosed
-
-
-def _read_geometry(
-    content: bytes,
-    filename: str,
-    tmpdir: Path,
-    boundary_filename: str | None = None,
-) -> gpd.GeoDataFrame:
-    """Read a geometry file from uploaded bytes into a GeoDataFrame.
-
-    Supports .geojson, .json, .kml, and .zip (containing .shp, .geojson, or .kml).
-
-    Args:
-        content: Raw file bytes.
-        filename: Original filename (used for extension detection).
-        tmpdir: Temporary directory to write files into.
-        boundary_filename: Bare filename (no directory) of the entry inside
-            `filename` that should be used when `filename` is a zip — today
-            always a .shp selected by the backend during zip validation, but
-            the parameter is deliberately format-agnostic so future bundled
-            formats can flow through the same contract. Ignored for non-zip
-            uploads.
-
-    Returns:
-        GeoDataFrame with the uploaded geometries.
-
-    Raises:
-        HTTPException: If the file format is unsupported or unreadable.
-    """
-    ext = _validate_extension(filename)
-
-    try:
-        if ext in _GEOJSON_EXTENSIONS:
-            return gpd.read_file(BytesIO(content))
-        if ext == _EXT_KML:
-            return gpd.read_file(BytesIO(content), driver="KML")
-        if ext == _EXT_ZIP:
-            zip_path = _write_to_temp(content, tmpdir, _EXT_ZIP)
-            read_path = _extract_zip(zip_path, tmpdir, boundary_filename)
-            return gpd.read_file(read_path)
-    except ValueError:
-        raise
-    except Exception as e:
-        code = "unreadable_geometry_file"
-        raise ValueError(code) from e
-
-
-def _extract_zip(
-    zip_path: Path, tmpdir: Path, boundary_filename: str | None = None
-) -> Path:
-    """Extract a zip archive and return the path to the geometry file inside.
-
-    If `boundary_filename` is supplied (the normal case when called from the
-    backend), we locate that exact entry inside the extracted zip and use it.
-    Otherwise we fall back to picking the first .shp / .geojson / .kml found
-    by glob — this path is only exercised by direct callers of the IA that
-    don't know which file to ask for.
-    """
-    extract_dir = tmpdir / "extracted"
-    extract_dir.mkdir()
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        for member in zf.infolist():
-            member_path = (extract_dir / member.filename).resolve()
-            if not member_path.is_relative_to(extract_dir.resolve()):
-                code = "zip_unsafe_path"
-                raise ValueError(code)
-        zf.extractall(extract_dir)
-
-    if boundary_filename:
-        return _locate_named_entry(extract_dir, boundary_filename)
-
-    shp_files = list(extract_dir.glob("**/*.shp"))
-    geojson_files = list(extract_dir.glob("**/*.geojson"))
-    kml_files = list(extract_dir.glob("**/*.kml"))
-
-    if shp_files:
-        return _check_shapefile_companions(shp_files[0])
-    if geojson_files:
-        return geojson_files[0]
-    if kml_files:
-        return kml_files[0]
-
-    code = "zip_missing_shapefile"
-    raise ValueError(code)
-
-
-def _locate_named_entry(extract_dir: Path, boundary_filename: str) -> Path:
-    """Find a specific file inside the extracted zip, matched by bare filename.
-
-    We match on the filename only (not the full in-zip path) so the backend
-    doesn't need to know whether entries were at the top level or nested in a
-    subdirectory. Case-insensitive because zip tools on Windows/macOS routinely
-    mangle extension casing.
-    """
-    lowered = boundary_filename.lower()
-    candidates = [
-        p for p in extract_dir.glob("**/*") if p.name.lower() == lowered and p.is_file()
-    ]
-    if not candidates:
-        code = "boundary_file_not_found_in_zip"
-        raise ValueError(code)
-    # Multiple matches would mean the same filename appears in two different
-    # subdirectories — ambiguous, so refuse rather than guess.
-    if len(candidates) > 1:
-        code = "zip_ambiguous_filename"
-        raise ValueError(code)
-    entry = candidates[0]
-    # Shapefiles still need their sibling .dbf / .shx in the same directory.
-    if entry.suffix.lower() == ".shp":
-        return _check_shapefile_companions(entry)
-    return entry
-
-
-def _check_shapefile_companions(shp_path: Path) -> Path:
-    """Verify a .shp has its required .dbf/.shx siblings in the same directory."""
-    stem = shp_path.stem
-    shp_dir = shp_path.parent
-    missing = [
-        ext for ext in (".dbf", ".shx") if not (shp_dir / f"{stem}{ext}").exists()
-    ]
-    if missing:
-        code = "zip_missing_shapefile_parts"
-        raise ValueError(code)
-    return shp_path
 
 
 def _find_intersecting_excluded_areas(
@@ -757,7 +516,7 @@ def _build_invalid_geometry_response(
     # Keep the projected geometry to compute metadata bounds/centre so
     # the frontend can still zoom the map to the (invalid) boundary.
     geom_projected = gdf.geometry.iloc[0]
-    gdf = gdf.to_crs(_WGS84)
+    gdf = gdf.to_crs(WGS84)
     gdf = gdf.drop(columns=gdf.columns.difference(["geometry"]))
     geojson = json.loads(gdf.to_json())
 
@@ -834,92 +593,30 @@ async def check_boundary(
         return _make_response(413, error="file_size_too_large")
 
     filename = geometry_file.filename or "input.geojson"
-    ext = Path(filename).suffix.lower()
-
+    # Both halves below are fully synchronous and slow enough to matter: parsing
+    # hands the upload to GDAL, and assessment makes three PostGIS round-trips
+    # through SQLAlchemy. Called directly from this async handler they would
+    # block the event loop for the whole request.
     try:
-        _check_declared_geojson_crs(content, ext)
-    except UnsupportedCRSError:
-        return _make_response(422, error="unsupported_crs")
-
-    content, exterior_was_unclosed = _close_unclosed_rings(content, ext)
-
-    # Both halves below are fully synchronous and slow enough to matter:
-    # parsing writes the upload to disk and hands it to GDAL, and assessment
-    # makes three PostGIS round-trips through SQLAlchemy. Called directly from
-    # this async handler they would block the event loop for the whole request.
-    # The awaits sit inside the `with`, so the temporary directory outlives the
-    # worker thread that reads from it.
-    with tempfile.TemporaryDirectory() as tmpdir:
-        gdf, error_response = await asyncio.to_thread(
-            _load_and_validate_geometry,
-            content,
-            filename,
-            ext,
-            Path(tmpdir),
-            boundary_filename,
-            exterior_was_unclosed,
+        gdf = await asyncio.to_thread(
+            load_boundary, content, filename, boundary_filename
         )
-        if error_response is not None:
-            return error_response
+    except BoundaryRejectedError as rejection:
+        return await asyncio.to_thread(_build_rejection_response, rejection)
 
-        return await asyncio.to_thread(_assess_boundary, gdf)
+    return await asyncio.to_thread(_assess_boundary, gdf)
 
 
-def _load_and_validate_geometry(
-    content: bytes,
-    filename: str,
-    ext: str,
-    tmpdir: Path,
-    boundary_filename: str | None,
-    exterior_was_unclosed: bool,
-) -> tuple[gpd.GeoDataFrame | None, JSONResponse | None]:
-    """Read an uploaded geometry file, resolve its CRS, and validate it.
+def _build_rejection_response(rejection: BoundaryRejectedError) -> JSONResponse:
+    """Report a rejected upload, previewing the geometry when there is one."""
+    if rejection.rejected_gdf is None:
+        return _make_response(rejection.status_code, error=rejection.code)
 
-    Returns:
-        (gdf, None) on success, or (None, error_response) on any failure.
-    """
-    try:
-        gdf = _read_geometry(content, filename, tmpdir, boundary_filename)
-    except ValueError as e:
-        return None, _make_response(400, error=str(e))
-
-    # GeoJSON (RFC 7946) and KML (OGC spec) mandate WGS84 —
-    # safe to assume EPSG:4326 when no CRS is present.
-    if gdf.crs is None and ext in _WGS84_EXTENSIONS:
-        gdf = gdf.set_crs(_WGS84)
-
-    # Must run before ensure_crs()/reprojection: out-of-domain coordinates
-    # pass geometry validation unnoticed and only surface later as a
-    # reprojection crash (see validate_coordinate_range).
-    coordinate_range_error = validate_coordinate_range(gdf)
-    if coordinate_range_error:
-        return None, _make_response(400, error=coordinate_range_error)
-
-    try:
-        gdf = ensure_crs(gdf)
-    except UnsupportedCRSError:
-        return None, _make_response(422, error="unsupported_crs")
-    except ValueError:
-        return None, _make_response(422, error="missing_crs")
-
-    validation_error = validate_geometry(gdf)
-
-    # Only report unclosed_ring in place of another validation error when
-    # the exterior ring itself needed closing — an unclosed hole is left
-    # for geometry_has_holes to report instead (see _close_unclosed_rings).
-    # A MultiPolygon (already rejected as unsupported_geometry_type) also
-    # can't be safely re-opened using the single-ring logic below.
-    report_unclosed_ring = (
-        exterior_was_unclosed and gdf.geometry.iloc[0].geom_type == "Polygon"
+    return _build_invalid_geometry_response(
+        rejection.rejected_gdf,
+        rejection.code,
+        reopen_exterior_ring=rejection.exterior_was_unclosed,
     )
-
-    if report_unclosed_ring or validation_error:
-        error_code = "unclosed_ring" if report_unclosed_ring else validation_error
-        return None, _build_invalid_geometry_response(
-            gdf, error_code, reopen_exterior_ring=report_unclosed_ring
-        )
-
-    return gdf, None
 
 
 def _assess_boundary(gdf: gpd.GeoDataFrame) -> JSONResponse:
@@ -943,8 +640,6 @@ def _assess_boundary(gdf: gpd.GeoDataFrame) -> JSONResponse:
     # Extract the first Polygon/MultiPolygon geometry, stripping user-supplied
     # properties to avoid processing Personal Identifiable Information (PII).
     polygons = gdf[gdf.geometry.geom_type.isin(_VALID_GEOM_TYPES)]
-    if polygons.empty:
-        return _make_response(400, error="no_polygon_found")
     first_geom = polygons.geometry.iloc[0]
     authority, code = gdf.crs.to_authority()
     crs_urn = f"urn:ogc:def:crs:{authority}::{code}"
@@ -958,7 +653,7 @@ def _assess_boundary(gdf: gpd.GeoDataFrame) -> JSONResponse:
         },
     }
 
-    polygons = polygons.to_crs(_WGS84)
+    polygons = polygons.to_crs(WGS84)
     first_geom_wgs84 = polygons.geometry.iloc[0]
     boundary_geometry_wgs84 = first_geom_wgs84.__geo_interface__
 
@@ -971,3 +666,167 @@ def _assess_boundary(gdf: gpd.GeoDataFrame) -> JSONResponse:
         intersecting_excluded_areas=intersecting_excluded_areas,
         boundary_metadata=boundary_metadata,
     )
+
+
+class CompareBoundariesRequest(BaseModel):
+    """Two GeoJSON boundaries: each a bare geometry, Feature or FeatureCollection.
+
+    Coordinates are WGS84 unless the GeoJSON declares EPSG:27700 in a `crs`
+    member, as `boundaryGeometryOriginal` from /check-boundary does.
+    """
+
+    model_config = ConfigDict(alias_generator=to_camel, extra="forbid", strict=True)
+
+    boundary_original: dict[str, Any]
+    boundary_new: dict[str, Any]
+
+
+class CompareBoundariesResponse(_WireModel):
+    """Whether two boundaries cover substantially the same land."""
+
+    boundaries_match: bool
+
+
+def _compare_error(
+    status_code: int, code: str, message: str, boundary: str | None = None
+) -> HTTPException:
+    """Build a client error that TraceIdMiddleware logs with its trace id.
+
+    `detail` is written to the logs as well as returned, so it must never carry
+    any part of the submitted geometry.
+    """
+    return HTTPException(
+        status_code=status_code,
+        detail={"error": code, "boundary": boundary, "message": message},
+    )
+
+
+def _boundary_error(status_code: int, code: str, boundary: str) -> HTTPException:
+    """Build the error for a boundary that cannot be compared."""
+    message = f"{boundary} {_BOUNDARY_ERROR_MESSAGES[code]}"
+    return _compare_error(status_code, code, message, boundary)
+
+
+async def _read_compare_body(request: Request) -> bytes:
+    """Read the request body, refusing to buffer more than the size limit."""
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > _max_compare_body_bytes:
+            raise _compare_error(
+                status.HTTP_413_CONTENT_TOO_LARGE,
+                "request_too_large",
+                f"Request body exceeds {_max_compare_body_bytes} bytes",
+            )
+    return bytes(body)
+
+
+def _describe_request_fault(error: ErrorDetails) -> str:
+    """Say what is wrong with a request, leading with the field if there is one.
+
+    An unknown field goes unnamed: the name came from the caller, and this
+    description is logged.
+    """
+    if error["type"] == "extra_forbidden":
+        return "Unknown fields are not allowed"
+    field = ".".join(str(part) for part in error["loc"])
+    return f"{field}: {error['msg']}" if field else error["msg"]
+
+
+def _parse_compare_request(body: bytes) -> CompareBoundariesRequest:
+    """Validate the request, naming each fault without echoing the input.
+
+    Parsed here rather than by FastAPI because its default 422 returns the
+    submitted input, which would put the boundaries in the response and logs.
+    """
+    try:
+        return CompareBoundariesRequest.model_validate_json(body)
+    except ValidationError as e:
+        faults = dict.fromkeys(
+            _describe_request_fault(error)
+            for error in e.errors(
+                include_url=False, include_context=False, include_input=False
+            )
+        )
+        raise _compare_error(
+            status.HTTP_400_BAD_REQUEST, "invalid_request", "; ".join(faults)
+        ) from None
+
+
+def _load_comparison_boundary(geojson: dict[str, Any], boundary: str) -> BaseGeometry:
+    """Parse and validate one boundary, returning it in British National Grid.
+
+    Applies the /check-boundary rules, plus two of its own:
+
+    - A second polygon is refused rather than ignored, as a comparison that
+      left out part of a boundary could report a false match.
+    - Coordinates must land on the grid once projected. A legal WGS84 point can
+      fall far outside it, which /check-boundary can report as outside any EDP
+      but would compare here as a real place.
+
+    Raises:
+        HTTPException: If the boundary cannot be compared.
+    """
+    try:
+        gdf = load_boundary(json.dumps(geojson).encode("utf-8"), "boundary.geojson")
+    except BoundaryRejectedError as rejection:
+        raise _boundary_error(rejection.status_code, rejection.code, boundary) from None
+
+    comparison_error = (
+        "multiple_features" if len(gdf) > 1 else validate_coordinate_range(gdf)
+    )
+    if comparison_error:
+        raise _boundary_error(400, comparison_error, boundary)
+
+    return gdf.geometry.iloc[0]
+
+
+def _compare_boundaries(body: CompareBoundariesRequest) -> CompareBoundariesResponse:
+    """Measure how much of two boundaries is common to both."""
+    original = _load_comparison_boundary(body.boundary_original, _BOUNDARY_ORIGINAL)
+    new = _load_comparison_boundary(body.boundary_new, _BOUNDARY_NEW)
+
+    overlap_ratio = original.intersection(new).area / original.union(new).area
+    boundaries_match = overlap_ratio >= _MIN_BOUNDARY_MATCH_RATIO
+
+    # The ratio is logged because the response carries only the verdict: it is
+    # what shows why a comparison went the way it did, and how near the limit.
+    logger.info(
+        "Compared boundaries: match=%s overlap_ratio=%.4f threshold=%.2f "
+        "original_area_ha=%.4f new_area_ha=%.4f",
+        boundaries_match,
+        overlap_ratio,
+        _MIN_BOUNDARY_MATCH_RATIO,
+        original.area / _SQM_PER_HECTARE,
+        new.area / _SQM_PER_HECTARE,
+    )
+    return CompareBoundariesResponse(boundaries_match=boundaries_match)
+
+
+@router.post(
+    "/compare-boundaries",
+    response_model_by_alias=True,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": CompareBoundariesRequest.model_json_schema(by_alias=True)
+                }
+            },
+        }
+    },
+    responses={
+        400: {"description": "Malformed request, or a boundary is invalid"},
+        413: {"description": "Request body too large"},
+        422: {"description": "A boundary uses an unsupported CRS"},
+    },
+)
+async def compare_boundaries(request: Request) -> CompareBoundariesResponse:
+    """Report whether two boundaries cover substantially the same land.
+
+    They match when at least 95% of their combined area is common to both.
+    Neither is checked against EDP areas, and nothing is stored.
+    """
+    body = _parse_compare_request(await _read_compare_body(request))
+    return await asyncio.to_thread(_compare_boundaries, body)
