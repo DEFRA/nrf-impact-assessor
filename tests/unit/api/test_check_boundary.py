@@ -793,6 +793,64 @@ class TestCheckBoundaryEdpIntersection:
         assert response.json()["intersectingExcludedAreas"] == []
 
 
+class TestCheckBoundaryCrossingEdpEdge:
+    """The whole boundary must lie inside the EDP area to be eligible.
+
+    A boundary that crosses the EDP's outer edge reports no EDPs, so it reads
+    exactly like one entirely outside the EDP and consumers route it to the
+    not-in-EDP page.
+    """
+
+    @patch("app.boundary.router._is_within_edp", return_value=False)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    def test_boundary_crossing_the_edp_edge_reports_no_edps(self, mock_within, client):
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"] is None
+        assert body["intersectingEdps"] == []
+
+    @patch("app.boundary.router._find_intersecting_catchments")
+    @patch("app.boundary.router._is_within_edp", return_value=False)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    def test_boundary_crossing_the_edp_edge_skips_the_catchment_query(
+        self, mock_within, mock_catchments, client
+    ):
+        _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        mock_catchments.assert_not_called()
+
+    @patch(
+        "app.boundary.router._find_intersecting_excluded_areas", _mock_excluded_areas
+    )
+    @patch("app.boundary.router._is_within_edp", return_value=False)
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    def test_excluded_boundary_crossing_the_edp_edge_keeps_its_edps(
+        self, mock_within, client
+    ):
+        """The excluded-area page reads the first EDP and its catchments for
+        analytics, so an excluded boundary keeps them. The exclusion list
+        already makes it ineligible."""
+        response = _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        body = response.json()
+        assert body["intersectingExcludedAreas"] == ["mid-Norfolk SSSI"]
+        assert len(body["intersectingEdps"]) == 2
+
+    @patch(
+        "app.boundary.router._find_intersecting_excluded_areas", _mock_excluded_areas
+    )
+    @patch("app.boundary.router._is_within_edp")
+    @patch("app.boundary.router._find_intersecting_edps", _mock_edp_intersections)
+    def test_excluded_boundary_skips_the_within_edp_query(self, mock_within, client):
+        """The exclusion already decides the outcome, so the costlier
+        within-EDP query is not run."""
+        _post_boundary(client, "boundary.geojson", _make_geojson_bytes())
+
+        mock_within.assert_not_called()
+
+
 class TestFindIntersectingEdpsMapping:
     """Regression tests for the row -> dict mapping in _find_intersecting_edps.
 
@@ -846,7 +904,8 @@ class TestCheckBoundaryExcludedAreas:
 
     The zones are clipped SSSI extents lying inside the EDP boundary, so an
     excluded boundary does intersect the EDP and the overlap is reported.
-    Ineligibility is carried by intersectingExcludedAreas alone.
+    Ineligibility is carried by intersectingExcludedAreas, which consumers
+    check before intersectingEdps.
     """
 
     @patch(
@@ -1131,3 +1190,226 @@ class TestCheckBoundaryCatchments:
 
         for edp in response.json()["intersectingEdps"]:
             assert edp["catchments"] == []
+
+
+_WGS84_SQUARE = [
+    [1.0, 52.0],
+    [1.001, 52.0],
+    [1.001, 52.001],
+    [1.0, 52.001],
+    [1.0, 52.0],
+]
+_GEOJSON_SQUARE = json.dumps({"type": "Polygon", "coordinates": [_WGS84_SQUARE]})
+_KML_SQUARE = (
+    b'<?xml version="1.0"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document>'
+    b"<Placemark><Polygon><outerBoundaryIs><LinearRing><coordinates>"
+    b"1.0,52.0 1.001,52.0 1.001,52.001 1.0,52.001 1.0,52.0"
+    b"</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>"
+    b"</Document></kml>"
+)
+
+
+def _zip_of(entries: dict[str, str | bytes]) -> BytesIO:
+    zip_buf = BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as zf:
+        for name, content in entries.items():
+            zf.writestr(name, content)
+    zip_buf.seek(0)
+    return zip_buf
+
+
+class TestUnusualGeoJson:
+    def test_empty_polygon_is_rejected_rather_than_crashing(self, client):
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "site.geojson",
+                    json.dumps({"type": "Polygon", "coordinates": []}),
+                )
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "no_polygon_found"
+
+    def test_empty_multipolygon_is_reported_by_its_type(self, client):
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "site.geojson",
+                    json.dumps({"type": "MultiPolygon", "coordinates": []}),
+                )
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "unsupported_geometry_type"
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_wgs84_boundary_outside_the_grid_is_reported_as_outside_any_edp(
+        self, client
+    ):
+        in_france = [[2.0, 48.0], [2.001, 48.0], [2.001, 48.001], [2.0, 48.0]]
+
+        response = client.post(
+            "/check-boundary",
+            files={
+                "geometry_file": (
+                    "site.geojson",
+                    json.dumps({"type": "Polygon", "coordinates": [in_france]}),
+                )
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["intersectingEdps"] == []
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_null_crs_is_read_as_wgs84(self, client):
+        """load_boundary relies on GDAL defaulting GeoJSON to WGS84."""
+        geojson = {"type": "Polygon", "coordinates": [_WGS84_SQUARE], "crs": None}
+
+        response = _post_boundary_file(
+            client,
+            "site.geojson",
+            BytesIO(json.dumps(geojson).encode()),
+            "application/geo+json",
+        )
+
+        assert response.status_code == 200
+        first_vertex = response.json()["boundaryGeometryWgs84"]["coordinates"][0][0]
+        assert first_vertex == pytest.approx([1.0, 52.0])
+
+    def test_unclosed_polygon_in_a_geometry_collection_is_reported_by_type(
+        self, client
+    ):
+        collection = {
+            "type": "GeometryCollection",
+            "geometries": [{"type": "Polygon", "coordinates": [_WGS84_SQUARE[:-1]]}],
+        }
+
+        response = _post_boundary_file(
+            client,
+            "site.geojson",
+            BytesIO(json.dumps(collection).encode()),
+            "application/geo+json",
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "unsupported_geometry_type"
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_kml_upload_is_read(self, client):
+        response = _post_boundary_file(
+            client,
+            "site.kml",
+            BytesIO(_KML_SQUARE),
+            "application/vnd.google-earth.kml+xml",
+        )
+
+        assert response.status_code == 200
+        assert response.json()["boundaryMetadata"]["area"]["hectares"] > 0
+
+
+class TestMalformedGeoJson:
+    """The raw-JSON checks that run before GDAL must survive any JSON at all."""
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param(
+                b'{"type": "Polygon", "coordinates": 1}', id="coordinates-not-an-array"
+            ),
+            pytest.param(
+                b'{"type": "FeatureCollection", "features": 1}',
+                id="features-not-an-array",
+            ),
+            pytest.param(
+                b'{"type": "GeometryCollection", "geometries": 1}',
+                id="geometries-not-an-array",
+            ),
+            pytest.param(
+                b'{"type": "Polygon", "coordinates": [[[' + b"9" * 5000 + b", 1]]]}",
+                id="number-too-long",
+            ),
+            pytest.param(
+                b'{"type": "GeometryCollection", "geometries": [' * 3000 + b"]}" * 3000,
+                id="nesting-too-deep-to-walk",
+            ),
+            pytest.param(
+                b'{"type": "GeometryCollection", "geometries": [' * 20000
+                + b"]}" * 20000,
+                id="nesting-too-deep-to-parse",
+            ),
+        ],
+    )
+    def test_is_rejected_as_unreadable(self, client, content):
+        response = _post_boundary(client, "malformed.geojson", content)
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "unreadable_geometry_file"
+
+
+class TestZipContents:
+    def test_entry_escaping_the_extract_directory_is_rejected(self, client):
+        zip_buf = _zip_of({"../../outside.geojson": _GEOJSON_SQUARE})
+
+        response = _post_boundary_file(client, "site.zip", zip_buf, "application/zip")
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "zip_unsafe_path"
+
+    def test_zip_without_a_geometry_file_is_rejected(self, client):
+        zip_buf = _zip_of({"notes.txt": "no boundary here"})
+
+        response = _post_boundary_file(client, "site.zip", zip_buf, "application/zip")
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "zip_missing_shapefile"
+
+    @pytest.mark.parametrize(
+        ("entry", "content"),
+        [
+            pytest.param("site.geojson", _GEOJSON_SQUARE, id="geojson"),
+            pytest.param("site.kml", _KML_SQUARE, id="kml"),
+        ],
+    )
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_geometry_file_is_found_without_being_named(self, client, entry, content):
+        zip_buf = _zip_of({"notes.txt": "ignored", entry: content})
+
+        response = _post_boundary_file(client, "site.zip", zip_buf, "application/zip")
+
+        assert response.status_code == 200
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_named_geojson_entry_is_read(self, client):
+        zip_buf = _zip_of({"site.geojson": _GEOJSON_SQUARE})
+
+        response = _post_boundary_file(
+            client,
+            "site.zip",
+            zip_buf,
+            "application/zip",
+            boundary_filename="site.geojson",
+        )
+
+        assert response.status_code == 200
+
+    def test_name_found_in_two_directories_is_ambiguous(self, client):
+        zip_buf = _zip_of(
+            {"a/site.geojson": _GEOJSON_SQUARE, "b/site.geojson": _GEOJSON_SQUARE}
+        )
+
+        response = _post_boundary_file(
+            client,
+            "site.zip",
+            zip_buf,
+            "application/zip",
+            boundary_filename="site.geojson",
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "zip_ambiguous_filename"
