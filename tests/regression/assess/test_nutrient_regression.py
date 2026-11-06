@@ -274,6 +274,18 @@ def _compare_numerical_column(
     label2: str,
 ) -> None:
     """Compare a single numerical column between two DataFrames with tolerance."""
+    # Null and 0 mean different things (no data vs. no impact), so the nulls
+    # must line up before the values are compared with nulls as 0.
+    null_mismatch = df1[col].isna() != df2[col].isna()
+    if null_mismatch.any():
+        rlb_ids = df1.loc[null_mismatch, "RLB_ID"].tolist()
+        pytest.fail(
+            f"Numerical column '{col}' is null in one output but not the other: "
+            f"RLB_IDs {rlb_ids[:10]}{'...' if len(rlb_ids) > 10 else ''} "
+            f"({label1}={df1.loc[null_mismatch, col].tolist()[:10]}, "
+            f"{label2}={df2.loc[null_mismatch, col].tolist()[:10]})"
+        )
+
     df1_col = df1[col].fillna(0)
     df2_col = df2[col].fillna(0)
 
