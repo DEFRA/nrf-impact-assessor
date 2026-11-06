@@ -19,7 +19,7 @@ env:
 jobs:
   publish-db-migrations:
     name: CDP-publish-db-migrations-workflow
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       # The CDP action interpolates version into a shell script and S3 path.
       - name: Validate version
