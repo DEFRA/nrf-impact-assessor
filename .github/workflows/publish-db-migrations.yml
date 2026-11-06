@@ -21,6 +21,16 @@ jobs:
     name: CDP-publish-db-migrations-workflow
     runs-on: ubuntu-24.04
     steps:
+      # The CDP action interpolates version into a shell script and S3 path.
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be a release tag like 1.2.3, got: $VERSION"
+            exit 1
+          fi
+
       # Publishes ./changelog as it is at that tag, so the schema matches the
       # released service version.
       - name: Check out code

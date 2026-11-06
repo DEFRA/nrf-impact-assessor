@@ -46,6 +46,12 @@ updates:
       - /
       - /.github/actions/*
 
+    # One PR for all action updates, majors included
+    groups:
+      github-actions:
+        patterns:
+          - '*'
+
     # Schedule run every Monday, local time
     schedule:
       interval: weekly
