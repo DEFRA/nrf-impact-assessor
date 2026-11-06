@@ -49,7 +49,7 @@ class SpatialLayerMixin:
 
 
 class CoefficientLayer(Base):
-    """Dedicated model for coefficient polygons (5.4M records)."""
+    """Dedicated model for coefficient polygons (~31.4M records)."""
 
     __tablename__ = "coefficient_layer"
     __table_args__ = {"schema": "public"}
@@ -63,9 +63,6 @@ class CoefficientLayer(Base):
     )
 
     crome_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
-    land_use_cat: Mapped[str | None] = mapped_column(String, nullable=True)
-    nn_catchment: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
-    subcatchment: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
     lu_curr_n_coeff: Mapped[float | None] = mapped_column(Float, nullable=True)
     lu_curr_p_coeff: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -210,7 +207,7 @@ class LookupTable(Base):
 class LevyCharge(Base):
     """Published base charge per unit for an EDP over one charging year.
 
-    Seeded by migration, not by data sync (NRF2-913 decision 1). The lookup is
+    Seeded by migration, not by data sync. The lookup is
     `edp_id = :id AND :on_date BETWEEN charge_valid_from AND charge_valid_to`.
     """
 
@@ -219,6 +216,11 @@ class LevyCharge(Base):
         CheckConstraint(
             "charge_valid_to >= charge_valid_from",
             name="ck_levy_charges_valid_window",
+        ),
+        CheckConstraint(
+            "base_charge_per_unit > 0 AND base_charge_per_unit < 100000000"
+            " AND base_charge_per_unit = round(base_charge_per_unit, 2)",
+            name="ck_levy_charges_base_charge_per_unit",
         ),
         ExcludeConstraint(
             ("edp_id", "="),
@@ -235,9 +237,10 @@ class LevyCharge(Base):
     edp_start_date: Mapped[date] = mapped_column(Date, nullable=False)
     charge_valid_from: Mapped[date] = mapped_column(Date, nullable=False)
     charge_valid_to: Mapped[date] = mapped_column(Date, nullable=False)
-    base_charge_per_unit: Mapped[Decimal] = mapped_column(
-        Numeric(12, 4), nullable=False
-    )
+    # Positive pounds and pence, enforced by ck_levy_charges_base_charge_per_unit.
+    # No precision or scale: either would round a 3+ dp value before the CHECK
+    # sees it, so the CHECK bounds the magnitude instead.
+    base_charge_per_unit: Mapped[Decimal] = mapped_column(Numeric(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -279,7 +282,7 @@ class LevyInflationIndex(Base):
 
 
 class LevyCalculationRecord(Base):
-    """Audit row for one levy calculation (NRF2-913 scenario 7).
+    """Audit row for one levy calculation.
 
     One row per successful calculation. A redelivered job that calculates again
     writes another row; the history is the point.
@@ -439,5 +442,27 @@ class DataRollbackEvent(Base):
     from_version: Mapped[int] = mapped_column(Integer, nullable=False)
     to_version: Mapped[int] = mapped_column(Integer, nullable=False)
     rolled_back_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ModelResultRecord(Base):
+    """Audit row for one assessment run: its output, or why it failed.
+
+    status is 'success' | 'failed'. One row per process_job attempt, so a
+    redelivered job records one row per try.
+    """
+
+    __tablename__ = "audit_model_results"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    nrl_reference: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    assessment_type: Mapped[str] = mapped_column(String, nullable=False)
+    model_version: Mapped[str] = mapped_column(String, nullable=False)
+    model_output: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    error_details: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

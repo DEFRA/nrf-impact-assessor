@@ -41,4 +41,3 @@ jobs:
         uses: DEFRA/cdp-build-action/build-hotfix@e96983a427efc87dee7923f4ffdb5b9867259239 # main
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-

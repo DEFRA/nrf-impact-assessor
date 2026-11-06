@@ -25,8 +25,8 @@ def price_levy(
     than the EDP's publication, unless apply_inflation is False.
 
     Raises:
-        LevyChargeUnavailableError: An inflation index needed is missing, or the
-            charge is not a whole number of pounds.
+        LevyChargeUnavailableError: apply_inflation is True and an inflation
+            index needed is missing, or the levy is too large to record.
     """
     rows = get_levy_pricing_rows(session, edp_id, calculation_date)
     if rows is None:

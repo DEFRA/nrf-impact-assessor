@@ -171,20 +171,6 @@ def sample_nn_catchments():
 
 
 @pytest.fixture
-def sample_rates_lookup():
-    """Create sample rates lookup."""
-    mock_lookup = Mock()
-    mock_lookup.data = [
-        {
-            "nn_catchment": "Solent",
-            "occupancy_rate": 2.4,
-            "water_usage_L_per_person_day": 150.0,
-        }
-    ]
-    return mock_lookup
-
-
-@pytest.fixture
 def sample_wwtw_lookup():
     """Create sample WwTW lookup."""
     mock_lookup = Mock()
@@ -224,13 +210,11 @@ def _gdf_execute_query(wwtw, lpa, subcatchments, nn) -> gpd.GeoDataFrame:
     return nn.copy()
 
 
-def _scalar_execute_query(stmt, rates_lookup, wwtw_lookup):
+def _scalar_execute_query(stmt, wwtw_lookup):
     stmt_str = str(stmt).lower()
     if "max" in stmt_str and "version" in stmt_str:
         return [1]
     for pv in stmt.compile().params.values():
-        if pv == "rates_lookup":
-            return [rates_lookup]
         if pv == "wwtw_lookup":
             return [wwtw_lookup]
     return []
@@ -301,7 +285,6 @@ def mock_repository(
     sample_subcatchments,
     sample_coefficient_layer,
     sample_nn_catchments,
-    sample_rates_lookup,
     sample_wwtw_lookup,
 ):
     """Create a mock repository that returns sample data based on the query."""
@@ -321,7 +304,7 @@ def mock_repository(
                 sample_subcatchments,
                 sample_nn_catchments,
             )
-        return _scalar_execute_query(stmt, sample_rates_lookup, sample_wwtw_lookup)
+        return _scalar_execute_query(stmt, sample_wwtw_lookup)
 
     def majority_overlap_postgis_side_effect(
         input_gdf,
@@ -395,9 +378,9 @@ def test_run_assessment_basic(sample_rlb, mock_repository):
     assert "p_total" in result_df.columns
     assert "dev_area_ha" in result_df.columns
 
-    # Verify repository was called (execute_query for lookup data fetches;
+    # Verify repository was called (execute_query for the WwTW lookup fetch;
     # version lookups now use session() directly)
-    assert mock_repository.execute_query.call_count >= 2
+    assert mock_repository.execute_query.call_count == 1
     assert mock_repository.batch_majority_overlap_postgis.call_count == 1
     assert mock_repository.land_use_intersection_postgis.call_count == 1
 
@@ -537,15 +520,20 @@ def test_calculate_land_use_impacts_applies_suds(sample_rlb, mock_repository):
         assert result_df["n_lu_post_suds"].notna().any()
 
 
-def test_calculate_wastewater_fills_missing_rates(sample_rlb, mock_repository):
-    """Test that wastewater calculation handles missing rates."""
+def test_calculate_wastewater_uses_edp_wide_rates(sample_rlb, mock_repository):
+    """Every development gets the same EDP-wide occupancy and water usage."""
     metadata = {"unique_ref": "20250115123456"}
 
     assessment = NutrientAssessment(sample_rlb, metadata, mock_repository)
-    results = assessment.run()
+    result_df = assessment.run()["impact_summary"]
 
-    # Should complete without error
-    assert "impact_summary" in results
+    assert result_df["occupancy_rate"].tolist() == pytest.approx([2.11, 2.11])
+    assert result_df["water_usage_L_per_person_day"].tolist() == pytest.approx(
+        [110.0, 110.0]
+    )
+    assert result_df["daily_water_usage_L"].tolist() == pytest.approx(
+        (result_df["dwellings"] * 2.11 * 110.0).tolist()
+    )
 
 
 def test_calculate_totals_applies_buffer(sample_rlb, mock_repository):

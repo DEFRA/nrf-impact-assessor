@@ -8,9 +8,17 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from pydantic.alias_generators import to_camel
 
-from app.calculators.levy import LevyCalculation, LevyChargeUnavailableError
+from app.calculators.levy import (
+    MAX_LEVY_AMOUNT,
+    MAX_LEVY_UNITS,
+    LevyAmountTooLargeError,
+    LevyCalculation,
+    LevyChargeUnavailableError,
+    LevyUnitsTooLargeError,
+)
 from app.levy.service import price_levy
 from app.repositories.engine import get_shared_repository
+from app.repositories.repository import Repository
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +70,14 @@ async def _parse_request(request: Request) -> LevyRecalculationRequest:
         ) from None
 
 
+def _get_repository() -> Repository:
+    """Return the process-wide shared Repository."""
+    return get_shared_repository()
+
+
 def _recalculate(body: LevyRecalculationRequest) -> LevyCalculation | None:
     """Price the levy for the requested EDP, units and date."""
-    with get_shared_repository().session() as session:
+    with _get_repository().session() as session:
         # Inflation is out of scope here, so a missing RICS CIL index for a
         # later charging year must not make the levy unavailable.
         return price_levy(
@@ -92,7 +105,9 @@ def _recalculate(body: LevyRecalculationRequest) -> LevyCalculation | None:
     responses={
         400: {"description": "Invalid request"},
         404: {"description": "No levy charge for the EDP on the date"},
-        422: {"description": "Levy unavailable for the EDP on the request date"},
+        422: {
+            "description": "Levy or units too large to record, or otherwise unavailable"
+        },
     },
 )
 async def recalculate_levy(request: Request) -> LevyRecalculationResponse:
@@ -100,8 +115,26 @@ async def recalculate_levy(request: Request) -> LevyRecalculationResponse:
     body = await _parse_request(request)
     try:
         levy = await asyncio.to_thread(_recalculate, body)
+    except LevyAmountTooLargeError as e:
+        logger.warning(f"Levy too large for EDP {body.edp_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Levy of £{e.amount:,.2f} for {e.units:,} units exceeds the "
+                f"maximum of £{MAX_LEVY_AMOUNT:,.2f}. Reduce the number of units."
+            ),
+        ) from None
+    except LevyUnitsTooLargeError as e:
+        logger.warning(f"Too many units for EDP {body.edp_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"{e.units:,} units exceeds the maximum of {MAX_LEVY_UNITS:,}. "
+                "Reduce the number of units."
+            ),
+        ) from None
     except LevyChargeUnavailableError as e:
-        logger.error(  # NOSONAR
+        logger.error(  # NOSONAR - intentional: the reason is the whole story, no traceback
             f"Levy unavailable for EDP {body.edp_id}: {e}"
         )
         raise HTTPException(

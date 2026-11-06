@@ -1,12 +1,13 @@
 """Land use change nutrient uplift calculations.
 
 Calculates nutrient impacts from converting existing land use to residential development,
-with greenspace coefficient adjustment for larger sites.
+with greenspace coefficient adjustment and SuDS mitigation for larger sites.
 """
 
 import numpy as np
 
-from app.config import GreenspaceConfig
+from app.calculators.suds import apply_suds_mitigation
+from app.config import GreenspaceConfig, SuDsConfig
 
 
 def calculate_land_use_uplift(
@@ -17,23 +18,27 @@ def calculate_land_use_uplift(
     current_phosphorus_coeff,
     residential_phosphorus_coeff,
     greenspace_config: GreenspaceConfig,
+    suds_config: SuDsConfig,
 ):
-    """Calculate nutrient uplift from land use change with greenspace adjustment.
+    """Calculate nutrient uplift from land use change, before and after SuDS.
 
     For developments >= greenspace threshold, the residential coefficient is split
     into a residential component and a greenspace component before computing uplift.
+    For developments >= SuDS threshold, SuDS removal is applied to the residential
+    component only.
 
     Args:
         area_hectares: Intersection area within NN catchment (hectares)
-        dev_area_ha: Total development area (hectares), used for threshold check
+        dev_area_ha: Total development area (hectares), used for threshold checks
         current_nitrogen_coeff: Current land use N coefficient (kg/ha/year)
         residential_nitrogen_coeff: Residential land use N coefficient (kg/ha/year)
         current_phosphorus_coeff: Current land use P coefficient (kg/ha/year)
         residential_phosphorus_coeff: Residential land use P coefficient (kg/ha/year)
         greenspace_config: Greenspace configuration
+        suds_config: SuDS configuration
 
     Returns:
-        Tuple of (n_uplift, p_uplift).
+        Tuple of (n_uplift, p_uplift, n_uplift_post_suds, p_uplift_post_suds).
     """
     gs_threshold = greenspace_config.threshold_area_ha
     gs_fraction = greenspace_config.greenspace_percent / 100
@@ -59,11 +64,26 @@ def calculate_land_use_uplift(
     adj_n_coeff = resi_n_component + gs_n_component
     adj_p_coeff = resi_p_component + gs_p_component
 
+    suds_n_coeff = (
+        apply_suds_mitigation(resi_n_component, dev_area_ha, suds_config)
+        + gs_n_component
+    )
+    suds_p_coeff = (
+        apply_suds_mitigation(resi_p_component, dev_area_ha, suds_config)
+        + gs_p_component
+    )
+
     nitrogen_uplift = np.round(
         (adj_n_coeff - current_nitrogen_coeff) * area_hectares, 2
     )
     phosphorus_uplift = np.round(
         (adj_p_coeff - current_phosphorus_coeff) * area_hectares, 2
     )
+    nitrogen_post_suds = np.round(
+        (suds_n_coeff - current_nitrogen_coeff) * area_hectares, 2
+    )
+    phosphorus_post_suds = np.round(
+        (suds_p_coeff - current_phosphorus_coeff) * area_hectares, 2
+    )
 
-    return nitrogen_uplift, phosphorus_uplift
+    return nitrogen_uplift, phosphorus_uplift, nitrogen_post_suds, phosphorus_post_suds
