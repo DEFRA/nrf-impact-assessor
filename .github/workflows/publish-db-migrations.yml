@@ -34,14 +34,14 @@ jobs:
       # Publishes ./changelog as it is at that tag, so the schema matches the
       # released service version.
       - name: Check out code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7
         with:
           ref: refs/tags/${{ inputs.version }}
 
       # force: a manual run has no previous commit to diff ./changelog against.
       # version: without it the action would pick the next, unreleased tag.
       - name: Publish Database Schema
-        uses: DEFRA/cdp-build-action/publish-db-migrations@550c4792fac07cfd59eaea469bc0a17ce202cced # main
+        uses: DEFRA/cdp-build-action/publish-db-migrations@main
         with:
           path: ./changelog
           version: ${{ inputs.version }}
