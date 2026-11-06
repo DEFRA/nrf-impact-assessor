@@ -1,0 +1,49 @@
+name: Publish Database Schema
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag to publish the changelog from, and the schema version to publish it as (e.g. 1.2.3)
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-west-2
+  AWS_ACCOUNT_ID: "094954420758"
+
+jobs:
+  publish-db-migrations:
+    name: CDP-publish-db-migrations-workflow
+    runs-on: ubuntu-latest
+    steps:
+      # The CDP action interpolates version into a shell script and S3 path.
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be a release tag like 1.2.3, got: $VERSION"
+            exit 1
+          fi
+
+      # Publishes ./changelog as it is at that tag, so the schema matches the
+      # released service version.
+      - name: Check out code
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.version }}
+
+      # force: a manual run has no previous commit to diff ./changelog against.
+      # version: without it the action would pick the next, unreleased tag.
+      - name: Publish Database Schema
+        uses: DEFRA/cdp-build-action/publish-db-migrations@main
+        with:
+          path: ./changelog
+          version: ${{ inputs.version }}
+          force: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
