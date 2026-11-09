@@ -3,7 +3,7 @@
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -34,7 +34,8 @@ REFERENCE_TABLES = (
     "edp_excluded_areas",
     "data_active_version",
     "lookup_table",
-    "levy_charges",
+    "base_prices",
+    "edps",
     "audit_levy_calculations",
     "levy_inflation_index",
 )
@@ -435,36 +436,44 @@ def set_active_version(repository: Repository, table: str, version: int) -> None
         session.commit()
 
 
-def insert_levy_charge(
+def insert_base_price(
     repository: Repository,
     edp_id: int = 1,
-    valid_from: date = date(2026, 1, 1),
-    valid_to: date = date(2026, 12, 31),
+    effective_from: datetime = datetime(2026, 1, 1, tzinfo=UTC),
     price: str = "2675",
+    edp_start_date: date = date(2026, 1, 1),
 ) -> UUID:
-    """Insert a committed levy_charges row and return its id.
+    """Insert a committed base_prices row, and its EDP when missing, and return
+    the base price id.
 
     Shared because the levy endpoint, lookup and constraint tests all seed
-    their own charge rows.
+    their own base prices.
     """
     with repository.session() as session:
-        charge_id = session.execute(
+        session.execute(
             text(
-                "INSERT INTO public.levy_charges "
-                "(id, edp_id, edp_name, edp_start_date, charge_valid_from, "
-                "charge_valid_to, base_charge_per_unit) VALUES "
-                "(gen_random_uuid(), :id, 'Test EDP', :f, :f, :t, :price) "
+                "INSERT INTO public.edps (id, name, start_date) "
+                "VALUES (:id, 'Test EDP', :start_date) ON CONFLICT (id) DO NOTHING"
+            ),
+            {"id": edp_id, "start_date": edp_start_date},
+        )
+        base_price_id = session.execute(
+            text(
+                "INSERT INTO public.base_prices "
+                "(id, base_price, edp_id, effective_from, comment, "
+                "user_entra_id, user_full_name, user_email) VALUES "
+                "(gen_random_uuid(), :price, :id, :effective_from, 'Test', "
+                "'entra-id', 'Test User', 'test.user@example.com') "
                 "RETURNING id"
             ),
             {
                 "id": edp_id,
-                "f": valid_from,
-                "t": valid_to,
+                "effective_from": effective_from,
                 "price": Decimal(price),
             },
         ).scalar_one()
         session.commit()
-    return charge_id
+    return base_price_id
 
 
 def _database_url(database: str) -> str:

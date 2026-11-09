@@ -69,12 +69,12 @@ from sqlalchemy.exc import IntegrityError  # noqa: E402
 
 from app.models.db import (  # noqa: E402
     CoefficientLayer,
+    Edp,
     EdpBoundaryLayer,
     EdpEdges,
     EdpExcludedAreas,
     GcnPonds,
     GcnRiskZones,
-    LevyCharge,
     LevyInflationIndex,
     LookupTable,
     LpaBoundaries,
@@ -218,7 +218,7 @@ class SpatialDataLoader:
         self.batch_size = batch_size
         # Fixtures-only convenience so a local/CI job can exercise the levy
         # calculation end-to-end; the migration seeds neither table.
-        self.levy_charges_csv: Path | None = None
+        self.edps_csv: Path | None = None
         self.levy_inflation_index_csv: Path | None = None
 
         if fixtures_dir is not None:
@@ -241,7 +241,7 @@ class SpatialDataLoader:
             self.edp_boundary_layer = "edp_boundary_extents"
             self.edp_excluded_areas_gpkg = fixtures_dir / "edp_excluded_areas.gpkg"
             self.edp_excluded_areas_layer = "edp_excluded_areas"
-            self.levy_charges_csv = fixtures_dir / "levy_charges.csv"
+            self.edps_csv = fixtures_dir / "edps.csv"
             self.levy_inflation_index_csv = fixtures_dir / "levy_inflation_index.csv"
         else:
             if settings is None:
@@ -760,15 +760,16 @@ class SpatialDataLoader:
             print(f"Error loading {table_name}: {e}")
 
     def load_levy_fixtures(self) -> None:
-        """Load levy_charges and levy_inflation_index from CSV fixtures.
+        """Load edps and levy_inflation_index from CSV fixtures.
 
-        Both CSV paths are None outside fixtures_dir mode.
+        Both CSV paths are None outside fixtures_dir mode. base_prices is not
+        loaded: admins manage it, and the migration seeds the first row.
         """
         self._upsert_csv_table(
-            self.levy_charges_csv,
-            LevyCharge,
-            _levy_charge_from_row,
-            key=("edp_id", "charge_valid_from"),
+            self.edps_csv,
+            Edp,
+            _edp_from_row,
+            key=("id",),
         )
         self._upsert_csv_table(
             self.levy_inflation_index_csv,
@@ -786,10 +787,10 @@ class SpatialDataLoader:
     ) -> None:
         """Sync a table to its CSV fixture, matching rows on ``key``.
 
-        Matched rows are updated in place so they keep their id: the audit
-        table's RESTRICT foreign keys point at those ids, so a delete-and-
-        reinsert fails once any quote has been priced. A row dropped from the
-        CSV is deleted, which still fails if a quote was priced from it.
+        Matched rows are updated in place so they keep their id: other rows
+        point at those ids (base_prices at edps, the audit table at the index
+        rows), so a delete-and-reinsert fails once any of them exist. A row
+        dropped from the CSV is deleted, which still fails if one does.
         """
         if csv_path is None or not csv_path.exists():
             print(f"Skipping {model.__tablename__}: no fixture at {csv_path}")
@@ -814,8 +815,7 @@ class SpatialDataLoader:
             stale = [obj for k, obj in existing.items() if k not in wanted]
             for obj in stale:
                 session.delete(obj)
-            # Flush deletes first so a replacement window cannot trip the
-            # levy_charges overlap exclusion against the row it replaces.
+            # Flush deletes first so a failure names the removed rows.
             try:
                 session.flush()
             except IntegrityError as e:
@@ -825,10 +825,10 @@ class SpatialDataLoader:
                 )
                 msg = (
                     f"Cannot remove {model.__tablename__} rows no longer in "
-                    f"{csv_path.name} ({stale_keys}): priced quotes in the audit "
-                    "table reference them. Changing a key column counts as a "
-                    "removal; end-date the row and add a new one instead, or "
-                    "clear the local audit rows first."
+                    f"{csv_path.name} ({stale_keys}): other rows reference them "
+                    "(base prices, or priced quotes in the audit table). "
+                    "Changing a key column counts as a removal; remove the "
+                    "referencing rows first."
                 )
                 raise RuntimeError(msg) from e
 
@@ -848,16 +848,12 @@ class SpatialDataLoader:
         )
 
 
-def _levy_charge_from_row(row: dict) -> LevyCharge:
-    """Build a LevyCharge from one levy_charges.csv row (ISO date strings)."""
-    return LevyCharge(
-        id=uuid4(),
-        edp_id=int(row["edp_id"]),
-        edp_name=row["edp_name"],
-        edp_start_date=date.fromisoformat(row["edp_start_date"]),
-        charge_valid_from=date.fromisoformat(row["charge_valid_from"]),
-        charge_valid_to=date.fromisoformat(row["charge_valid_to"]),
-        base_charge_per_unit=Decimal(str(row["base_charge_per_unit"])),
+def _edp_from_row(row: dict) -> Edp:
+    """Build an Edp from one edps.csv row (ISO date string)."""
+    return Edp(
+        id=int(row["id"]),
+        name=row["name"],
+        start_date=date.fromisoformat(row["start_date"]),
     )
 
 

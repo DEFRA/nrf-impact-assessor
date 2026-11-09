@@ -111,7 +111,7 @@ def test_no_charge_row_raises(orch, lookups):
     lookups["pricing"].return_value = None
     job = _job()
 
-    with pytest.raises(LevyChargeUnavailableError, match="no charge"):
+    with pytest.raises(LevyChargeUnavailableError, match="no base price"):
         orch._calculate_levy(job)
 
 
@@ -193,7 +193,7 @@ def test_process_job_fails_before_anything_else_runs(orch, lookups, mocker, capl
     guard.assert_not_called()
     run.assert_not_called()
     callback.assert_not_called()
-    assert any("no charge" in r.message for r in caplog.records)
+    assert any("no base price" in r.message for r in caplog.records)
 
 
 def test_process_job_passes_the_levy_to_the_callback(orch, lookups, mocker):

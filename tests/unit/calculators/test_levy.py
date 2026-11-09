@@ -197,7 +197,7 @@ def test_inflated_levy_that_rounds_to_the_largest_audit_amount_fits(
 
 
 def test_provisional_rounds_half_up_like_the_inflated_total():
-    # The levy_charges CHECK keeps such a charge out of the database; a caller
+    # The base_prices CHECK keeps such a charge out of the database; a caller
     # that bypasses it still gets the module's half-up rule, not banker's.
     result = calculate_levy(
         _charge("2675.125"),

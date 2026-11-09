@@ -23,12 +23,12 @@ should use.
 
 ## Data management
 
-The only foreign key in this database is `data_load_history.run_id`.
+The foreign keys in this database are `data_load_history.run_id`, `base_prices.edp_id` and the two index keys on `audit_levy_calculations`.
 
 ```mermaid
 erDiagram
     data_sync_run ||--o{ data_load_history : "audits"
-    levy_charges ||--o{ audit_levy_calculations : "priced"
+    edps ||--o{ base_prices : "priced by"
     levy_inflation_index |o--o{ audit_levy_calculations : "inflated"
 
     data_sync_run {
@@ -80,15 +80,22 @@ erDiagram
         timestamptz created_at "default now()"
     }
 
-    levy_charges {
+    edps {
+        integer id PK "assigned, matches edp_boundary_layer.attributes.EDP_Id"
+        varchar name "for readers, not a lookup key"
+        date start_date "the EDP's charging year is this date's year"
+    }
+
+    base_prices {
         uuid id PK "app-generated uuid4, no DB default"
-        integer edp_id "indexed; matches edp_boundary_layer.attributes.EDP_id"
-        varchar edp_name "for readers, not a lookup key"
-        date edp_start_date
-        date charge_valid_from "charging year start; windows per edp_id never overlap"
-        date charge_valid_to "charging year end, inclusive"
-        numeric base_charge_per_unit "numeric, GBP; CHECK over 0, under 10^8, at most 2 dp"
+        numeric base_price "GBP per unit; CHECK over 0, under 10^8, at most 2 dp"
+        integer edp_id FK "indexed with effective_from"
         timestamptz created_at "default now()"
+        timestamptz effective_from "the price applies from this moment"
+        varchar comment
+        varchar user_entra_id "who last saved the price"
+        varchar user_full_name
+        varchar user_email
     }
 
     audit_levy_calculations {
@@ -103,7 +110,7 @@ erDiagram
         date calculation_date
         numeric provisional_amount "numeric(12,2)"
         numeric inflation_adjusted_amount "numeric(12,2)"
-        uuid levy_charge_id FK "indexed; levy_charges row used, RESTRICT"
+        uuid levy_charge_id "indexed; base_prices row used, no FK"
         uuid edp_start_year_index_id FK "nullable; levy_inflation_index row, RESTRICT"
         numeric edp_start_year_index_factor "nullable; numeric(10,4)"
         uuid calculation_year_index_id FK "nullable; levy_inflation_index row, RESTRICT"
@@ -124,14 +131,16 @@ erDiagram
 Reads fall back to `MAX(version)` when `data_active_version` holds no row for a
 table, so it only gains one once a reload or rollback has actually run.
 
-All three levy tables are maintained by migration (`d4e8f1a2b3c5`), not by
-`load_data.py` or data sync, and none is versioned by `data_active_version`.
+The levy tables are maintained by migration and, for `base_prices`, by admins
+(NRF2-1351), not by `load_data.py` or data sync, and none is versioned by
+`data_active_version`.
 
-All three are created **empty** — the migration deliberately seeds no row.
-Finance has not confirmed a published base charge or charging year for any EDP,
-and an assumed value would let a real quote price against it. The assessor
-reads the `levy_charges` row whose validity window contains the calculation
-date.
+`edps` holds each EDP. `base_prices` holds every base price an EDP has had, each
+from its own `effective_from`, so a price change is a new row. The assessor
+reads the EDP's row with the latest `effective_from` at or before the moment
+being priced. The first row is the provisional price the EDP launched with,
+seeded by migration `b7d3f9a1c5e2` (EDP 1 at 2675.00 from the EDP start date)
+with the user recorded as `system`.
 
 `levy_inflation_index` holds the published RICS CIL Index per charging year and
 the factor it derives against the 2026 base (2026 = 1.0000). It is read when the
@@ -140,15 +149,16 @@ inflation-adjust the provisional amount.
 
 `audit_levy_calculations` holds one audit row per calculation; it is
 written by the orchestrator and never truncated by data sync. Each row copies the
-values it used and names the `levy_charges` row and, when an inflation step
+values it used and names the `base_prices` row and, when an inflation step
 applied, the two `levy_inflation_index` rows they came from (otherwise the index
 columns are NULL). The rounded per-unit charges are not stored:
 `calculator_version` pins the rounding rule that derives them from
 `base_charge_per_unit` and the index factors, and they appear in the audit log
 line. Comparing the copy with the current row shows whether a value
-was corrected after the event or the wrong row was picked up. The foreign keys are
-`RESTRICT`: a charge or index row that has priced a quote cannot be deleted, so
-correct it with a visible update or a new row.
+was corrected after the event or the wrong row was picked up. The index foreign keys are
+`RESTRICT`: an index row that has priced a quote cannot be deleted, so correct
+it with a visible update or a new row. `levy_charge_id` has no foreign key,
+because an admin can delete a base price that has not taken effect.
 
 ## Spatial reference layers
 
@@ -209,12 +219,12 @@ spatially at query time.
 | `uq_lookup_name_version` | `UNIQUE (name, version)` — one row per lookup table per version. |
 | `ix_public_coefficient_layer_geom_v1` | Partial GiST over `geometry WHERE version = 1`. **Add an equivalent when loading a new version**, or queries against it lose the index. |
 | `ix_data_load_history_table_loaded_at` | `(table_name, loaded_at)` — the provenance lookup. |
-| `ck_levy_charges_valid_window` | `CHECK (charge_valid_to >= charge_valid_from)`. |
-| `ex_levy_charges_edp_window` | `EXCLUDE USING gist (edp_id WITH =, daterange(charge_valid_from, charge_valid_to, '[]') WITH &&)` — an EDP's charge windows never overlap, so a date matches at most one charge (needs `btree_gist`). |
+| `ck_base_prices_base_price` | `CHECK (base_price > 0 AND base_price < 100000000 AND base_price = round(base_price, 2))` — pounds and pence only. |
+| `ix_public_base_prices_edp_id_effective_from` | `(edp_id, effective_from)` — finds the price in force for an EDP at a moment. |
 | `uq_levy_inflation_index_year` | `UNIQUE (charging_year)` — one index factor per charging year. |
 | `ix_public_audit_levy_calculations_quote_reference` | `(quote_reference)` — fetches the audit trail for a quote. |
-| `ix_public_audit_levy_calculations_levy_charge_id` | `(levy_charge_id)` — finds every quote a charge row priced, e.g. after a correction. |
-| `fk_audit_levy_calculations_*` | `ON DELETE RESTRICT` to `levy_charges` and `levy_inflation_index` — a row that priced a quote cannot be deleted. |
+| `ix_public_audit_levy_calculations_levy_charge_id` | `(levy_charge_id)` — finds every quote a base price row priced, e.g. after a correction. |
+| `fk_audit_levy_calculations_*` | `ON DELETE RESTRICT` to `levy_inflation_index` — an index row that priced a quote cannot be deleted. |
 | `ix_public_<layer>_geometry` | GiST on every spatial layer. |
 
 ## UUID primary keys have no database default

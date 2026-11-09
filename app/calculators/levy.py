@@ -1,8 +1,8 @@
 """Nature restoration levy calculation.
 
 The base charge per unit is a positive amount in pounds and pence: the
-levy_charges table rejects anything else (ck_levy_charges_base_charge_per_unit),
-so provisional levy = units x base_charge_per_unit is exact.
+base_prices table rejects anything else (ck_base_prices_base_price), so
+provisional levy = units x base_charge_per_unit is exact.
 
 Inflation adjustment: the charging year is the calendar year. If
 calculation_date falls in the EDP's own charging year (edp_start_date's
@@ -73,10 +73,11 @@ class LevyUnitsTooLargeError(LevyChargeUnavailableError):
 
 
 class LevyChargeRow(Protocol):
-    """The charge fields the calculation reads.
+    """The charge fields the calculation reads: the base price in force for an
+    EDP, with id the base_prices row's id.
 
-    Structural rather than the LevyCharge ORM model, so this module stays free
-    of database imports and a test can pass any object with these attributes.
+    Structural rather than an ORM model, so this module stays free of database
+    imports and a test can pass any object with these attributes.
     """
 
     id: UUID
@@ -134,9 +135,9 @@ def calculate_levy(
     """Calculate the provisional and inflation-adjusted levy for one EDP.
 
     Args:
-        charge: A levy charge row (LevyCharge) with id, edp_id, edp_name,
-            edp_start_date and base_charge_per_unit (Decimal, pounds and
-            pence, at most 2 dp).
+        charge: The base price in force (LevyCharge) with id, edp_id,
+            edp_name, edp_start_date and base_charge_per_unit (Decimal,
+            pounds and pence, at most 2 dp).
         units: Number of dwellings; must be positive.
         calculation_date: The date the quote is calculated on.
         edp_start_year_index: RICS CIL Index row (LevyInflationIndex) for

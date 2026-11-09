@@ -109,17 +109,16 @@ DB_TABLES = \
 	public.gcn_risk_zones \
 	public.gcn_ponds \
 	public.edp_edges \
-	public.levy_charges \
 	public.levy_inflation_index
 
 # DB_TABLES entries that another table's foreign key points at. Postgres refuses
 # to TRUNCATE these even when the referencing table is empty, so the generated
 # restore clears them with DELETE instead. CASCADE is not an option: it would
 # wipe audit_levy_calculations. The DELETE still fails while audit rows reference
-# a levy row, which is the intended fail-closed behaviour. The levy tables are
-# not data-sync tables (NRF2-913 decision 1); upload only the rest to S3.
+# an index row, which is the intended fail-closed behaviour. The levy tables are
+# not data-sync tables (NRF2-913 decision 1); upload only the rest to S3. edps and
+# base_prices are left out: the migration seeds them and admins manage them.
 DB_FK_REFERENCED_TABLES = \
-	public.levy_charges \
 	public.levy_inflation_index
 
 db-tables: ## List public tables with their exact row counts
