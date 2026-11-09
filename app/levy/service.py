@@ -1,12 +1,12 @@
 """Levy pricing shared by the quote path and the recalculation endpoint, so
 both apply the same charge and inflation rules."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
 from app.calculators.levy import LevyCalculation, calculate_levy
-from app.repositories.levy import UK_TIMEZONE, get_levy_pricing_rows
+from app.repositories.levy import get_levy_pricing_rows
 
 
 def price_levy(
@@ -22,7 +22,7 @@ def price_levy(
     force at `at`. `at` must be timezone-aware.
 
     The base price and both indices come from one query; calculate_levy applies
-    the indices only when the UK date of `at` falls in a later charging year
+    the indices only when the UTC date of `at` falls in a later charging year
     than the EDP's publication, unless apply_inflation is False.
 
     Raises:
@@ -36,7 +36,7 @@ def price_levy(
     return calculate_levy(
         rows.charge,
         units=units,
-        calculation_date=at.astimezone(UK_TIMEZONE).date(),
+        calculation_date=at.astimezone(UTC).date(),
         edp_start_year_index=rows.edp_start_year_index,
         calculation_year_index=rows.calculation_year_index,
         apply_inflation=apply_inflation,

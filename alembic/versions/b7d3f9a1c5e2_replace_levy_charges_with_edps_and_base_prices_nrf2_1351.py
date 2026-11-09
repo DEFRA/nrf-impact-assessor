@@ -6,17 +6,15 @@ base_prices holds every base price an EDP has had, each from its own
 effective_from. The price in force is the latest row at or before the moment
 being priced, so a price change is a new row rather than a new window.
 
-Each EDP's earliest levy_charges row becomes its first base_prices row,
-effective from the EDP start date (UK midnight), keeping the row's id so the
-audit_levy_calculations.levy_charge_id values that named it still resolve.
-Later charging windows are not carried over: they repeated the base price for
-the next year, and the year-on-year change is the inflation index's job. When
-levy_charges is empty the EDP 1 row and its 2675.00 base price are seeded, as
+levy_charges is dropped, not converted: EDP 1 and its first base price of
+2675.00 (effective from the EDP start date, 00:00 UTC) are seeded, as
 f7b1c3d5e9a2 did, so an environment can always price a levy.
 
-audit_levy_calculations.levy_charge_id keeps its name and now holds a
-base_prices id. Its foreign key is dropped: a base price can be deleted, and
-the audit table is being removed in a separate change.
+base_prices.id is an auto-incrementing integer. audit_levy_calculations
+.levy_charge_id keeps its name and now holds a base_prices id, so it changes
+from uuid to integer and loses its foreign key. Its existing rows named
+levy_charges ids that no longer exist and cannot be converted, so they are
+deleted; the audit table is being removed in a separate change.
 
 Revision ID: b7d3f9a1c5e2
 Revises: a8c2e4f6b1d3
@@ -48,6 +46,7 @@ EDP_NAME = (
 FIRST_PRICE_COMMENT = "Provisional base price when the EDP launched"
 SYSTEM_USER = "system"
 SYSTEM_EMAIL = "system@nrf.invalid"
+AUDIT_TABLE = "audit_levy_calculations"
 
 
 def upgrade() -> None:
@@ -61,7 +60,7 @@ def upgrade() -> None:
     )
     op.create_table(
         BASE_PRICES_TABLE,
-        sa.Column("id", sa.Uuid(), nullable=False),
+        sa.Column("id", sa.Integer(), sa.Identity(), nullable=False),
         sa.Column("base_price", sa.Numeric(), nullable=False),
         sa.Column("edp_id", sa.Integer(), nullable=False),
         sa.Column(
@@ -94,43 +93,18 @@ def upgrade() -> None:
     )
 
     op.execute(
-        "INSERT INTO public.edps (id, name, start_date) "
-        "SELECT DISTINCT ON (edp_id) edp_id, edp_name, edp_start_date "
-        "FROM public.levy_charges ORDER BY edp_id, charge_valid_from"
-    )
-    op.execute(
-        sa.text(
-            "INSERT INTO public.base_prices "
-            "(id, base_price, edp_id, effective_from, comment, "
-            "user_entra_id, user_full_name, user_email) "
-            "SELECT DISTINCT ON (edp_id) id, base_charge_per_unit, edp_id, "
-            "edp_start_date::timestamp AT TIME ZONE 'Europe/London', "
-            ":comment, :entra_id, :full_name, :email "
-            "FROM public.levy_charges ORDER BY edp_id, charge_valid_from"
-        ).bindparams(
-            comment=FIRST_PRICE_COMMENT,
-            entra_id=SYSTEM_USER,
-            full_name=SYSTEM_USER,
-            email=SYSTEM_EMAIL,
-        )
-    )
-
-    op.execute(
         sa.text(
             "INSERT INTO public.edps (id, name, start_date) "
-            "SELECT 1, :edp_name, DATE '2026-01-01' "
-            "WHERE NOT EXISTS (SELECT 1 FROM public.edps)"
+            "VALUES (1, :edp_name, DATE '2026-01-01')"
         ).bindparams(edp_name=EDP_NAME)
     )
     op.execute(
         sa.text(
             "INSERT INTO public.base_prices "
-            "(id, base_price, edp_id, effective_from, comment, "
+            "(base_price, edp_id, effective_from, comment, "
             "user_entra_id, user_full_name, user_email) "
-            "SELECT gen_random_uuid(), 2675.00, 1, "
-            "DATE '2026-01-01'::timestamp AT TIME ZONE 'Europe/London', "
-            ":comment, :entra_id, :full_name, :email "
-            "WHERE NOT EXISTS (SELECT 1 FROM public.base_prices)"
+            "VALUES (2675.00, 1, TIMESTAMPTZ '2026-01-01 00:00:00+00', "
+            ":comment, :entra_id, :full_name, :email)"
         ).bindparams(
             comment=FIRST_PRICE_COMMENT,
             entra_id=SYSTEM_USER,
@@ -139,8 +113,16 @@ def upgrade() -> None:
         )
     )
 
-    op.drop_constraint(
-        AUDIT_FK, "audit_levy_calculations", schema="public", type_="foreignkey"
+    op.drop_constraint(AUDIT_FK, AUDIT_TABLE, schema="public", type_="foreignkey")
+    op.execute(f"DELETE FROM public.{AUDIT_TABLE}")  # noqa: S608
+    op.alter_column(
+        AUDIT_TABLE,
+        "levy_charge_id",
+        schema="public",
+        type_=sa.Integer(),
+        existing_type=sa.Uuid(),
+        existing_nullable=False,
+        postgresql_using="NULL",
     )
     op.drop_table(LEVY_CHARGES_TABLE, schema="public")
 
@@ -186,25 +168,38 @@ def downgrade() -> None:
         ["edp_id"],
         schema="public",
     )
-    # One open-ended window per EDP at its first base price: the windows the
-    # upgrade dropped cannot be rebuilt, and later base prices have no
-    # equivalent here.
+    # One open-ended window per EDP at its first base price: later base prices
+    # have no equivalent here.
     op.execute(
         "INSERT INTO public.levy_charges "
         "(id, edp_id, edp_name, edp_start_date, charge_valid_from, "
         "charge_valid_to, base_charge_per_unit) "
-        "SELECT DISTINCT ON (e.id) bp.id, e.id, e.name, e.start_date, "
-        "e.start_date, DATE '9999-12-31', bp.base_price "
+        "SELECT DISTINCT ON (e.id) gen_random_uuid(), e.id, e.name, "
+        "e.start_date, e.start_date, DATE '9999-12-31', bp.base_price "
         "FROM public.edps e "
         "JOIN public.base_prices bp ON bp.edp_id = e.id "
         "ORDER BY e.id, bp.effective_from"
     )
-    # NOT VALID: audit rows written since the upgrade name base prices that
-    # are not levy_charges rows. The constraint still guards new rows.
-    op.execute(
-        "ALTER TABLE public.audit_levy_calculations "
-        f"ADD CONSTRAINT {AUDIT_FK} FOREIGN KEY (levy_charge_id) "
-        "REFERENCES public.levy_charges (id) ON DELETE RESTRICT NOT VALID"
+    # The audit rows name base prices that the downgrade discards.
+    op.execute(f"DELETE FROM public.{AUDIT_TABLE}")  # noqa: S608
+    op.alter_column(
+        AUDIT_TABLE,
+        "levy_charge_id",
+        schema="public",
+        type_=sa.Uuid(),
+        existing_type=sa.Integer(),
+        existing_nullable=False,
+        postgresql_using="NULL",
+    )
+    op.create_foreign_key(
+        AUDIT_FK,
+        AUDIT_TABLE,
+        LEVY_CHARGES_TABLE,
+        ["levy_charge_id"],
+        ["id"],
+        source_schema="public",
+        referent_schema="public",
+        ondelete="RESTRICT",
     )
     op.drop_table(BASE_PRICES_TABLE, schema="public")
     op.drop_table(EDPS_TABLE, schema="public")

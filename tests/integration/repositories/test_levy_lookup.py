@@ -125,9 +125,9 @@ def test_a_base_price_may_share_an_edp_with_earlier_prices(repository: Repositor
 def test_a_base_price_for_an_unknown_edp_is_rejected(repository: Repository):
     insert = text(
         "INSERT INTO public.base_prices "
-        "(id, base_price, edp_id, effective_from, comment, "
+        "(base_price, edp_id, effective_from, comment, "
         "user_entra_id, user_full_name, user_email) VALUES "
-        "(gen_random_uuid(), 2675, 99, now(), 'Test', 'id', 'Name', "
+        "(2675, 99, now(), 'Test', 'id', 'Name', "
         "'name@example.com')"
     )
     with (

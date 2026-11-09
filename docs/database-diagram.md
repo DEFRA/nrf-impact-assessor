@@ -87,7 +87,7 @@ erDiagram
     }
 
     base_prices {
-        uuid id PK "app-generated uuid4, no DB default"
+        integer id PK "identity, auto-incrementing"
         numeric base_price "GBP per unit; CHECK over 0, under 10^8, at most 2 dp"
         integer edp_id FK "indexed with effective_from"
         timestamptz created_at "default now()"
@@ -110,7 +110,7 @@ erDiagram
         date calculation_date
         numeric provisional_amount "numeric(12,2)"
         numeric inflation_adjusted_amount "numeric(12,2)"
-        uuid levy_charge_id "indexed; base_prices row used, no FK"
+        integer levy_charge_id "indexed; base_prices row used, no FK"
         uuid edp_start_year_index_id FK "nullable; levy_inflation_index row, RESTRICT"
         numeric edp_start_year_index_factor "nullable; numeric(10,4)"
         uuid calculation_year_index_id FK "nullable; levy_inflation_index row, RESTRICT"
@@ -139,8 +139,11 @@ The levy tables are maintained by migration and, for `base_prices`, by admins
 from its own `effective_from`, so a price change is a new row. The assessor
 reads the EDP's row with the latest `effective_from` at or before the moment
 being priced. The first row is the provisional price the EDP launched with,
-seeded by migration `b7d3f9a1c5e2` (EDP 1 at 2675.00 from the EDP start date)
-with the user recorded as `system`.
+seeded by migration `b7d3f9a1c5e2` (EDP 1 at 2675.00 from 00:00 UTC on the EDP
+start date) with the user recorded as `system`. `levy_charges` was dropped, not
+converted, and the migration deletes existing `audit_levy_calculations` rows
+because their `levy_charge_id` values named rows that no longer exist. All
+timestamps are stored and passed as UTC; the charging year is the UTC year.
 
 `levy_inflation_index` holds the published RICS CIL Index per charging year and
 the factor it derives against the 2026 base (2026 = 1.0000). It is read when the

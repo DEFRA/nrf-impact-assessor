@@ -13,6 +13,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Identity,
     Index,
     Integer,
     Numeric,
@@ -243,7 +244,7 @@ class BasePrice(Base):
         {"schema": "public"},
     )
 
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
     # Positive pounds and pence, enforced by ck_base_prices_base_price. No
     # precision or scale: either would round a 3+ dp value before the CHECK
     # sees it, so the CHECK bounds the magnitude instead.
@@ -339,7 +340,7 @@ class LevyCalculationRecord(Base):
     )
     # The base_prices row that priced the quote. Not a foreign key: this table
     # is being removed, and an audit row must outlive an edited or deleted price.
-    levy_charge_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    levy_charge_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     edp_start_year_index_id: Mapped[UUID | None] = mapped_column(
         ForeignKey(
             "public.levy_inflation_index.id",

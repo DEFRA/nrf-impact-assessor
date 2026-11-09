@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import geopandas as gpd
 import pytest
@@ -442,7 +442,7 @@ def insert_base_price(
     effective_from: datetime = datetime(2026, 1, 1, tzinfo=UTC),
     price: str = "2675",
     edp_start_date: date = date(2026, 1, 1),
-) -> UUID:
+) -> int:
     """Insert a committed base_prices row, and its EDP when missing, and return
     the base price id.
 
@@ -460,9 +460,9 @@ def insert_base_price(
         base_price_id = session.execute(
             text(
                 "INSERT INTO public.base_prices "
-                "(id, base_price, edp_id, effective_from, comment, "
+                "(base_price, edp_id, effective_from, comment, "
                 "user_entra_id, user_full_name, user_email) VALUES "
-                "(gen_random_uuid(), :price, :id, :effective_from, 'Test', "
+                "(:price, :id, :effective_from, 'Test', "
                 "'entra-id', 'Test User', 'test.user@example.com') "
                 "RETURNING id"
             ),

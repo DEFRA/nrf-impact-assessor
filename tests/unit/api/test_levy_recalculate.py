@@ -25,7 +25,7 @@ def _index(factor: str) -> SimpleNamespace:
 
 def _charge(edp_start_date: date = date(2026, 1, 1)) -> SimpleNamespace:
     return SimpleNamespace(
-        id=uuid4(),
+        id=41,
         edp_id=1,
         edp_name=EDP_NAME,
         edp_start_date=edp_start_date,

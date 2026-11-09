@@ -34,7 +34,7 @@ def _job(labels=(EDP_NAME,), units: int | None = 10) -> ImpactAssessmentJob:
 
 def _charge() -> MagicMock:
     charge = MagicMock()
-    charge.id = uuid4()
+    charge.id = 41
     charge.edp_id = 1
     charge.edp_name = EDP_NAME
     charge.edp_start_date = date(2026, 1, 1)

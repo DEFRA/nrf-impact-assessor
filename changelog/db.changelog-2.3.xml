@@ -20,7 +20,7 @@
             </column>
         </createTable>
         <createTable tableName="base_prices" schemaName="public">
-            <column name="id" type="uuid">
+            <column name="id" type="integer" autoIncrement="true">
                 <constraints primaryKey="true" nullable="false"/>
             </column>
             <column name="base_price" type="numeric">
@@ -71,34 +71,22 @@
         </rollback>
     </changeSet>
 
-    <!-- Each EDP's earliest levy_charges row becomes its first base price,
-         effective from the EDP start date (UK midnight) and keeping the row's id.
-         Later charging windows are not carried over. -->
+    <!-- levy_charges is dropped, not converted: EDP 1 and its first base price
+         (effective from the EDP start date, 00:00 UTC) are seeded so a levy can
+         always be priced. -->
     <changeSet id="13-edps-and-base-prices-data" author="nrf">
         <sql>INSERT INTO public.edps (id, name, start_date)
-            SELECT DISTINCT ON (edp_id) edp_id, edp_name, edp_start_date
-            FROM public.levy_charges ORDER BY edp_id, charge_valid_from</sql>
+            VALUES (1, 'Norfolk: Broads Special Area of Conservation (SAC) (Yare and Bure), Broadland Ramsar and River Wensum SAC Environmental Delivery Plan addressing nutrient pollution (2027 to 2037)',
+                DATE '2026-01-01')</sql>
         <sql>INSERT INTO public.base_prices
-            (id, base_price, edp_id, effective_from, comment,
+            (base_price, edp_id, effective_from, comment,
              user_entra_id, user_full_name, user_email)
-            SELECT DISTINCT ON (edp_id) id, base_charge_per_unit, edp_id,
-                edp_start_date::timestamp AT TIME ZONE 'Europe/London',
+            VALUES (2675.00, 1, TIMESTAMPTZ '2026-01-01 00:00:00+00',
                 'Provisional base price when the EDP launched',
-                'system', 'system', 'system@nrf.invalid'
-            FROM public.levy_charges ORDER BY edp_id, charge_valid_from</sql>
-        <!-- Seed EDP 1 when levy_charges was empty, so a levy can always be priced. -->
-        <sql>INSERT INTO public.edps (id, name, start_date)
-            SELECT 1, 'Norfolk: Broads Special Area of Conservation (SAC) (Yare and Bure), Broadland Ramsar and River Wensum SAC Environmental Delivery Plan addressing nutrient pollution (2027 to 2037)',
-                DATE '2026-01-01'
-            WHERE NOT EXISTS (SELECT 1 FROM public.edps)</sql>
-        <sql>INSERT INTO public.base_prices
-            (id, base_price, edp_id, effective_from, comment,
-             user_entra_id, user_full_name, user_email)
-            SELECT gen_random_uuid(), 2675.00, 1,
-                DATE '2026-01-01'::timestamp AT TIME ZONE 'Europe/London',
-                'Provisional base price when the EDP launched',
-                'system', 'system', 'system@nrf.invalid'
-            WHERE NOT EXISTS (SELECT 1 FROM public.base_prices)</sql>
+                'system', 'system', 'system@nrf.invalid')</sql>
+        <!-- Nothing to undo: the rollback of 13-edps-and-base-prices drops both
+             tables, and 13-drop-levy-charges rolls back first (Liquibase reverses
+             in order) so levy_charges is rebuilt from these rows before they go. -->
         <rollback/>
     </changeSet>
 
@@ -106,6 +94,10 @@
         <dropForeignKeyConstraint baseTableName="audit_levy_calculations"
                                   baseTableSchemaName="public"
                                   constraintName="fk_audit_levy_calculations_levy_charge"/>
+        <!-- Existing rows name levy_charges ids that cannot map to base_prices ids. -->
+        <sql>DELETE FROM public.audit_levy_calculations</sql>
+        <sql>ALTER TABLE public.audit_levy_calculations
+            ALTER COLUMN levy_charge_id TYPE integer USING NULL</sql>
         <dropTable tableName="levy_charges" schemaName="public"/>
         <rollback>
             <sql>CREATE EXTENSION IF NOT EXISTS btree_gist</sql>
@@ -154,16 +146,19 @@
             <sql>INSERT INTO public.levy_charges
                 (id, edp_id, edp_name, edp_start_date, charge_valid_from,
                  charge_valid_to, base_charge_per_unit)
-                SELECT DISTINCT ON (e.id) bp.id, e.id, e.name, e.start_date,
+                SELECT DISTINCT ON (e.id) gen_random_uuid(), e.id, e.name, e.start_date,
                     e.start_date, DATE '9999-12-31', bp.base_price
                 FROM public.edps e
                 JOIN public.base_prices bp ON bp.edp_id = e.id
                 ORDER BY e.id, bp.effective_from</sql>
-            <!-- NOT VALID: audit rows written since the upgrade name base prices. -->
+            <!-- The audit rows name base prices that the rollback discards. -->
+            <sql>DELETE FROM public.audit_levy_calculations</sql>
+            <sql>ALTER TABLE public.audit_levy_calculations
+                ALTER COLUMN levy_charge_id TYPE uuid USING NULL</sql>
             <sql>ALTER TABLE public.audit_levy_calculations
                 ADD CONSTRAINT fk_audit_levy_calculations_levy_charge
                 FOREIGN KEY (levy_charge_id) REFERENCES public.levy_charges (id)
-                ON DELETE RESTRICT NOT VALID</sql>
+                ON DELETE RESTRICT</sql>
         </rollback>
     </changeSet>
 

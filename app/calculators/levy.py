@@ -80,7 +80,7 @@ class LevyChargeRow(Protocol):
     imports and a test can pass any object with these attributes.
     """
 
-    id: UUID
+    id: int
     edp_id: int
     edp_name: str
     edp_start_date: date
@@ -102,7 +102,7 @@ class LevyCalculation(BaseModel):
     index fields are None when no inflation step applied.
     """
 
-    levy_charge_id: UUID
+    levy_charge_id: int
     edp_id: int
     edp_name: str
     edp_start_date: date

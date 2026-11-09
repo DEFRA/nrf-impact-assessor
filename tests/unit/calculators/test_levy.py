@@ -21,7 +21,7 @@ from app.calculators.levy import (
 
 CALC_DATE = date(2026, 9, 14)
 EARLIER_CALC_DATE = date(2022, 6, 1)  # an earlier charging year than the EDP start
-CHARGE_ID = uuid4()
+CHARGE_ID = 41
 
 
 def _charge(price: str) -> SimpleNamespace:

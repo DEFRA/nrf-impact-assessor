@@ -5,11 +5,10 @@ Repository class, which is large and spatial; these are small ORM
 operations."""
 
 import logging
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import NamedTuple
 from uuid import UUID
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import Integer, cast, extract, func, select, update
 from sqlalchemy.orm import Session, aliased
@@ -25,10 +24,6 @@ from app.models.db import (
 )
 
 logger = logging.getLogger(__name__)
-
-# The charging year is the UK calendar year, so a moment just after midnight on
-# 1 January is in the new year whatever the server clock's zone.
-UK_TIMEZONE = ZoneInfo("Europe/London")
 
 
 def resolve_edp_id(session: Session, label: str) -> int | None:
@@ -72,7 +67,7 @@ class LevyCharge(NamedTuple):
     """The base price in force for an EDP, with the EDP fields the levy
     calculation and its audit record carry. id is the base_prices row's id."""
 
-    id: UUID
+    id: int
     edp_id: int
     edp_name: str
     edp_start_date: date
@@ -92,7 +87,7 @@ def get_levy_pricing_rows(
 ) -> LevyPricingRows | None:
     """The EDP's base price in force at `at` (its latest row with
     effective_from at or before `at`) with the index rows for its start year
-    and for the UK year `at` falls in, in one round trip. None when the EDP
+    and for the UTC year `at` falls in, in one round trip. None when the EDP
     does not exist or has no base price in force yet.
 
     `at` must be timezone-aware. Either index is None when that year has none.
@@ -110,7 +105,7 @@ def get_levy_pricing_rows(
         )
         .outerjoin(
             calculation_index,
-            calculation_index.charging_year == at.astimezone(UK_TIMEZONE).year,
+            calculation_index.charging_year == at.astimezone(UTC).year,
         )
         .where(BasePrice.edp_id == edp_id, BasePrice.effective_from <= at)
         .order_by(BasePrice.effective_from.desc(), BasePrice.created_at.desc())
