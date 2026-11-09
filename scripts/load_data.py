@@ -94,6 +94,29 @@ DEFAULT_BATCH_SIZE = 100_000
 _MSG_NO_CRS = f"No CRS found, assuming {CRS_BRITISH_NATIONAL_GRID}"
 _MSG_CONVERT_3D = "Converting 3D geometries to 2D"
 
+# A geometry repair may change a polygon's area by at most this fraction;
+# anything larger means make_valid reinterpreted the shape rather than fixed it.
+_REPAIR_AREA_TOLERANCE = 0.01
+# shapely type ids for Polygon and MultiPolygon.
+_POLYGONAL_TYPE_IDS = (3, 6)
+
+
+def _polygonal_parts(geom: Any) -> Any:
+    """Return geom's polygonal parts as one (Multi)Polygon, or None if it has none.
+
+    make_valid can return a GeometryCollection mixing polygons with collapsed
+    lines or points; only the polygons belong in a polygon layer.
+    """
+    if shapely.get_type_id(geom) in _POLYGONAL_TYPE_IDS:
+        return geom
+    polygons = [
+        part
+        for part in getattr(geom, "geoms", [])
+        if shapely.get_type_id(part) in _POLYGONAL_TYPE_IDS
+    ]
+    return shapely.union_all(polygons) if polygons else None
+
+
 app = typer.Typer(help="Load spatial data into PostGIS database")
 
 
@@ -115,9 +138,14 @@ def _gdal_readonly(path: Path):
     geometries when it hits a permission error mid-read.
 
     A shapefile is spread across sibling files (.shx, .dbf, .prj, ...) that
-    share its stem, so those are copied alongside it.
+    share its stem, so those are copied alongside it. A File Geodatabase
+    (.gdb) is a directory, so it is copied whole.
     """
     with tempfile.TemporaryDirectory() as scratch_dir:
+        if path.is_dir():
+            shutil.copytree(path, Path(scratch_dir) / path.name)
+            yield Path(scratch_dir) / path.name
+            return
         for sibling in path.parent.iterdir():
             if sibling.stem == path.stem and sibling.is_file():
                 shutil.copy2(sibling, Path(scratch_dir) / sibling.name)
@@ -370,6 +398,45 @@ class SpatialDataLoader:
         return gdf
 
     @staticmethod
+    def _repair_invalid_geometries(
+        gdf: gpd.GeoDataFrame, layer_name: str
+    ) -> gpd.GeoDataFrame:
+        """Return a copy of gdf with safely repairable polygons made valid.
+
+        Source exports commonly contain rings that touch themselves at a
+        point (GEOS "Ring Self-intersection"); make_valid splits those into
+        the same area, so they are repaired rather than failing the load. A
+        repair is only accepted when the result is valid, polygonal and its
+        area is within _REPAIR_AREA_TOLERANCE of the original -- a bowtie,
+        whose signed area cancels out, is left invalid for
+        _check_geometry_validity to reject. Missing geometries are left as-is.
+        """
+        gdf = gdf.copy()
+        geoms = gdf.geometry.values
+        candidates = np.flatnonzero(
+            ~shapely.is_valid(geoms)
+            & ~shapely.is_missing(geoms)
+            & np.isin(shapely.get_type_id(geoms), _POLYGONAL_TYPE_IDS)
+        )
+        repaired = 0
+        for i in candidates:
+            fixed = _polygonal_parts(shapely.make_valid(geoms[i], method="structure"))
+            original_area = geoms[i].area
+            if (
+                fixed is not None
+                and fixed.is_valid
+                and original_area > 0
+                and abs(fixed.area - original_area) / original_area
+                <= _REPAIR_AREA_TOLERANCE
+            ):
+                geoms[i] = fixed
+                repaired += 1
+        gdf.geometry = geoms
+        if repaired:
+            print(f"{layer_name}: repaired {repaired} invalid geometries")
+        return gdf
+
+    @staticmethod
     def _check_geometry_validity(gdf: gpd.GeoDataFrame, layer_name: str) -> None:
         """Reject a layer containing invalid (or missing) geometries.
 
@@ -616,6 +683,7 @@ class SpatialDataLoader:
             limit=self.sample_limit,
         ):
             gdf = self._normalise_gdf(gdf)
+            gdf = self._repair_invalid_geometries(gdf, layer_name)
             self._check_geometry_validity(gdf, layer_name)
             yield gdf
 
