@@ -3,15 +3,19 @@ name: Dependabot Auto Lock
 # Dependabot's uv ecosystem updates pyproject.toml and the bumped package's
 # entry in uv.lock, but the lockfile can drift out of full consistency
 # (e.g. transitive deps, or several Dependabot PRs merging without rebasing).
-# This regenerates uv.lock so `uv sync --frozen` / `uv sync --locked` pass.
+# This regenerates uv.lock so `uv sync --frozen` / `uv sync --locked` pass,
+# then approves minor and patch uv updates.
+#
+# Approval runs after the relock so it covers the final head commit. Merging
+# stays manual so the push to main triggers publish.yml (merges made with
+# GITHUB_TOKEN don't).
 
 on:
   pull_request:
     branches:
       - main
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   relock:
@@ -19,15 +23,17 @@ jobs:
     # Only run on Dependabot PRs.
     if: ${{ github.actor == 'dependabot[bot]' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout PR branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.head_ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
 
@@ -45,3 +51,30 @@ jobs:
           git add uv.lock
           git commit -m 'chore: regenerate uv.lock'
           git push
+
+  approve:
+    name: Approve minor and patch uv updates
+    needs: relock
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Approve
+        if: steps.metadata.outputs.package-ecosystem == 'uv'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          UPDATED_DEPENDENCIES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          if jq -e 'any(.[]; .updateType == "version-update:semver-major")' <<< "$UPDATED_DEPENDENCIES" > /dev/null; then
+            echo "Major update present - leaving for manual review"
+            exit 0
+          fi
+          gh pr review --approve "$PR_URL"
