@@ -248,13 +248,13 @@ def _check_zip_limits(members: list[zipfile.ZipInfo]) -> None:
     what extraction can write.
 
     Raises:
-        ValueError: `zip_too_many_entries` or `zip_too_large_uncompressed`.
+        ValueError: `zip_too_many_files` or `zip_total_too_large`.
     """
     if len(members) > _MAX_ZIP_ENTRIES:
-        code = "zip_too_many_entries"
+        code = "zip_too_many_files"
         raise ValueError(code)
     if sum(member.file_size for member in members) > _MAX_ZIP_UNCOMPRESSED_BYTES:
-        code = "zip_too_large_uncompressed"
+        code = "zip_total_too_large"
         raise ValueError(code)
 
 

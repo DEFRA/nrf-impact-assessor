@@ -1380,7 +1380,7 @@ class TestZipContents:
         response = _post_boundary_file(client, "site.zip", zip_buf, "application/zip")
 
         assert response.status_code == 400
-        assert response.json()["error"] == "zip_too_large_uncompressed"
+        assert response.json()["error"] == "zip_total_too_large"
 
     def test_entry_count_over_the_cap_is_rejected(self, client):
         zip_buf = _zip_of({f"file{i}.txt": "x" for i in range(101)})
@@ -1388,7 +1388,7 @@ class TestZipContents:
         response = _post_boundary_file(client, "site.zip", zip_buf, "application/zip")
 
         assert response.status_code == 400
-        assert response.json()["error"] == "zip_too_many_entries"
+        assert response.json()["error"] == "zip_too_many_files"
 
     @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
     def test_entry_count_at_the_cap_is_still_accepted(self, client):
