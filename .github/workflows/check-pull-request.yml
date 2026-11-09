@@ -23,7 +23,7 @@ jobs:
         run: python scripts/check_migration_parity.py
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.3.2
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
 

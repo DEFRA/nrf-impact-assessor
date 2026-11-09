@@ -31,6 +31,13 @@ _EXT_ZIP = ".zip"
 _GEOJSON_EXTENSIONS = frozenset({_EXT_GEOJSON, _EXT_JSON})
 _SUPPORTED_EXTENSIONS = frozenset({_EXT_ZIP, _EXT_GEOJSON, _EXT_JSON, _EXT_KML})
 
+# Zip-bomb limits (CWE-409). The upload size cap only bounds the compressed
+# body, and deflate compresses repetitive data ~1000:1, so a ~2 MB zip could
+# otherwise write ~2 GB to disk per request. Legitimate shapefile trios are a
+# few hundred KB, so 50 MB / 100 entries has ample headroom.
+_MAX_ZIP_ENTRIES = 100
+_MAX_ZIP_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
+
 
 class BoundaryRejectedError(Exception):
     """A boundary that cannot be used, for each endpoint to report in its own way.
@@ -231,6 +238,26 @@ def _read_geometry(
         raise ValueError(code) from e
 
 
+def _check_zip_limits(members: list[zipfile.ZipInfo]) -> None:
+    """Reject an archive that would explode on extraction (CWE-409).
+
+    Both checks read the sizes declared in the zip's central directory, so
+    they cost no decompression. zipfile itself never writes more per entry
+    than that declared size — an archive that under-reports is truncated and
+    fails to read rather than amplified — so capping the declared totals caps
+    what extraction can write.
+
+    Raises:
+        ValueError: `zip_too_many_files` or `zip_total_too_large`.
+    """
+    if len(members) > _MAX_ZIP_ENTRIES:
+        code = "zip_too_many_files"
+        raise ValueError(code)
+    if sum(member.file_size for member in members) > _MAX_ZIP_UNCOMPRESSED_BYTES:
+        code = "zip_total_too_large"
+        raise ValueError(code)
+
+
 def _extract_zip(
     zip_path: Path, tmpdir: Path, boundary_filename: str | None = None
 ) -> Path:
@@ -245,7 +272,9 @@ def _extract_zip(
     extract_dir = tmpdir / "extracted"
     extract_dir.mkdir()
     with zipfile.ZipFile(zip_path, "r") as zf:
-        for member in zf.infolist():
+        members = zf.infolist()
+        _check_zip_limits(members)
+        for member in members:
             member_path = (extract_dir / member.filename).resolve()
             if not member_path.is_relative_to(extract_dir.resolve()):
                 code = "zip_unsafe_path"

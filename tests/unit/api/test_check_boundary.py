@@ -1369,6 +1369,37 @@ class TestZipContents:
         assert response.status_code == 400
         assert response.json()["error"] == "zip_missing_shapefile"
 
+    def test_total_uncompressed_size_over_the_cap_is_rejected(self, client):
+        # Deflate turns 50 MB of zeros into a ~50 KB upload, so the compressed
+        # size cap cannot see it — only the declared uncompressed total can.
+        zip_buf = BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("site.shp", b"\0" * (50 * 1024 * 1024 + 1))
+        zip_buf.seek(0)
+
+        response = _post_boundary_file(client, "site.zip", zip_buf, "application/zip")
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "zip_total_too_large"
+
+    def test_entry_count_over_the_cap_is_rejected(self, client):
+        zip_buf = _zip_of({f"file{i}.txt": "x" for i in range(101)})
+
+        response = _post_boundary_file(client, "site.zip", zip_buf, "application/zip")
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "zip_too_many_files"
+
+    @patch("app.boundary.router._find_intersecting_edps", _mock_no_edp_intersections)
+    def test_entry_count_at_the_cap_is_still_accepted(self, client):
+        entries = {f"file{i}.txt": "ignored" for i in range(99)}
+        entries["site.geojson"] = _GEOJSON_SQUARE
+        zip_buf = _zip_of(entries)
+
+        response = _post_boundary_file(client, "site.zip", zip_buf, "application/zip")
+
+        assert response.status_code == 200
+
     @pytest.mark.parametrize(
         ("entry", "content"),
         [
