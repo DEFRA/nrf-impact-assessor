@@ -38,7 +38,6 @@ import sys
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any
@@ -69,7 +68,6 @@ from sqlalchemy.exc import IntegrityError  # noqa: E402
 
 from app.models.db import (  # noqa: E402
     CoefficientLayer,
-    Edp,
     EdpBoundaryLayer,
     EdpEdges,
     EdpExcludedAreas,
@@ -217,8 +215,7 @@ class SpatialDataLoader:
         self.sample_limit = 100 if sample_mode else None
         self.batch_size = batch_size
         # Fixtures-only convenience so a local/CI job can exercise the levy
-        # calculation end-to-end; the migration seeds neither table.
-        self.edps_csv: Path | None = None
+        # calculation end-to-end; the migration does not seed this table.
         self.levy_inflation_index_csv: Path | None = None
 
         if fixtures_dir is not None:
@@ -241,7 +238,6 @@ class SpatialDataLoader:
             self.edp_boundary_layer = "edp_boundary_extents"
             self.edp_excluded_areas_gpkg = fixtures_dir / "edp_excluded_areas.gpkg"
             self.edp_excluded_areas_layer = "edp_excluded_areas"
-            self.edps_csv = fixtures_dir / "edps.csv"
             self.levy_inflation_index_csv = fixtures_dir / "levy_inflation_index.csv"
         else:
             if settings is None:
@@ -760,17 +756,11 @@ class SpatialDataLoader:
             print(f"Error loading {table_name}: {e}")
 
     def load_levy_fixtures(self) -> None:
-        """Load edps and levy_inflation_index from CSV fixtures.
+        """Load levy_inflation_index from its CSV fixture.
 
-        Both CSV paths are None outside fixtures_dir mode. base_prices is not
-        loaded: admins manage it, and the migration seeds the first row.
+        The CSV path is None outside fixtures_dir mode. edps and base_prices
+        are not loaded: the migration seeds EDP 1 and its first base price.
         """
-        self._upsert_csv_table(
-            self.edps_csv,
-            Edp,
-            _edp_from_row,
-            key=("id",),
-        )
         self._upsert_csv_table(
             self.levy_inflation_index_csv,
             LevyInflationIndex,
@@ -787,10 +777,10 @@ class SpatialDataLoader:
     ) -> None:
         """Sync a table to its CSV fixture, matching rows on ``key``.
 
-        Matched rows are updated in place so they keep their id: other rows
-        point at those ids (base_prices at edps, the audit table at the index
-        rows), so a delete-and-reinsert fails once any of them exist. A row
-        dropped from the CSV is deleted, which still fails if one does.
+        Matched rows are updated in place so they keep their id: the audit
+        table's RESTRICT foreign keys point at those ids, so a delete-and-
+        reinsert fails once any quote has been priced. A row dropped from the
+        CSV is deleted, which still fails if a quote was priced from it.
         """
         if csv_path is None or not csv_path.exists():
             print(f"Skipping {model.__tablename__}: no fixture at {csv_path}")
@@ -825,10 +815,9 @@ class SpatialDataLoader:
                 )
                 msg = (
                     f"Cannot remove {model.__tablename__} rows no longer in "
-                    f"{csv_path.name} ({stale_keys}): other rows reference them "
-                    "(base prices, or priced quotes in the audit table). "
-                    "Changing a key column counts as a removal; remove the "
-                    "referencing rows first."
+                    f"{csv_path.name} ({stale_keys}): priced quotes in the audit "
+                    "table reference them. Changing a key column counts as a "
+                    "removal; clear the local audit rows first."
                 )
                 raise RuntimeError(msg) from e
 
@@ -846,15 +835,6 @@ class SpatialDataLoader:
             f"Synced {len(rows)} {model.__tablename__} fixture rows"
             f" ({len(stale)} removed)"
         )
-
-
-def _edp_from_row(row: dict) -> Edp:
-    """Build an Edp from one edps.csv row (ISO date string)."""
-    return Edp(
-        id=int(row["id"]),
-        name=row["name"],
-        start_date=date.fromisoformat(row["start_date"]),
-    )
 
 
 def _levy_index_from_row(row: dict) -> LevyInflationIndex:
