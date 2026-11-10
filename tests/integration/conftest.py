@@ -461,9 +461,9 @@ def insert_base_price(
             text(
                 "INSERT INTO public.base_prices "
                 "(base_price, edp_id, effective_from, comment, "
-                "user_entra_id, user_full_name, user_email) VALUES "
+                "staff_id, staff_full_name, staff_email) VALUES "
                 "(:price, :id, :effective_from, 'Test', "
-                "'entra-id', 'Test User', 'test.user@example.com') "
+                "'staff-id', 'Test Staff', 'test.user@example.com') "
                 "RETURNING id"
             ),
             {

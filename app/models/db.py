@@ -262,9 +262,11 @@ class BasePrice(Base):
         DateTime(timezone=True), nullable=False
     )
     comment: Mapped[str] = mapped_column(String(500), nullable=False)
-    user_entra_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    user_full_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    user_email: Mapped[str] = mapped_column(String(254), nullable=False)
+    # The identity provider's id for the staff member (the Entra oid claim today),
+    # not an id from the backend users table.
+    staff_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    staff_full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    staff_email: Mapped[str] = mapped_column(String(254), nullable=False)
 
     def __repr__(self) -> str:
         return (

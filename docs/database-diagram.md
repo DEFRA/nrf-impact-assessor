@@ -93,9 +93,9 @@ erDiagram
         timestamptz created_at "default now()"
         timestamptz effective_from "the price applies from this moment"
         varchar comment "max 500; CHECK not blank"
-        varchar user_entra_id "max 36 (GUID); who last saved the price"
-        varchar user_full_name "max 255"
-        varchar user_email "max 254"
+        varchar staff_id "max 36 (GUID, the identity provider id); staff member who last saved the price"
+        varchar staff_full_name "max 255"
+        varchar staff_email "max 254"
     }
 
     audit_levy_calculations {

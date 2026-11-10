@@ -38,8 +38,8 @@ def _base_prices(engine: Engine) -> list[dict]:
                 "SELECT id, edp_id, base_price::text,"
                 " to_char(effective_from AT TIME ZONE 'UTC',"
                 " 'YYYY-MM-DD\"T\"HH24:MI') AS effective_from_utc, comment,"
-                " user_entra_id,"
-                " user_full_name, user_email"
+                " staff_id,"
+                " staff_full_name, staff_email"
                 " FROM public.base_prices ORDER BY edp_id, effective_from"
             )
         )
@@ -58,9 +58,9 @@ def test_edp_1_is_seeded_with_its_first_base_price(engine: Engine):
     assert price["edp_id"] == 1
     assert price["base_price"] == "2675.00"
     assert price["effective_from_utc"] == "2026-01-01T00:00"
-    assert price["user_entra_id"] == "system"
-    assert price["user_full_name"] == "system"
-    assert price["user_email"] == "system@nrf.invalid"
+    assert price["staff_id"] == "system"
+    assert price["staff_full_name"] == "system"
+    assert price["staff_email"] == "system@nrf.invalid"
 
 
 def test_the_audit_table_holds_integer_base_price_ids_without_a_foreign_key(

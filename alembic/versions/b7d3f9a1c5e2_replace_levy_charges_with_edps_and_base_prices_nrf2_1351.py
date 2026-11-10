@@ -79,9 +79,9 @@ def upgrade() -> None:
         ),
         sa.Column("effective_from", sa.DateTime(timezone=True), nullable=False),
         sa.Column("comment", sa.String(500), nullable=False),
-        sa.Column("user_entra_id", sa.String(36), nullable=False),
-        sa.Column("user_full_name", sa.String(255), nullable=False),
-        sa.Column("user_email", sa.String(254), nullable=False),
+        sa.Column("staff_id", sa.String(36), nullable=False),
+        sa.Column("staff_full_name", sa.String(255), nullable=False),
+        sa.Column("staff_email", sa.String(254), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.ForeignKeyConstraint(
             ["edp_id"], ["public.edps.id"], name="fk_base_prices_edp"
@@ -111,12 +111,12 @@ def upgrade() -> None:
         sa.text(
             "INSERT INTO public.base_prices "
             "(base_price, edp_id, effective_from, comment, "
-            "user_entra_id, user_full_name, user_email) "
+            "staff_id, staff_full_name, staff_email) "
             "VALUES (2675.00, 1, TIMESTAMPTZ '2026-01-01 00:00:00+00', "
-            ":comment, :entra_id, :full_name, :email)"
+            ":comment, :staff_id, :full_name, :email)"
         ).bindparams(
             comment=FIRST_PRICE_COMMENT,
-            entra_id=SYSTEM_USER,
+            staff_id=SYSTEM_USER,
             full_name=SYSTEM_USER,
             email=SYSTEM_EMAIL,
         )

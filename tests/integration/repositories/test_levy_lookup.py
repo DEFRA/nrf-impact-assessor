@@ -127,7 +127,7 @@ def test_a_base_price_for_an_unknown_edp_is_rejected(repository: Repository):
     insert = text(
         "INSERT INTO public.base_prices "
         "(base_price, edp_id, effective_from, comment, "
-        "user_entra_id, user_full_name, user_email) VALUES "
+        "staff_id, staff_full_name, staff_email) VALUES "
         "(2675, 99, now(), 'Test', 'id', 'Name', "
         "'name@example.com')"
     )
@@ -166,18 +166,18 @@ def test_a_base_price_in_pounds_and_pence_is_stored_unchanged(
 
 _TEXT_COLUMN_LIMITS = [
     ("comment", 500),
-    ("user_entra_id", 36),
-    ("user_full_name", 255),
-    ("user_email", 254),
+    ("staff_id", 36),
+    ("staff_full_name", 255),
+    ("staff_email", 254),
 ]
 
 
 def _insert_base_price_with(repository: Repository, column: str, value: str) -> None:
     values = {
         "comment": "Test",
-        "user_entra_id": "entra-id",
-        "user_full_name": "Test User",
-        "user_email": "test.user@example.com",
+        "staff_id": "staff-id",
+        "staff_full_name": "Test Staff",
+        "staff_email": "test.user@example.com",
     } | {column: value}
     with repository.session() as session:
         session.execute(
@@ -189,10 +189,10 @@ def _insert_base_price_with(repository: Repository, column: str, value: str) -> 
         session.execute(
             text(
                 "INSERT INTO public.base_prices "
-                "(base_price, edp_id, effective_from, comment, user_entra_id, "
-                "user_full_name, user_email) VALUES "
-                "(2675, 1, now(), :comment, :user_entra_id, :user_full_name, "
-                ":user_email)"
+                "(base_price, edp_id, effective_from, comment, staff_id, "
+                "staff_full_name, staff_email) VALUES "
+                "(2675, 1, now(), :comment, :staff_id, :staff_full_name, "
+                ":staff_email)"
             ),
             values,
         )

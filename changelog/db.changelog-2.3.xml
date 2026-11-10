@@ -38,13 +38,13 @@
             <column name="comment" type="varchar(500)">
                 <constraints nullable="false"/>
             </column>
-            <column name="user_entra_id" type="varchar(36)">
+            <column name="staff_id" type="varchar(36)">
                 <constraints nullable="false"/>
             </column>
-            <column name="user_full_name" type="varchar(255)">
+            <column name="staff_full_name" type="varchar(255)">
                 <constraints nullable="false"/>
             </column>
-            <column name="user_email" type="varchar(254)">
+            <column name="staff_email" type="varchar(254)">
                 <constraints nullable="false"/>
             </column>
         </createTable>
@@ -81,7 +81,7 @@
                 DATE '2026-01-01')</sql>
         <sql>INSERT INTO public.base_prices
             (base_price, edp_id, effective_from, comment,
-             user_entra_id, user_full_name, user_email)
+             staff_id, staff_full_name, staff_email)
             VALUES (2675.00, 1, TIMESTAMPTZ '2026-01-01 00:00:00+00',
                 'Provisional base price when the EDP launched',
                 'system', 'system', 'system@nrf.invalid')</sql>
