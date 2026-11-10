@@ -16,7 +16,7 @@ from tests.integration.conftest import insert_base_price
 pytestmark = pytest.mark.integration
 
 URL = "/levy/recalculate"
-BODY = {"edpId": 1, "units": 4, "requestDate": "2026-10-14T09:30:00+01:00"}
+BODY = {"edpId": 1, "units": 4, "requestDate": "2026-10-14T08:30:00Z"}
 
 
 @pytest.fixture

@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import (
@@ -44,8 +44,17 @@ class LevyRecalculationRequest(BaseModel):
     )
     units: int = Field(gt=0, description="Number of housing units")
     request_date: AwareDatetime = Field(
-        description="Moment the levy is calculated for, an ISO 8601 date-time with an offset"
+        description="Moment the levy is calculated for, an ISO 8601 date-time in UTC"
     )
+
+    @field_validator("request_date")
+    @classmethod
+    def _require_utc(cls, value: datetime) -> datetime:
+        """Reject any offset but UTC, so the levy is priced on the UTC date."""
+        if value.utcoffset() != timedelta(0):
+            msg = "requestDate must be in UTC"
+            raise ValueError(msg)
+        return value
 
     @field_validator("edp_id", mode="before")
     @classmethod

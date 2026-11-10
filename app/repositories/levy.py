@@ -5,7 +5,7 @@ Repository class, which is large and spatial; these are small ORM
 operations."""
 
 import logging
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import NamedTuple
 from uuid import UUID
@@ -87,10 +87,10 @@ def get_levy_pricing_rows(
 ) -> LevyPricingRows | None:
     """The EDP's base price in force at `at` (its latest row with
     effective_from at or before `at`) with the index rows for its start year
-    and for the UTC year `at` falls in, in one round trip. None when the EDP
+    and for the year `at` falls in, in one round trip. None when the EDP
     does not exist or has no base price in force yet.
 
-    `at` must be timezone-aware. Either index is None when that year has none.
+    `at` must be timezone-aware and in UTC. Either index is None when that year has none.
     Both are fetched even in the EDP start year, where calculate_levy ignores
     them; a lookup by the unique charging_year costs less than a second query.
     """
@@ -105,7 +105,7 @@ def get_levy_pricing_rows(
         )
         .outerjoin(
             calculation_index,
-            calculation_index.charging_year == at.astimezone(UTC).year,
+            calculation_index.charging_year == at.year,
         )
         .where(BasePrice.edp_id == edp_id, BasePrice.effective_from <= at)
         .order_by(BasePrice.effective_from.desc())

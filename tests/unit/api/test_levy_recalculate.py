@@ -16,7 +16,7 @@ from app.repositories.levy import LevyPricingRows
 from tests.conftest import EDP_NAME
 
 URL = "/levy/recalculate"
-VALID_BODY = {"edpId": 1, "units": 10, "requestDate": "2026-10-14T09:30:00+01:00"}
+VALID_BODY = {"edpId": 1, "units": 10, "requestDate": "2026-10-14T08:30:00Z"}
 
 
 def _index(factor: str) -> SimpleNamespace:
@@ -90,7 +90,7 @@ def test_prices_the_edp_at_the_requested_date_time(client, db):
 @pytest.mark.parametrize(
     "body",
     [
-        {"units": 10, "requestDate": "2026-10-14T09:30:00+01:00"},
+        {"units": 10, "requestDate": "2026-10-14T08:30:00Z"},
         VALID_BODY | {"edpId": None},
         VALID_BODY | {"edpId": ""},
     ],
@@ -210,10 +210,12 @@ def test_prices_a_later_charging_year_without_inflation_indices(client, db, rows
         VALID_BODY | {"units": 10.0},
         VALID_BODY | {"edpId": "1"},
         VALID_BODY | {"requestDate": 1791936000},
-        {"edpId": 1, "requestDate": "2026-10-14T09:30:00+01:00"},
+        {"edpId": 1, "requestDate": "2026-10-14T08:30:00Z"},
         VALID_BODY | {"requestDate": "14/10/2026"},
         VALID_BODY | {"requestDate": "2026-10-14"},
         VALID_BODY | {"requestDate": "2026-10-14T09:30:00"},
+        VALID_BODY | {"requestDate": "2026-10-14T09:30:00+01:00"},
+        VALID_BODY | {"requestDate": "2026-12-31T23:30:00-05:00"},
         {"edpId": 1, "units": 10},
         VALID_BODY | {"unexpected": True},
         VALID_BODY | {"nrfReference": "NRL-000001"},
