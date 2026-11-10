@@ -313,12 +313,12 @@ make db-backup-tables
 in either. On restore, a table with no matching backup file logs a warning and
 is skipped rather than failing the run.
 
-`DB_TABLES` also carries `levy_charges` and `levy_inflation_index`, which are
-not data-sync tables. `audit_levy_calculations` references them, so Postgres
-will not `TRUNCATE` them; the generated `restore_commands.txt` clears them with
-`DELETE FROM` instead (listed in `DB_FK_REFERENCED_TABLES`). That `DELETE` fails
-while audit rows still reference a levy row, rather than orphaning the audit
-trail.
+`DB_TABLES` also carries `levy_inflation_index`, which is not a data-sync table.
+`audit_levy_calculations` references it, so Postgres will not `TRUNCATE` it; the
+generated `restore_commands.txt` clears it with `DELETE FROM` instead (listed in
+`DB_FK_REFERENCED_TABLES`). That `DELETE` fails while audit rows still reference
+an index row, rather than orphaning the audit trail. `edps` and `base_prices`
+are not in the list: a migration seeds them and admins manage them.
 
 ### Full database backup
 
@@ -393,7 +393,7 @@ All files within a single `make` invocation share the same timestamp, making it 
 | `db-backup-tables` produces empty files | Container not running or DB name wrong | Confirm `docker compose up db` is running and `nrf-postgis` is the container name (override with `DB_CONTAINER=`, or clear it to use a host postgres) |
 | `zcat: can't stat` on restore | Wrong path passed to `BACKUP_FILE` | Use the full or relative path, e.g. `make db-restore BACKUP_FILE=./backups/foo.sql.gz` |
 | GRANT errors after per-table restore | Used `db-restore` instead of `db-restore-tables` | Use `make db-restore-tables BACKUP_DIR=./backups` — it applies schema grants before data |
-| `Cannot remove levy_charges rows no longer in levy_charges.csv` | A quote was priced from a levy row that the CSV no longer has. The loader matches rows on `edp_id` + `charge_valid_from`, so editing either of those counts as removing the row, and the audit table's `RESTRICT` foreign key blocks the delete. Nothing in `levy_charges` changes, because the sync rolls back | End-date the existing row with `charge_valid_to` and add a new row for the new window. If the local quotes are throwaway, delete them from `audit_levy_calculations` and reload instead |
+| `Cannot remove levy_inflation_index rows no longer in levy_inflation_index.csv` | A quote was priced from an index row that the CSV no longer has. The loader matches rows on `charging_year`, so editing it counts as removing the row, and the audit table's `RESTRICT` foreign key blocks the delete. Nothing in `levy_inflation_index` changes, because the sync rolls back | Keep the row in the CSV. If the local quotes are throwaway, delete them from `audit_levy_calculations` and reload instead |
 | `no public_schema_*.sql.gz found` | Backup was taken before the schema file was added | Re-take the backup with the current `db-backup-tables`, or manually restore globals + schema first |
 
 ---

@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- Alembic revision: b7d3f9a1c5e2 -->
+
+    <changeSet id="13-edps-and-base-prices" author="nrf">
+        <createTable tableName="edps" schemaName="public">
+            <column name="id" type="integer">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="name" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="start_date" type="date">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createTable tableName="base_prices" schemaName="public">
+            <column name="id" type="integer" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="base_price" type="numeric(10,2)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="edp_id" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="effective_from" type="timestamptz">
+                <constraints nullable="false"/>
+            </column>
+            <column name="comment" type="varchar(500)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="staff_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="staff_full_name" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="staff_email" type="varchar(254)">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addForeignKeyConstraint constraintName="fk_base_prices_edp"
+                                 baseTableName="base_prices"
+                                 baseTableSchemaName="public"
+                                 baseColumnNames="edp_id"
+                                 referencedTableName="edps"
+                                 referencedTableSchemaName="public"
+                                 referencedColumnNames="id"/>
+        <sql>ALTER TABLE public.base_prices
+            ADD CONSTRAINT ck_base_prices_base_price
+            CHECK (base_price &gt; 0 AND base_price &lt;&gt; 'NaN')</sql>
+        <sql>ALTER TABLE public.base_prices
+            ADD CONSTRAINT ck_base_prices_comment_not_blank
+            CHECK (comment ~ '\S')</sql>
+        <createIndex indexName="ix_public_base_prices_edp_id_effective_from"
+                     tableName="base_prices" schemaName="public" unique="true">
+            <column name="edp_id"/>
+            <column name="effective_from"/>
+        </createIndex>
+        <rollback>
+            <dropTable tableName="base_prices" schemaName="public"/>
+            <dropTable tableName="edps" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+    <!-- levy_charges is dropped, not converted: EDP 1 and its first base price
+         (effective from the EDP start date, 00:00 UTC) are seeded so a levy can
+         always be priced. -->
+    <changeSet id="13-edps-and-base-prices-data" author="nrf">
+        <sql>INSERT INTO public.edps (id, name, start_date)
+            VALUES (1, 'Norfolk: Broads Special Area of Conservation (SAC) (Yare and Bure), Broadland Ramsar and River Wensum SAC Environmental Delivery Plan addressing nutrient pollution (2027 to 2037)',
+                DATE '2026-01-01')</sql>
+        <sql>INSERT INTO public.base_prices
+            (base_price, edp_id, effective_from, comment,
+             staff_id, staff_full_name, staff_email)
+            VALUES (2675.00, 1, TIMESTAMPTZ '2026-01-01 00:00:00+00',
+                'Provisional base price when the EDP launched',
+                'system', 'system', 'system@nrf.invalid')</sql>
+        <!-- Nothing to undo: the rollback of 13-edps-and-base-prices drops both
+             tables, and 13-drop-levy-charges rolls back first (Liquibase reverses
+             in order) so levy_charges is rebuilt from these rows before they go. -->
+        <rollback/>
+    </changeSet>
+
+    <changeSet id="13-drop-levy-charges" author="nrf">
+        <dropForeignKeyConstraint baseTableName="audit_levy_calculations"
+                                  baseTableSchemaName="public"
+                                  constraintName="fk_audit_levy_calculations_levy_charge"/>
+        <!-- Existing rows are kept; the levy_charges ids they hold cannot map to
+             base_prices ids, so levy_charge_id becomes NULL. -->
+        <sql>ALTER TABLE public.audit_levy_calculations
+            ALTER COLUMN levy_charge_id DROP NOT NULL</sql>
+        <sql>ALTER TABLE public.audit_levy_calculations
+            ALTER COLUMN levy_charge_id TYPE integer USING NULL</sql>
+        <dropTable tableName="levy_charges" schemaName="public"/>
+        <rollback>
+            <sql>CREATE EXTENSION IF NOT EXISTS btree_gist</sql>
+            <createTable tableName="levy_charges" schemaName="public">
+                <column name="id" type="uuid">
+                    <constraints primaryKey="true" nullable="false"/>
+                </column>
+                <column name="edp_id" type="integer">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="edp_name" type="varchar">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="edp_start_date" type="date">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="charge_valid_from" type="date">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="charge_valid_to" type="date">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="base_charge_per_unit" type="numeric">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                    <constraints nullable="false"/>
+                </column>
+            </createTable>
+            <sql>ALTER TABLE public.levy_charges
+                ADD CONSTRAINT ck_levy_charges_valid_window
+                CHECK (charge_valid_to &gt;= charge_valid_from)</sql>
+            <sql>ALTER TABLE public.levy_charges
+                ADD CONSTRAINT ck_levy_charges_base_charge_per_unit
+                CHECK (base_charge_per_unit &gt; 0
+                       AND base_charge_per_unit &lt; 100000000
+                       AND base_charge_per_unit = round(base_charge_per_unit, 2))</sql>
+            <sql>ALTER TABLE public.levy_charges
+                ADD CONSTRAINT ex_levy_charges_edp_window EXCLUDE USING gist
+                (edp_id WITH =, daterange(charge_valid_from, charge_valid_to, '[]') WITH &amp;&amp;)</sql>
+            <createIndex indexName="ix_public_levy_charges_edp_id"
+                         tableName="levy_charges" schemaName="public">
+                <column name="edp_id"/>
+            </createIndex>
+            <!-- One open-ended window per EDP at its first base price. -->
+            <sql>INSERT INTO public.levy_charges
+                (id, edp_id, edp_name, edp_start_date, charge_valid_from,
+                 charge_valid_to, base_charge_per_unit)
+                SELECT DISTINCT ON (e.id) gen_random_uuid(), e.id, e.name, e.start_date,
+                    e.start_date, DATE '9999-12-31', bp.base_price
+                FROM public.edps e
+                JOIN public.base_prices bp ON bp.edp_id = e.id
+                ORDER BY e.id, bp.effective_from</sql>
+            <!-- The audit rows name base prices that the rollback discards, so
+                 levy_charge_id becomes NULL and stays nullable. -->
+            <sql>ALTER TABLE public.audit_levy_calculations
+                ALTER COLUMN levy_charge_id TYPE uuid USING NULL</sql>
+            <sql>ALTER TABLE public.audit_levy_calculations
+                ADD CONSTRAINT fk_audit_levy_calculations_levy_charge
+                FOREIGN KEY (levy_charge_id) REFERENCES public.levy_charges (id)
+                ON DELETE RESTRICT</sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

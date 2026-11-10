@@ -21,7 +21,7 @@ from app.calculators.levy import (
 
 CALC_DATE = date(2026, 9, 14)
 EARLIER_CALC_DATE = date(2022, 6, 1)  # an earlier charging year than the EDP start
-CHARGE_ID = uuid4()
+CHARGE_ID = 41
 
 
 def _charge(price: str) -> SimpleNamespace:
@@ -197,7 +197,7 @@ def test_inflated_levy_that_rounds_to_the_largest_audit_amount_fits(
 
 
 def test_provisional_rounds_half_up_like_the_inflated_total():
-    # The levy_charges CHECK keeps such a charge out of the database; a caller
+    # The base_prices CHECK keeps such a charge out of the database; a caller
     # that bypasses it still gets the module's half-up rule, not banker's.
     result = calculate_levy(
         _charge("2675.125"),

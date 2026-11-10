@@ -38,7 +38,6 @@ import sys
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any
@@ -74,7 +73,6 @@ from app.models.db import (  # noqa: E402
     EdpExcludedAreas,
     GcnPonds,
     GcnRiskZones,
-    LevyCharge,
     LevyInflationIndex,
     LookupTable,
     LpaBoundaries,
@@ -217,8 +215,7 @@ class SpatialDataLoader:
         self.sample_limit = 100 if sample_mode else None
         self.batch_size = batch_size
         # Fixtures-only convenience so a local/CI job can exercise the levy
-        # calculation end-to-end; the migration seeds neither table.
-        self.levy_charges_csv: Path | None = None
+        # calculation end-to-end; the migration does not seed this table.
         self.levy_inflation_index_csv: Path | None = None
 
         if fixtures_dir is not None:
@@ -241,7 +238,6 @@ class SpatialDataLoader:
             self.edp_boundary_layer = "edp_boundary_extents"
             self.edp_excluded_areas_gpkg = fixtures_dir / "edp_excluded_areas.gpkg"
             self.edp_excluded_areas_layer = "edp_excluded_areas"
-            self.levy_charges_csv = fixtures_dir / "levy_charges.csv"
             self.levy_inflation_index_csv = fixtures_dir / "levy_inflation_index.csv"
         else:
             if settings is None:
@@ -760,16 +756,11 @@ class SpatialDataLoader:
             print(f"Error loading {table_name}: {e}")
 
     def load_levy_fixtures(self) -> None:
-        """Load levy_charges and levy_inflation_index from CSV fixtures.
+        """Load levy_inflation_index from its CSV fixture.
 
-        Both CSV paths are None outside fixtures_dir mode.
+        The CSV path is None outside fixtures_dir mode. edps and base_prices
+        are not loaded: the migration seeds EDP 1 and its first base price.
         """
-        self._upsert_csv_table(
-            self.levy_charges_csv,
-            LevyCharge,
-            _levy_charge_from_row,
-            key=("edp_id", "charge_valid_from"),
-        )
         self._upsert_csv_table(
             self.levy_inflation_index_csv,
             LevyInflationIndex,
@@ -814,8 +805,7 @@ class SpatialDataLoader:
             stale = [obj for k, obj in existing.items() if k not in wanted]
             for obj in stale:
                 session.delete(obj)
-            # Flush deletes first so a replacement window cannot trip the
-            # levy_charges overlap exclusion against the row it replaces.
+            # Flush deletes first so a failure names the removed rows.
             try:
                 session.flush()
             except IntegrityError as e:
@@ -827,8 +817,7 @@ class SpatialDataLoader:
                     f"Cannot remove {model.__tablename__} rows no longer in "
                     f"{csv_path.name} ({stale_keys}): priced quotes in the audit "
                     "table reference them. Changing a key column counts as a "
-                    "removal; end-date the row and add a new one instead, or "
-                    "clear the local audit rows first."
+                    "removal; clear the local audit rows first."
                 )
                 raise RuntimeError(msg) from e
 
@@ -846,19 +835,6 @@ class SpatialDataLoader:
             f"Synced {len(rows)} {model.__tablename__} fixture rows"
             f" ({len(stale)} removed)"
         )
-
-
-def _levy_charge_from_row(row: dict) -> LevyCharge:
-    """Build a LevyCharge from one levy_charges.csv row (ISO date strings)."""
-    return LevyCharge(
-        id=uuid4(),
-        edp_id=int(row["edp_id"]),
-        edp_name=row["edp_name"],
-        edp_start_date=date.fromisoformat(row["edp_start_date"]),
-        charge_valid_from=date.fromisoformat(row["charge_valid_from"]),
-        charge_valid_to=date.fromisoformat(row["charge_valid_to"]),
-        base_charge_per_unit=Decimal(str(row["base_charge_per_unit"])),
-    )
 
 
 def _levy_index_from_row(row: dict) -> LevyInflationIndex:

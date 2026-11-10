@@ -16,7 +16,7 @@ from app.repositories.levy import LevyPricingRows
 from tests.conftest import EDP_NAME
 
 URL = "/levy/recalculate"
-VALID_BODY = {"edpId": 1, "units": 10, "requestDate": "2026-10-14"}
+VALID_BODY = {"edpId": 1, "units": 10, "requestDate": "2026-10-14T08:30:00Z"}
 
 
 def _index(factor: str) -> SimpleNamespace:
@@ -25,7 +25,7 @@ def _index(factor: str) -> SimpleNamespace:
 
 def _charge(edp_start_date: date = date(2026, 1, 1)) -> SimpleNamespace:
     return SimpleNamespace(
-        id=uuid4(),
+        id=41,
         edp_id=1,
         edp_name=EDP_NAME,
         edp_start_date=edp_start_date,
@@ -78,16 +78,19 @@ def test_returns_the_calculation_time_as_utc_iso_datetime(client, db):
     assert before <= datetime.fromisoformat(calculation_date) <= after
 
 
-def test_prices_the_edp_on_the_requested_date(client, db):
+def test_prices_the_edp_at_the_requested_date_time(client, db):
     client.post(URL, json=VALID_BODY)
 
-    assert db["pricing"].call_args.args[1:] == (1, date(2026, 10, 14))
+    assert db["pricing"].call_args.args[1:] == (
+        1,
+        datetime(2026, 10, 14, 8, 30, tzinfo=UTC),
+    )
 
 
 @pytest.mark.parametrize(
     "body",
     [
-        {"units": 10, "requestDate": "2026-10-14"},
+        {"units": 10, "requestDate": "2026-10-14T08:30:00Z"},
         VALID_BODY | {"edpId": None},
         VALID_BODY | {"edpId": ""},
     ],
@@ -111,14 +114,16 @@ def test_does_not_inflate_the_levy_in_a_later_charging_year(client, db):
         _charge(), _index("1.0000"), _index("1.0500")
     )
 
-    response = client.post(URL, json=VALID_BODY | {"requestDate": "2027-03-01"})
+    response = client.post(
+        URL, json=VALID_BODY | {"requestDate": "2027-03-01T12:00:00Z"}
+    )
 
     assert response.status_code == 200
     assert response.json()["provisionalAmount"] == 26750.0
     assert response.json()["inflationAdjustedAmount"] == 26750.0
 
 
-def test_returns_not_found_when_no_charge_exists_for_the_edp(client, db):
+def test_returns_not_found_when_no_base_price_is_in_force_for_the_edp(client, db):
     db["pricing"].return_value = None
 
     response = client.post(URL, json=VALID_BODY)
@@ -181,7 +186,9 @@ def test_returns_unprocessable_for_more_units_than_decimal_precision(client, db)
 def test_prices_a_later_charging_year_without_inflation_indices(client, db, rows):
     db["pricing"].return_value = rows
 
-    response = client.post(URL, json=VALID_BODY | {"requestDate": "2027-06-15"})
+    response = client.post(
+        URL, json=VALID_BODY | {"requestDate": "2027-06-15T12:00:00Z"}
+    )
 
     assert response.status_code == 200
     assert response.json()["provisionalAmount"] == 26750.0
@@ -203,12 +210,16 @@ def test_prices_a_later_charging_year_without_inflation_indices(client, db, rows
         VALID_BODY | {"units": 10.0},
         VALID_BODY | {"edpId": "1"},
         VALID_BODY | {"requestDate": 1791936000},
-        {"edpId": 1, "requestDate": "2026-10-14"},
+        {"edpId": 1, "requestDate": "2026-10-14T08:30:00Z"},
         VALID_BODY | {"requestDate": "14/10/2026"},
+        VALID_BODY | {"requestDate": "2026-10-14"},
+        VALID_BODY | {"requestDate": "2026-10-14T09:30:00"},
+        VALID_BODY | {"requestDate": "2026-10-14T09:30:00+01:00"},
+        VALID_BODY | {"requestDate": "2026-12-31T23:30:00-05:00"},
         {"edpId": 1, "units": 10},
         VALID_BODY | {"unexpected": True},
         VALID_BODY | {"nrfReference": "NRL-000001"},
-        {"edp_id": 1, "units": 10, "request_date": "2026-10-14"},
+        {"edp_id": 1, "units": 10, "request_date": "2026-10-14T09:30:00Z"},
         [VALID_BODY],
     ],
 )
@@ -224,9 +235,9 @@ def test_returns_bad_request_for_an_invalid_body(client, db, body):
     [
         b"{not json",
         b'{"units": "\xff"}',
-        b'{"units": "\\ud800", "requestDate": "2026-10-14"}',
+        b'{"units": "\\ud800", "requestDate": "2026-10-14T09:30:00Z"}',
         b'{"units": 10, "requestDate": "\\ud800"}',
-        b'{"units": 10, "requestDate": "2026-10-14", "\\ud800": 1}',
+        b'{"units": 10, "requestDate": "2026-10-14T09:30:00Z", "\\ud800": 1}',
         b"",
     ],
 )

@@ -13,6 +13,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Identity,
     Index,
     Integer,
     Numeric,
@@ -21,7 +22,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, ExcludeConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -204,51 +205,73 @@ class LookupTable(Base):
         return f"<LookupTable(id={self.id}, name={self.name}, rows={len(self.data)})>"
 
 
-class LevyCharge(Base):
-    """Published base charge per unit for an EDP over one charging year.
+class Edp(Base):
+    """An Environmental Delivery Plan the levy is charged for.
 
-    Seeded by migration, not by data sync. The lookup is
-    `edp_id = :id AND :on_date BETWEEN charge_valid_from AND charge_valid_to`.
+    Seeded by migration, not by data sync. The id is the EDP_Id the boundary
+    layer carries, so it is assigned rather than generated.
     """
 
-    __tablename__ = "levy_charges"
+    __tablename__ = "edps"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<Edp(id={self.id}, name={self.name})>"
+
+
+class BasePrice(Base):
+    """Base price per unit for an EDP from effective_from onwards.
+
+    The price in force at an instant is the EDP's row with the latest
+    effective_from at or before it. Each price change is its own row; the first
+    row is the provisional price the EDP launched with.
+    """
+
+    __tablename__ = "base_prices"
     __table_args__ = (
         CheckConstraint(
-            "charge_valid_to >= charge_valid_from",
-            name="ck_levy_charges_valid_window",
+            "base_price > 0 AND base_price <> 'NaN'",
+            name="ck_base_prices_base_price",
         ),
-        CheckConstraint(
-            "base_charge_per_unit > 0 AND base_charge_per_unit < 100000000"
-            " AND base_charge_per_unit = round(base_charge_per_unit, 2)",
-            name="ck_levy_charges_base_charge_per_unit",
-        ),
-        ExcludeConstraint(
-            ("edp_id", "="),
-            (text("daterange(charge_valid_from, charge_valid_to, '[]')"), "&&"),
-            name="ex_levy_charges_edp_window",
-            using="gist",
+        CheckConstraint(r"comment ~ '\S'", name="ck_base_prices_comment_not_blank"),
+        Index(
+            "ix_public_base_prices_edp_id_effective_from",
+            "edp_id",
+            "effective_from",
+            unique=True,
         ),
         {"schema": "public"},
     )
 
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    edp_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    edp_name: Mapped[str] = mapped_column(String, nullable=False)
-    edp_start_date: Mapped[date] = mapped_column(Date, nullable=False)
-    charge_valid_from: Mapped[date] = mapped_column(Date, nullable=False)
-    charge_valid_to: Mapped[date] = mapped_column(Date, nullable=False)
-    # Positive pounds and pence, enforced by ck_levy_charges_base_charge_per_unit.
-    # No precision or scale: either would round a 3+ dp value before the CHECK
-    # sees it, so the CHECK bounds the magnitude instead.
-    base_charge_per_unit: Mapped[Decimal] = mapped_column(Numeric(), nullable=False)
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    # Pounds and pence up to 99999999.99. numeric(10, 2) rounds a 3+ dp value
+    # rather than rejecting it, so callers must validate 2 dp before inserting;
+    # ck_base_prices_base_price keeps the price positive and not NaN.
+    base_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    edp_id: Mapped[int] = mapped_column(
+        ForeignKey("public.edps.id", name="fk_base_prices_edp"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    effective_from: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    comment: Mapped[str] = mapped_column(String(500), nullable=False)
+    # The identity provider's id for the staff member (the Entra oid claim today),
+    # not an id from the backend users table.
+    staff_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    staff_full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    staff_email: Mapped[str] = mapped_column(String(254), nullable=False)
 
     def __repr__(self) -> str:
         return (
-            f"<LevyCharge(edp_id={self.edp_id}, from={self.charge_valid_from}, "
-            f"price={self.base_charge_per_unit})>"
+            f"<BasePrice(edp_id={self.edp_id}, from={self.effective_from}, "
+            f"price={self.base_price})>"
         )
 
 
@@ -256,7 +279,7 @@ class LevyInflationIndex(Base):
     """RICS CIL Index factor for one charging year, relative to the fixed
     2026 base (2026 = 1.0000).
 
-    Seeded by migration, hand-maintained like levy_charges. Scales a levy's
+    Seeded by migration, hand-maintained like edps. Scales a levy's
     base charge from the EDP's charging year to a later calculation year.
     """
 
@@ -288,11 +311,12 @@ class LevyCalculationRecord(Base):
     writes another row; the history is the point.
 
     The values used are copied onto the row, and the *_id columns name the
-    levy_charges and levy_inflation_index rows they came from. Comparing the
-    two against the current row shows whether a value was corrected after the
-    event or the wrong row was picked up. The foreign keys are RESTRICT, so a
-    row that has priced a quote cannot be deleted from under its audit trail.
-    The index columns are NULL when no inflation step applied.
+    base_prices (levy_charge_id) and levy_inflation_index rows they came from.
+    Comparing the two against the current row shows whether a value was
+    corrected after the event or the wrong row was picked up. The index
+    foreign keys are RESTRICT, so an index row that has priced a quote cannot
+    be deleted. levy_charge_id has no foreign key because base prices can be
+    deleted. The index columns are NULL when no inflation step applied.
     calculator_version pins the rounding rule that derives the amounts from
     base_charge_per_unit, units and the index factors.
 
@@ -319,14 +343,11 @@ class LevyCalculationRecord(Base):
     inflation_adjusted_amount: Mapped[Decimal] = mapped_column(
         Numeric(12, 2), nullable=False
     )
-    levy_charge_id: Mapped[UUID] = mapped_column(
-        ForeignKey(
-            "public.levy_charges.id",
-            name="fk_audit_levy_calculations_levy_charge",
-            ondelete="RESTRICT",
-        ),
-        nullable=False,
-        index=True,
+    # The base_prices row that priced the quote. Not a foreign key: this table
+    # is being removed, and an audit row must outlive an edited or deleted price.
+    # NULL on rows recorded before base_prices, whose levy_charges ids are gone.
+    levy_charge_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
     )
     edp_start_year_index_id: Mapped[UUID | None] = mapped_column(
         ForeignKey(

@@ -2,10 +2,17 @@
 
 import asyncio
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+)
 from pydantic.alias_generators import to_camel
 
 from app.calculators.levy import (
@@ -36,7 +43,18 @@ class LevyRecalculationRequest(BaseModel):
         default=DEFAULT_EDP_ID, gt=0, description="EDP to price, 1 when empty"
     )
     units: int = Field(gt=0, description="Number of housing units")
-    request_date: date = Field(description="Date the levy is calculated for")
+    request_date: AwareDatetime = Field(
+        description="Moment the levy is calculated for, an ISO 8601 date-time in UTC"
+    )
+
+    @field_validator("request_date")
+    @classmethod
+    def _require_utc(cls, value: datetime) -> datetime:
+        """Reject any offset but UTC, so the levy is priced on the UTC date."""
+        if value.utcoffset() != timedelta(0):
+            msg = "requestDate must be in UTC"
+            raise ValueError(msg)
+        return value
 
     @field_validator("edp_id", mode="before")
     @classmethod
@@ -76,7 +94,7 @@ def _get_repository() -> Repository:
 
 
 def _recalculate(body: LevyRecalculationRequest) -> LevyCalculation | None:
-    """Price the levy for the requested EDP, units and date."""
+    """Price the levy for the requested EDP, units and moment."""
     with _get_repository().session() as session:
         # Inflation is out of scope here, so a missing RICS CIL index for a
         # later charging year must not make the levy unavailable.
@@ -104,7 +122,7 @@ def _recalculate(body: LevyRecalculationRequest) -> LevyCalculation | None:
     },
     responses={
         400: {"description": "Invalid request"},
-        404: {"description": "No levy charge for the EDP on the date"},
+        404: {"description": "No base price in force for the EDP at the date-time"},
         422: {
             "description": "Levy or units too large to record, or otherwise unavailable"
         },
@@ -139,18 +157,21 @@ async def recalculate_levy(request: Request) -> LevyRecalculationResponse:
         )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Levy unavailable for the EDP on the request date",
+            detail="Levy unavailable for the EDP at the request date-time",
         ) from None
     if levy is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No levy charge for EDP {body.edp_id} on {body.request_date}",
+            detail=(
+                f"No base price in force for EDP {body.edp_id} at "
+                f"{body.request_date.isoformat()}"
+            ),
         )
 
     calculated_at = datetime.now(UTC)
     logger.info(
         "Levy recalculated: "
-        f"edp_id={body.edp_id} request_date={levy.calculation_date} "
+        f"edp_id={body.edp_id} request_date={body.request_date.isoformat()} "
         f"calculation_date={calculated_at.isoformat().replace('+00:00', 'Z')} "
         f"provisional_amount={levy.provisional_amount} "
         f"inflation_adjusted_amount={levy.inflation_adjusted_amount}"
