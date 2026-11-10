@@ -1,8 +1,8 @@
 """Nature restoration levy calculation.
 
 The base charge per unit is a positive amount in pounds and pence: the
-base_prices table rejects anything else (ck_base_prices_base_price), so
-provisional levy = units x base_charge_per_unit is exact.
+base_prices table stores it as numeric(10, 2) and rejects anything not positive
+(ck_base_prices_base_price), so provisional levy = units x base_charge_per_unit is exact.
 
 Inflation adjustment: the charging year is the calendar year. If
 calculation_date falls in the EDP's own charging year (edp_start_date's

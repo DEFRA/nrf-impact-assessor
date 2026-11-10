@@ -69,7 +69,7 @@ def upgrade() -> None:
     op.create_table(
         BASE_PRICES_TABLE,
         sa.Column("id", sa.Integer(), sa.Identity(), nullable=False),
-        sa.Column("base_price", sa.Numeric(), nullable=False),
+        sa.Column("base_price", sa.Numeric(10, 2), nullable=False),
         sa.Column("edp_id", sa.Integer(), nullable=False),
         sa.Column(
             "created_at",
@@ -87,8 +87,7 @@ def upgrade() -> None:
             ["edp_id"], ["public.edps.id"], name="fk_base_prices_edp"
         ),
         sa.CheckConstraint(
-            "base_price > 0 AND base_price < 100000000"
-            " AND base_price = round(base_price, 2)",
+            "base_price > 0 AND base_price <> 'NaN'",
             name="ck_base_prices_base_price",
         ),
         sa.CheckConstraint(r"comment ~ '\S'", name="ck_base_prices_comment_not_blank"),

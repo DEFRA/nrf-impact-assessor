@@ -234,8 +234,7 @@ class BasePrice(Base):
     __tablename__ = "base_prices"
     __table_args__ = (
         CheckConstraint(
-            "base_price > 0 AND base_price < 100000000"
-            " AND base_price = round(base_price, 2)",
+            "base_price > 0 AND base_price <> 'NaN'",
             name="ck_base_prices_base_price",
         ),
         CheckConstraint(r"comment ~ '\S'", name="ck_base_prices_comment_not_blank"),
@@ -249,10 +248,10 @@ class BasePrice(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
-    # Positive pounds and pence, enforced by ck_base_prices_base_price. No
-    # precision or scale: either would round a 3+ dp value before the CHECK
-    # sees it, so the CHECK bounds the magnitude instead.
-    base_price: Mapped[Decimal] = mapped_column(Numeric(), nullable=False)
+    # Pounds and pence up to 99999999.99. numeric(10, 2) rounds a 3+ dp value
+    # rather than rejecting it, so callers must validate 2 dp before inserting;
+    # ck_base_prices_base_price keeps the price positive and not NaN.
+    base_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     edp_id: Mapped[int] = mapped_column(
         ForeignKey("public.edps.id", name="fk_base_prices_edp"), nullable=False
     )

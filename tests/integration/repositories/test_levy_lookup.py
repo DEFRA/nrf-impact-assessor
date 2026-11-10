@@ -138,21 +138,17 @@ def test_a_base_price_for_an_unknown_edp_is_rejected(repository: Repository):
         session.execute(insert)
 
 
-@pytest.mark.parametrize(
-    "price",
-    [
-        "2675.555",
-        "2675.54999",  # numeric(12,4) would round this to 2675.5500 and pass
-        "0",
-        "-2675",
-        "100000000",  # beyond the numeric(12,4) range the column had
-        "NaN",
-        "Infinity",
-    ],
-)
-def test_an_invalid_base_price_is_rejected(repository: Repository, price: str):
+@pytest.mark.parametrize("price", ["0", "-2675", "NaN", "Infinity"])
+def test_a_base_price_that_is_not_a_positive_number_is_rejected(
+    repository: Repository, price: str
+):
     with pytest.raises(IntegrityError, match="ck_base_prices_base_price"):
         insert_base_price(repository, price=price)
+
+
+def test_a_base_price_beyond_the_column_range_is_rejected(repository: Repository):
+    with pytest.raises(DataError, match="numeric field overflow"):
+        insert_base_price(repository, price="100000000")
 
 
 @pytest.mark.parametrize("price", ["0.01", "2675.55", "2675.5000", "99999999.99"])

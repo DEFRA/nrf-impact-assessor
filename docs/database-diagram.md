@@ -88,7 +88,7 @@ erDiagram
 
     base_prices {
         integer id PK "identity, auto-incrementing"
-        numeric base_price "GBP per unit; CHECK over 0, under 10^8, at most 2 dp"
+        numeric_10_2 base_price "GBP per unit; CHECK over 0, not NaN"
         integer edp_id FK "indexed with effective_from"
         timestamptz created_at "default now()"
         timestamptz effective_from "the price applies from this moment"
@@ -222,7 +222,7 @@ spatially at query time.
 | `uq_lookup_name_version` | `UNIQUE (name, version)` — one row per lookup table per version. |
 | `ix_public_coefficient_layer_geom_v1` | Partial GiST over `geometry WHERE version = 1`. **Add an equivalent when loading a new version**, or queries against it lose the index. |
 | `ix_data_load_history_table_loaded_at` | `(table_name, loaded_at)` — the provenance lookup. |
-| `ck_base_prices_base_price` | `CHECK (base_price > 0 AND base_price < 100000000 AND base_price = round(base_price, 2))` — pounds and pence only. |
+| `ck_base_prices_base_price` | `CHECK (base_price > 0 AND base_price <> 'NaN')` — positive; the column is `numeric(10, 2)`, so pounds and pence up to 99999999.99. |
 | `ck_base_prices_comment_not_blank` | `CHECK (comment ~ '\S')` — a comment needs at least one non-whitespace character. |
 | `ix_public_base_prices_edp_id_effective_from` | `(edp_id, effective_from)` — finds the price in force for an EDP at a moment. |
 | `uq_levy_inflation_index_year` | `UNIQUE (charging_year)` — one index factor per charging year. |

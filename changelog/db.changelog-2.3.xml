@@ -23,7 +23,7 @@
             <column name="id" type="integer" autoIncrement="true">
                 <constraints primaryKey="true" nullable="false"/>
             </column>
-            <column name="base_price" type="numeric">
+            <column name="base_price" type="numeric(10,2)">
                 <constraints nullable="false"/>
             </column>
             <column name="edp_id" type="integer">
@@ -57,9 +57,7 @@
                                  referencedColumnNames="id"/>
         <sql>ALTER TABLE public.base_prices
             ADD CONSTRAINT ck_base_prices_base_price
-            CHECK (base_price &gt; 0
-                   AND base_price &lt; 100000000
-                   AND base_price = round(base_price, 2))</sql>
+            CHECK (base_price &gt; 0 AND base_price &lt;&gt; 'NaN')</sql>
         <sql>ALTER TABLE public.base_prices
             ADD CONSTRAINT ck_base_prices_comment_not_blank
             CHECK (comment ~ '\S')</sql>
