@@ -80,6 +80,33 @@ def test_the_audit_table_holds_integer_base_price_ids_without_a_foreign_key(
     assert AUDIT_FK not in {fk["name"] for fk in foreign_keys}
 
 
+def test_existing_audit_rows_are_kept_with_a_null_levy_charge_id(engine: Engine):
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO public.audit_levy_calculations "
+                "(id, quote_reference, edp_id, edp_name, edp_start_date, "
+                "calculator_version, base_charge_per_unit, units, "
+                "calculation_date, provisional_amount, inflation_adjusted_amount, "
+                "levy_charge_id) "
+                "SELECT gen_random_uuid(), 'NRL-000001', edp_id, edp_name, "
+                "edp_start_date, 1, base_charge_per_unit, 10, DATE '2026-09-14', "
+                "26750, 26750, id FROM public.levy_charges"
+            )
+        )
+
+    run_alembic(MIGRATION_DB, "upgrade", REVISION)
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT quote_reference, levy_charge_id "
+                "FROM public.audit_levy_calculations"
+            )
+        ).one()
+    assert tuple(row) == ("NRL-000001", None)
+
+
 def test_downgrade_and_upgrade_again(engine: Engine):
     run_alembic(MIGRATION_DB, "upgrade", REVISION)
 

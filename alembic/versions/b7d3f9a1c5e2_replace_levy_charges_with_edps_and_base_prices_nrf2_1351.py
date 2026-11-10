@@ -12,16 +12,17 @@ f7b1c3d5e9a2 did, so an environment can always price a levy.
 
 base_prices.id is an auto-incrementing integer. audit_levy_calculations
 .levy_charge_id keeps its name and now holds a base_prices id, so it changes
-from uuid to integer and loses its foreign key. Its existing rows named
-levy_charges ids that no longer exist and cannot be converted, so they are
-deleted; the audit table is being removed in a separate change.
+from uuid to integer, loses its foreign key and becomes nullable. Existing
+rows are kept, but the levy_charges ids they held no longer exist and cannot be
+converted, so their levy_charge_id becomes NULL. The audit table is being
+removed in a separate change.
 
 An EDP has at most one base price per effective_from, so the price in force at
 a moment is never ambiguous.
 
 downgrade() keeps only each EDP's first base price, as one open-ended
-levy_charges window, and deletes the audit rows again: they name base prices
-that the downgrade discards.
+levy_charges window. Audit rows are kept with a NULL levy_charge_id, which
+stays nullable, as the base prices they named are discarded.
 
 Revision ID: b7d3f9a1c5e2
 Revises: a8c2e4f6b1d3
@@ -123,14 +124,19 @@ def upgrade() -> None:
     )
 
     op.drop_constraint(AUDIT_FK, AUDIT_TABLE, schema="public", type_="foreignkey")
-    op.execute("DELETE FROM public.audit_levy_calculations")
+    op.alter_column(
+        AUDIT_TABLE,
+        "levy_charge_id",
+        schema="public",
+        existing_type=sa.Uuid(),
+        nullable=True,
+    )
     op.alter_column(
         AUDIT_TABLE,
         "levy_charge_id",
         schema="public",
         type_=sa.Integer(),
         existing_type=sa.Uuid(),
-        existing_nullable=False,
         postgresql_using="NULL",
     )
     op.drop_table(LEVY_CHARGES_TABLE, schema="public")
@@ -190,14 +196,13 @@ def downgrade() -> None:
         "ORDER BY e.id, bp.effective_from"
     )
     # The audit rows name base prices that the downgrade discards.
-    op.execute("DELETE FROM public.audit_levy_calculations")
     op.alter_column(
         AUDIT_TABLE,
         "levy_charge_id",
         schema="public",
         type_=sa.Uuid(),
         existing_type=sa.Integer(),
-        existing_nullable=False,
+        existing_nullable=True,
         postgresql_using="NULL",
     )
     op.create_foreign_key(

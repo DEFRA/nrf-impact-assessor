@@ -344,7 +344,10 @@ class LevyCalculationRecord(Base):
     )
     # The base_prices row that priced the quote. Not a foreign key: this table
     # is being removed, and an audit row must outlive an edited or deleted price.
-    levy_charge_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    # NULL on rows recorded before base_prices, whose levy_charges ids are gone.
+    levy_charge_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )
     edp_start_year_index_id: Mapped[UUID | None] = mapped_column(
         ForeignKey(
             "public.levy_inflation_index.id",
