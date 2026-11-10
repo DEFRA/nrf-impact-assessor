@@ -190,9 +190,7 @@ Example cases:
 - Always include CRS/SRID in fixtures. Store reusable fixtures in a shared test utility module.
 
 ```python
-SIMPLE_POLYGON_WKT = (
-    "POLYGON((-1 51, -1 52, 0 52, 0 51, -1 51))"
-)
+SIMPLE_POLYGON_WKT = "POLYGON((-1 51, -1 52, 0 52, 0 51, -1 51))"
 ```
 
 ### Mocking
