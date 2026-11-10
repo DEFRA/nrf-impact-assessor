@@ -92,10 +92,10 @@ erDiagram
         integer edp_id FK "indexed with effective_from"
         timestamptz created_at "default now()"
         timestamptz effective_from "the price applies from this moment"
-        varchar comment
-        varchar user_entra_id "who last saved the price"
-        varchar user_full_name
-        varchar user_email
+        varchar comment "max 500; CHECK not blank"
+        varchar user_entra_id "max 36 (GUID); who last saved the price"
+        varchar user_full_name "max 255"
+        varchar user_email "max 254"
     }
 
     audit_levy_calculations {
@@ -223,6 +223,7 @@ spatially at query time.
 | `ix_public_coefficient_layer_geom_v1` | Partial GiST over `geometry WHERE version = 1`. **Add an equivalent when loading a new version**, or queries against it lose the index. |
 | `ix_data_load_history_table_loaded_at` | `(table_name, loaded_at)` — the provenance lookup. |
 | `ck_base_prices_base_price` | `CHECK (base_price > 0 AND base_price < 100000000 AND base_price = round(base_price, 2))` — pounds and pence only. |
+| `ck_base_prices_comment_not_blank` | `CHECK (comment ~ '\S')` — a comment needs at least one non-whitespace character. |
 | `ix_public_base_prices_edp_id_effective_from` | `(edp_id, effective_from)` — finds the price in force for an EDP at a moment. |
 | `uq_levy_inflation_index_year` | `UNIQUE (charging_year)` — one index factor per charging year. |
 | `ix_public_audit_levy_calculations_quote_reference` | `(quote_reference)` — fetches the audit trail for a quote. |

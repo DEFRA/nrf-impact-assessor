@@ -35,16 +35,16 @@
             <column name="effective_from" type="timestamptz">
                 <constraints nullable="false"/>
             </column>
-            <column name="comment" type="varchar">
+            <column name="comment" type="varchar(500)">
                 <constraints nullable="false"/>
             </column>
-            <column name="user_entra_id" type="varchar">
+            <column name="user_entra_id" type="varchar(36)">
                 <constraints nullable="false"/>
             </column>
-            <column name="user_full_name" type="varchar">
+            <column name="user_full_name" type="varchar(255)">
                 <constraints nullable="false"/>
             </column>
-            <column name="user_email" type="varchar">
+            <column name="user_email" type="varchar(254)">
                 <constraints nullable="false"/>
             </column>
         </createTable>
@@ -60,6 +60,9 @@
             CHECK (base_price &gt; 0
                    AND base_price &lt; 100000000
                    AND base_price = round(base_price, 2))</sql>
+        <sql>ALTER TABLE public.base_prices
+            ADD CONSTRAINT ck_base_prices_comment_not_blank
+            CHECK (comment ~ '\S')</sql>
         <createIndex indexName="ix_public_base_prices_edp_id_effective_from"
                      tableName="base_prices" schemaName="public">
             <column name="edp_id"/>

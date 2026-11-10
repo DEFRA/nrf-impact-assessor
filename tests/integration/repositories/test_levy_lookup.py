@@ -167,6 +167,68 @@ def test_a_base_price_in_pounds_and_pence_is_stored_unchanged(
     assert stored == Decimal(price)
 
 
+_TEXT_COLUMN_LIMITS = [
+    ("comment", 500),
+    ("user_entra_id", 36),
+    ("user_full_name", 255),
+    ("user_email", 254),
+]
+
+
+def _insert_base_price_with(repository: Repository, column: str, value: str) -> None:
+    values = {
+        "comment": "Test",
+        "user_entra_id": "entra-id",
+        "user_full_name": "Test User",
+        "user_email": "test.user@example.com",
+    } | {column: value}
+    with repository.session() as session:
+        session.execute(
+            text(
+                "INSERT INTO public.edps (id, name, start_date) "
+                "VALUES (1, 'Test EDP', DATE '2026-01-01') ON CONFLICT DO NOTHING"
+            )
+        )
+        session.execute(
+            text(
+                "INSERT INTO public.base_prices "
+                "(base_price, edp_id, effective_from, comment, user_entra_id, "
+                "user_full_name, user_email) VALUES "
+                "(2675, 1, now(), :comment, :user_entra_id, :user_full_name, "
+                ":user_email)"
+            ),
+            values,
+        )
+        session.commit()
+
+
+@pytest.mark.parametrize(("column", "limit"), _TEXT_COLUMN_LIMITS)
+def test_a_text_column_over_its_limit_is_rejected(
+    repository: Repository, column: str, limit: int
+):
+    with pytest.raises(DataError, match="value too long for type character varying"):
+        _insert_base_price_with(repository, column, "x" * (limit + 1))
+
+
+@pytest.mark.parametrize(("column", "limit"), _TEXT_COLUMN_LIMITS)
+def test_a_text_column_at_its_limit_is_stored(
+    repository: Repository, column: str, limit: int
+):
+    _insert_base_price_with(repository, column, "x" * limit)
+
+    with repository.session() as session:
+        stored = session.execute(
+            text(f"SELECT {column} FROM public.base_prices")  # noqa: S608
+        ).scalar_one()
+    assert len(stored) == limit
+
+
+@pytest.mark.parametrize("comment", ["", "   ", "\t\n"])
+def test_a_blank_comment_is_rejected(repository: Repository, comment: str):
+    with pytest.raises(IntegrityError, match="ck_base_prices_comment_not_blank"):
+        _insert_base_price_with(repository, "comment", comment)
+
+
 def _insert_index(
     repository: Repository, year: int, factor: str, cil_index: str = "400"
 ) -> UUID:

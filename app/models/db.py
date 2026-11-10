@@ -238,6 +238,7 @@ class BasePrice(Base):
             " AND base_price = round(base_price, 2)",
             name="ck_base_prices_base_price",
         ),
+        CheckConstraint(r"comment ~ '\S'", name="ck_base_prices_comment_not_blank"),
         Index(
             "ix_public_base_prices_edp_id_effective_from", "edp_id", "effective_from"
         ),
@@ -258,10 +259,10 @@ class BasePrice(Base):
     effective_from: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
-    comment: Mapped[str] = mapped_column(String, nullable=False)
-    user_entra_id: Mapped[str] = mapped_column(String, nullable=False)
-    user_full_name: Mapped[str] = mapped_column(String, nullable=False)
-    user_email: Mapped[str] = mapped_column(String, nullable=False)
+    comment: Mapped[str] = mapped_column(String(500), nullable=False)
+    user_entra_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    user_full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    user_email: Mapped[str] = mapped_column(String(254), nullable=False)
 
     def __repr__(self) -> str:
         return (

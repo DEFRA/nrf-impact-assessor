@@ -70,10 +70,10 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("effective_from", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("comment", sa.String(), nullable=False),
-        sa.Column("user_entra_id", sa.String(), nullable=False),
-        sa.Column("user_full_name", sa.String(), nullable=False),
-        sa.Column("user_email", sa.String(), nullable=False),
+        sa.Column("comment", sa.String(500), nullable=False),
+        sa.Column("user_entra_id", sa.String(36), nullable=False),
+        sa.Column("user_full_name", sa.String(255), nullable=False),
+        sa.Column("user_email", sa.String(254), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.ForeignKeyConstraint(
             ["edp_id"], ["public.edps.id"], name="fk_base_prices_edp"
@@ -83,6 +83,7 @@ def upgrade() -> None:
             " AND base_price = round(base_price, 2)",
             name="ck_base_prices_base_price",
         ),
+        sa.CheckConstraint(r"comment ~ '\S'", name="ck_base_prices_comment_not_blank"),
         schema="public",
     )
     op.create_index(
