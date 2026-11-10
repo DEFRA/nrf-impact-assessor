@@ -240,7 +240,10 @@ class BasePrice(Base):
         ),
         CheckConstraint(r"comment ~ '\S'", name="ck_base_prices_comment_not_blank"),
         Index(
-            "ix_public_base_prices_edp_id_effective_from", "edp_id", "effective_from"
+            "ix_public_base_prices_edp_id_effective_from",
+            "edp_id",
+            "effective_from",
+            unique=True,
         ),
         {"schema": "public"},
     )

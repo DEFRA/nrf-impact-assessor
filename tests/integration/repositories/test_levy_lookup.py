@@ -111,15 +111,16 @@ def test_the_latest_base_price_at_or_before_the_moment_is_used(
     assert at_change.charge.id == second
 
 
-def test_a_base_price_may_share_an_edp_with_earlier_prices(repository: Repository):
-    insert_base_price(repository, 7, datetime(2026, 1, 1, tzinfo=UTC))
-    insert_base_price(repository, 7, datetime(2027, 1, 1, tzinfo=UTC))
+def test_two_base_prices_for_an_edp_cannot_share_an_effective_from(
+    repository: Repository,
+):
+    effective_from = datetime(2026, 1, 1, tzinfo=UTC)
+    insert_base_price(repository, 7, effective_from)
 
-    with repository.session() as session:
-        count = session.execute(
-            text("SELECT count(*) FROM public.base_prices WHERE edp_id = 7")
-        ).scalar_one()
-    assert count == 2
+    with pytest.raises(
+        IntegrityError, match="ix_public_base_prices_edp_id_effective_from"
+    ):
+        insert_base_price(repository, 7, effective_from)
 
 
 def test_a_base_price_for_an_unknown_edp_is_rejected(repository: Repository):
@@ -218,6 +219,7 @@ def test_a_text_column_at_its_limit_is_stored(
 
     with repository.session() as session:
         stored = session.execute(
+            # column comes from the constant _TEXT_COLUMN_LIMITS
             text(f"SELECT {column} FROM public.base_prices")  # noqa: S608
         ).scalar_one()
     assert len(stored) == limit

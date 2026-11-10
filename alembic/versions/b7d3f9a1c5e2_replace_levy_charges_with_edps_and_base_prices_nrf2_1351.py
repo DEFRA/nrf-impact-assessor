@@ -16,6 +16,13 @@ from uuid to integer and loses its foreign key. Its existing rows named
 levy_charges ids that no longer exist and cannot be converted, so they are
 deleted; the audit table is being removed in a separate change.
 
+An EDP has at most one base price per effective_from, so the price in force at
+a moment is never ambiguous.
+
+downgrade() keeps only each EDP's first base price, as one open-ended
+levy_charges window, and deletes the audit rows again: they name base prices
+that the downgrade discards.
+
 Revision ID: b7d3f9a1c5e2
 Revises: a8c2e4f6b1d3
 Create Date: 2026-11-09 00:00:00.000000
@@ -90,6 +97,7 @@ def upgrade() -> None:
         "ix_public_base_prices_edp_id_effective_from",
         BASE_PRICES_TABLE,
         ["edp_id", "effective_from"],
+        unique=True,
         schema="public",
     )
 
@@ -115,7 +123,7 @@ def upgrade() -> None:
     )
 
     op.drop_constraint(AUDIT_FK, AUDIT_TABLE, schema="public", type_="foreignkey")
-    op.execute(f"DELETE FROM public.{AUDIT_TABLE}")  # noqa: S608
+    op.execute("DELETE FROM public.audit_levy_calculations")
     op.alter_column(
         AUDIT_TABLE,
         "levy_charge_id",
@@ -182,7 +190,7 @@ def downgrade() -> None:
         "ORDER BY e.id, bp.effective_from"
     )
     # The audit rows name base prices that the downgrade discards.
-    op.execute(f"DELETE FROM public.{AUDIT_TABLE}")  # noqa: S608
+    op.execute("DELETE FROM public.audit_levy_calculations")
     op.alter_column(
         AUDIT_TABLE,
         "levy_charge_id",

@@ -64,7 +64,7 @@
             ADD CONSTRAINT ck_base_prices_comment_not_blank
             CHECK (comment ~ '\S')</sql>
         <createIndex indexName="ix_public_base_prices_edp_id_effective_from"
-                     tableName="base_prices" schemaName="public">
+                     tableName="base_prices" schemaName="public" unique="true">
             <column name="edp_id"/>
             <column name="effective_from"/>
         </createIndex>

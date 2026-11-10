@@ -63,7 +63,7 @@ def resolve_edp_id(session: Session, label: str) -> int | None:
     return int(text)
 
 
-class LevyCharge(NamedTuple):
+class BasePriceInForce(NamedTuple):
     """The base price in force for an EDP, with the EDP fields the levy
     calculation and its audit record carry. id is the base_prices row's id."""
 
@@ -77,7 +77,7 @@ class LevyCharge(NamedTuple):
 class LevyPricingRows(NamedTuple):
     """The charge and the RICS CIL index rows that price a levy."""
 
-    charge: LevyCharge
+    charge: BasePriceInForce
     edp_start_year_index: LevyInflationIndex | None
     calculation_year_index: LevyInflationIndex | None
 
@@ -108,14 +108,14 @@ def get_levy_pricing_rows(
             calculation_index.charging_year == at.astimezone(UTC).year,
         )
         .where(BasePrice.edp_id == edp_id, BasePrice.effective_from <= at)
-        .order_by(BasePrice.effective_from.desc(), BasePrice.created_at.desc())
+        .order_by(BasePrice.effective_from.desc())
         .limit(1)
     )
     row = session.execute(stmt).one_or_none()
     if row is None:
         return None
     base_price, edp, start, calculation = row
-    charge = LevyCharge(
+    charge = BasePriceInForce(
         id=base_price.id,
         edp_id=edp.id,
         edp_name=edp.name,

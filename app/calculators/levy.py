@@ -135,7 +135,7 @@ def calculate_levy(
     """Calculate the provisional and inflation-adjusted levy for one EDP.
 
     Args:
-        charge: The base price in force (LevyCharge) with id, edp_id,
+        charge: The base price in force (BasePriceInForce) with id, edp_id,
             edp_name, edp_start_date and base_charge_per_unit (Decimal,
             pounds and pence, at most 2 dp).
         units: Number of dwellings; must be positive.
