@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- Alembic revision: c9e1a3b5d7f2 -->
+
+    <!-- Nullable: rows that already exist, such as the seeded first price, have
+         neither. The API requires both for every price it adds. -->
+    <changeSet id="14-base-prices-requestor-and-jira-ticket" author="nrf">
+        <addColumn tableName="base_prices" schemaName="public">
+            <column name="requestor" type="varchar(255)"/>
+            <column name="jira_ticket" type="varchar(20)"/>
+        </addColumn>
+        <sql>ALTER TABLE public.base_prices
+            ADD CONSTRAINT ck_base_prices_requestor_not_blank
+            CHECK (requestor ~ '\S')</sql>
+        <sql>ALTER TABLE public.base_prices
+            ADD CONSTRAINT ck_base_prices_jira_ticket_format
+            CHECK (jira_ticket ~ '^NRF2-[0-9]+$')</sql>
+        <rollback>
+            <dropColumn tableName="base_prices" schemaName="public" columnName="jira_ticket"/>
+            <dropColumn tableName="base_prices" schemaName="public" columnName="requestor"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
