@@ -9,14 +9,14 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import (
     AfterValidator,
     AwareDatetime,
-    BaseModel,
     ConfigDict,
     Field,
-    StringConstraints,
     model_validator,
 )
 from pydantic.alias_generators import to_camel
 
+from app.common.api_fields import CamelModel as _CamelModel
+from app.common.api_fields import Comment, StaffEmail, StaffFullName, StaffId
 from app.repositories import base_prices as store
 from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
@@ -44,24 +44,6 @@ BasePriceAmount = Annotated[
         description="Base price per unit in pounds, under 100,000,000, 2dp",
     ),
 ]
-Comment = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)
-]
-StaffId = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)
-]
-StaffFullName = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)
-]
-StaffEmail = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=254)
-]
-
-
-class _CamelModel(BaseModel):
-    model_config = ConfigDict(
-        alias_generator=to_camel, populate_by_name=True, extra="forbid"
-    )
 
 
 class BasePriceCreate(_CamelModel):

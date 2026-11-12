@@ -125,15 +125,19 @@ erDiagram
         numeric cil_index "numeric(10,4), published RICS CIL Index"
         numeric index_factor "numeric(10,4), RICS CIL Index vs the 2026 base"
         timestamptz created_at "default now()"
+        varchar comment "why the row was saved; not blank"
+        varchar staff_id "Entra oid of the admin who saved it"
+        varchar staff_full_name
+        varchar staff_email
     }
 ```
 
 Reads fall back to `MAX(version)` when `data_active_version` holds no row for a
 table, so it only gains one once a reload or rollback has actually run.
 
-The levy tables are maintained by migration and, for `base_prices`, by admins
-(NRF2-1351), not by `load_data.py` or data sync, and none is versioned by
-`data_active_version`.
+The levy tables are maintained by migration and, for `base_prices` (NRF2-1351)
+and `levy_inflation_index` (NRF2-1348), by admins, not by `load_data.py` or
+data sync, and none is versioned by `data_active_version`.
 
 `edps` holds each EDP. `base_prices` holds every base price an EDP has had, each
 from its own `effective_from`, so a price change is a new row. The assessor
@@ -146,9 +150,17 @@ because their `levy_charge_id` values named rows that no longer exist. All
 timestamps are stored and passed as UTC; the charging year is the UTC year.
 
 `levy_inflation_index` holds the published RICS CIL Index per charging year and
-the factor it derives against the 2026 base (2026 = 1.0000). It is read when the
+the factor it derives against the 2026 base (2026 = 1.0000): the factor is
+`cil_index / the 2026 row's cil_index`, quantized to 4 dp half-up. A row is in
+force for the whole of its charging year — the effective date is 1 January
+00:00 UTC of `charging_year`, derived, not stored — and it is read when the
 calculation date falls in a later charging year than the EDP's publication, to
-inflation-adjust the provisional amount.
+inflation-adjust the provisional amount. Migration `2ddd520a2291` seeds the
+2026 base row and the 2027 charging-schedule row (factor 1.0000: the first
+year's inflation is built into the charging schedule) with the user recorded
+as `system`; later years are added by NRF Digital admins through the admin
+frontend one row per year, each recording who saved it, when and why. A row
+whose charging year has begun cannot be changed or deleted.
 
 `audit_levy_calculations` holds one audit row per calculation; it is
 written by the orchestrator and never truncated by data sync. Each row copies the
@@ -226,6 +238,8 @@ spatially at query time.
 | `ck_base_prices_comment_not_blank` | `CHECK (comment ~ '\S')` — a comment needs at least one non-whitespace character. |
 | `ix_public_base_prices_edp_id_effective_from` | `(edp_id, effective_from)` — finds the price in force for an EDP at a moment. |
 | `uq_levy_inflation_index_year` | `UNIQUE (charging_year)` — one index factor per charging year. |
+| `ck_levy_inflation_index_cil_index` | `CHECK (cil_index > 0 AND cil_index <> 'NaN')` — the published index is positive. |
+| `ck_levy_inflation_index_comment_not_blank` | `CHECK (comment ~ '\S')` — a comment needs at least one non-whitespace character. |
 | `ix_public_audit_levy_calculations_quote_reference` | `(quote_reference)` — fetches the audit trail for a quote. |
 | `ix_public_audit_levy_calculations_levy_charge_id` | `(levy_charge_id)` — finds every quote a base price row priced, e.g. after a correction. |
 | `fk_audit_levy_calculations_*` | `ON DELETE RESTRICT` to `levy_inflation_index` — an index row that priced a quote cannot be deleted. |

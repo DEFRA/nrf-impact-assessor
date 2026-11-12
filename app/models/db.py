@@ -276,26 +276,48 @@ class BasePrice(Base):
 
 
 class LevyInflationIndex(Base):
-    """RICS CIL Index factor for one charging year, relative to the fixed
-    2026 base (2026 = 1.0000).
+    """RICS CIL Index for one charging year, relative to the fixed 2026 base
+    (2026 = 1.0000).
 
-    Seeded by migration, hand-maintained like edps. Scales a levy's
-    base charge from the EDP's charging year to a later calculation year.
+    The index is in force for the whole of its charging year: the effective
+    date is 1 January 00:00 UTC of charging_year, so it is derived, not
+    stored. Scales a levy's base charge from the EDP's charging year to a
+    later calculation year. The 2026 base row and the 2027 charging-schedule
+    row (factor 1.0000) are seeded by migration; later years are added by
+    NRF Digital admins via the admin frontend (NRF2-1348), one row per year.
+    A row that has priced a quote cannot be deleted (audit FK RESTRICT).
     """
 
     __tablename__ = "levy_inflation_index"
     __table_args__ = (
         UniqueConstraint("charging_year", name="uq_levy_inflation_index_year"),
+        CheckConstraint(
+            "cil_index > 0 AND cil_index <> 'NaN'",
+            name="ck_levy_inflation_index_cil_index",
+        ),
+        CheckConstraint(
+            r"comment ~ '\S'", name="ck_levy_inflation_index_comment_not_blank"
+        ),
         {"schema": "public"},
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     charging_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    # The published RICS CIL Index number for the charging year. The factor
+    # applied to a levy is cil_index / the 2026 base row's cil_index, stored
+    # in index_factor; ck_levy_inflation_index_cil_index keeps it positive and
+    # not NaN.
     cil_index: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
     index_factor: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    comment: Mapped[str] = mapped_column(String(500), nullable=False)
+    # The identity provider's id for the staff member (the Entra oid claim today),
+    # not an id from the backend users table.
+    staff_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    staff_full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    staff_email: Mapped[str] = mapped_column(String(254), nullable=False)
 
     def __repr__(self) -> str:
         return (
