@@ -195,11 +195,6 @@ def add_base_price(body: BasePriceCreate) -> BasePriceResponse:
             _raise_conflict(
                 f"EDP {body.edp_id} already has a base price yet to take effect"
             )
-        except store.DuplicateEffectiveFromError:
-            _raise_conflict(
-                f"EDP {body.edp_id} already has a base price effective from "
-                f"{body.effective_from.isoformat()}"
-            )
         session.commit()
         logger.info(
             f"Base price added: id={row.id} edp_id={row.edp_id} "
@@ -214,7 +209,7 @@ def add_base_price(body: BasePriceCreate) -> BasePriceResponse:
     response_model_by_alias=True,
     responses={
         404: {"description": "Base price not found"},
-        409: {"description": "The base price has taken effect, or the date clashes"},
+        409: {"description": "The base price has taken effect"},
         422: {"description": "Invalid request"},
     },
 )
@@ -236,8 +231,6 @@ def update_base_price(base_price_id: int, body: BasePriceUpdate) -> BasePriceRes
             )
         except store.EffectiveFromInPastError:
             _raise_effective_from_in_past()
-        except store.DuplicateEffectiveFromError:
-            _raise_conflict("The EDP already has a base price with that effectiveFrom")
         session.commit()
         logger.info(
             f"Base price updated: id={row.id} fields={sorted(body.model_fields_set)}"

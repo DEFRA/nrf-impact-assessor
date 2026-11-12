@@ -10,7 +10,6 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import exists, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.db import BasePrice, Edp
@@ -34,10 +33,6 @@ class BasePriceTakenEffectError(Exception):
 
 class EffectiveFromInPastError(Exception):
     """A base price cannot be given an effective_from that has already passed."""
-
-
-class DuplicateEffectiveFromError(Exception):
-    """The EDP already has a base price with this effective_from."""
 
 
 def list_edps_with_base_prices(session: Session) -> list[tuple[Edp, list[BasePrice]]]:
@@ -95,7 +90,8 @@ def add_base_price(
         staff_full_name=staff_full_name,
         staff_email=staff_email,
     )
-    _flush_rejecting_duplicate(session, row)
+    session.add(row)
+    session.flush()
     return row
 
 
@@ -109,7 +105,7 @@ def update_base_price(
         raise EffectiveFromInPastError(new_effective_from)
     for field, value in changes.items():
         setattr(row, field, value)
-    _flush_rejecting_duplicate(session, row)
+    session.flush()
     return row
 
 
@@ -131,15 +127,3 @@ def _lock_future_base_price(
     if row.effective_from <= now:
         raise BasePriceTakenEffectError(base_price_id)
     return row
-
-
-def _flush_rejecting_duplicate(session: Session, row: BasePrice) -> None:
-    """Flush, turning a clash on (edp_id, effective_from) into a domain error."""
-    try:
-        with session.begin_nested():
-            session.add(row)
-            session.flush()
-    except IntegrityError as e:
-        if "ix_public_base_prices_edp_id_effective_from" in str(e.orig):
-            raise DuplicateEffectiveFromError from None
-        raise

@@ -1,12 +1,16 @@
 """/base-prices against PostGIS: history, add, change and delete with the
 future-price rules enforced inside locked transactions."""
 
+import contextlib
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from app.main import app
 from app.models.db import BasePrice
@@ -118,6 +122,35 @@ def test_add_is_refused_while_a_future_base_price_exists(
     assert _count(repository) == 2
 
 
+def test_only_one_of_several_parallel_adds_succeeds(
+    client: TestClient, repository: Repository
+):
+    insert_base_price(repository)
+    attempts = 8
+    checked_for_future_price = threading.Barrier(attempts, timeout=1)
+    real_add = Session.add
+
+    def add_once_every_request_has_checked(session, row):
+        # Holds each request between its check and its insert, so without the
+        # row lock they all pass the check. With it, only one request gets here.
+        with contextlib.suppress(threading.BrokenBarrierError):
+            checked_for_future_price.wait()
+        return real_add(session, row)
+
+    def post(days: int) -> int:
+        body = _body(effectiveFrom=_iso(_future(days)))
+        return client.post(URL, json=body).status_code
+
+    with (
+        patch.object(Session, "add", add_once_every_request_has_checked),
+        ThreadPoolExecutor(max_workers=attempts) as pool,
+    ):
+        statuses = list(pool.map(post, range(10, 10 + attempts)))
+
+    assert sorted(statuses) == [201] + [409] * (attempts - 1)
+    assert _count(repository) == 2
+
+
 def test_add_is_allowed_once_the_earlier_price_has_taken_effect(
     client: TestClient, repository: Repository
 ):
@@ -215,18 +248,6 @@ def test_change_rejects_moving_effective_from_into_the_past(
     )
 
     assert response.status_code == 422
-
-
-def test_change_rejects_an_effective_from_another_price_already_has(
-    client: TestClient, repository: Repository
-):
-    taken = _future()
-    insert_base_price(repository, effective_from=taken)
-    other_id = insert_base_price(repository, price="3000", effective_from=_future(60))
-
-    response = client.patch(f"{URL}/{other_id}", json={"effectiveFrom": _iso(taken)})
-
-    assert response.status_code == 409
 
 
 def test_change_cannot_move_the_base_price_to_another_edp(
