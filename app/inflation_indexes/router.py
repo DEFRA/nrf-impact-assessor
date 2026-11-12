@@ -120,8 +120,12 @@ def _get_repository() -> Repository:
     return get_shared_repository()
 
 
-def _raise_conflict(detail: str) -> NoReturn:
-    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+def _raise_conflict(code: str, message: str) -> NoReturn:
+    # The code lets a consumer tell conflicts apart without parsing the message
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"error": code, "message": message},
+    )
 
 
 def _raise_not_found(detail: str) -> NoReturn:
@@ -179,7 +183,8 @@ def add_inflation_index(body: InflationIndexCreate) -> InflationIndexResponse:
             _raise_year_not_future()
         except store.YearAlreadyExistsError:
             _raise_conflict(
-                f"An inflation index for {body.charging_year} already exists"
+                "inflation_index_year_exists",
+                f"An inflation index for {body.charging_year} already exists",
             )
         except store.BaseIndexMissingError:
             _raise_base_index_missing()
@@ -219,7 +224,8 @@ def update_inflation_index(
             _raise_not_found(f"No inflation index with id {index_id}")
         except store.InflationIndexTakenEffectError:
             _raise_conflict(
-                f"Inflation index {index_id} has taken effect and cannot be changed"
+                "inflation_index_taken_effect",
+                f"Inflation index {index_id} has taken effect and cannot be changed",
             )
         except store.BaseIndexMissingError:
             _raise_base_index_missing()
@@ -250,12 +256,14 @@ def delete_inflation_index(index_id: UUID) -> None:
             _raise_not_found(f"No inflation index with id {index_id}")
         except store.InflationIndexTakenEffectError:
             _raise_conflict(
-                f"Inflation index {index_id} has taken effect and cannot be deleted"
+                "inflation_index_taken_effect",
+                f"Inflation index {index_id} has taken effect and cannot be deleted",
             )
         except store.InflationIndexInUseError:
             _raise_conflict(
+                "inflation_index_in_use",
                 f"Inflation index {index_id} has been used to price a quote "
-                "and cannot be deleted"
+                "and cannot be deleted",
             )
         session.commit()
         logger.info(f"Inflation index deleted: id={index_id}")

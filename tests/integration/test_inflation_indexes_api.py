@@ -144,6 +144,7 @@ def test_add_for_a_year_that_already_has_an_index_conflicts(
     response = client.post(URL, json=_body())
 
     assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "inflation_index_year_exists"
     assert _count(repository) == 2
 
 
@@ -260,6 +261,7 @@ def test_change_is_refused_once_the_charging_year_has_begun(
     response = client.patch(f"{URL}/{current_id}", json={"cilIndex": 1})
 
     assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "inflation_index_taken_effect"
 
 
 def test_change_of_an_unknown_index_is_not_found(client: TestClient):
@@ -288,6 +290,7 @@ def test_delete_is_refused_once_the_charging_year_has_begun(
     response = client.delete(f"{URL}/{current_id}")
 
     assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "inflation_index_taken_effect"
     assert _count(repository) == 1
 
 
@@ -311,7 +314,8 @@ def test_delete_of_an_index_that_priced_a_quote_is_refused(
     response = client.delete(f"{URL}/{future_id}")
 
     assert response.status_code == 409
-    assert "used to price a quote" in response.json()["detail"]
+    assert response.json()["detail"]["error"] == "inflation_index_in_use"
+    assert "used to price a quote" in response.json()["detail"]["message"]
     assert _count(repository) == 2
 
 
