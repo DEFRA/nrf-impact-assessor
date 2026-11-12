@@ -56,6 +56,16 @@ StaffFullName = Annotated[
 StaffEmail = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=254)
 ]
+Requestor = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
+    Field(description="Name of the person who asked for the change"),
+]
+JiraTicket = Annotated[
+    str,
+    StringConstraints(pattern=r"^NRF2-[0-9]+$", max_length=20),
+    Field(description="Jira ticket recording the request, like NRF2-1234"),
+]
 
 
 class _CamelModel(BaseModel):
@@ -73,6 +83,8 @@ class BasePriceCreate(_CamelModel):
         description="UTC date-time the price takes effect, in the future"
     )
     comment: Comment
+    requestor: Requestor
+    jira_ticket: JiraTicket
     staff_id: StaffId
     staff_full_name: StaffFullName
     staff_email: StaffEmail
@@ -84,6 +96,8 @@ class BasePriceUpdate(_CamelModel):
     base_price: BasePriceAmount | None = None
     effective_from: UtcDatetime | None = None
     comment: Comment | None = None
+    requestor: Requestor | None = None
+    jira_ticket: JiraTicket | None = None
     staff_id: StaffId | None = None
     staff_full_name: StaffFullName | None = None
     staff_email: StaffEmail | None = None
@@ -115,6 +129,8 @@ class BasePriceResponse(_CamelModel):
     created_at: datetime
     effective_from: datetime
     comment: str
+    requestor: str | None
+    jira_ticket: str | None
     staff_id: str
     staff_full_name: str
     staff_email: str

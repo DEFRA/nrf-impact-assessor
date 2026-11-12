@@ -93,6 +93,8 @@ erDiagram
         timestamptz created_at "default now()"
         timestamptz effective_from "the price applies from this moment"
         varchar comment "max 500; CHECK not blank"
+        varchar requestor "nullable, max 255; who asked for the change; CHECK not blank"
+        varchar jira_ticket "nullable, max 20; CHECK NRF2-1234 format"
         varchar staff_id "max 36 (GUID, the identity provider id); staff member who last saved the price"
         varchar staff_full_name "max 255"
         varchar staff_email "max 254"

@@ -238,6 +238,10 @@ class BasePrice(Base):
             name="ck_base_prices_base_price",
         ),
         CheckConstraint(r"comment ~ '\S'", name="ck_base_prices_comment_not_blank"),
+        CheckConstraint(r"requestor ~ '\S'", name="ck_base_prices_requestor_not_blank"),
+        CheckConstraint(
+            r"jira_ticket ~ '^NRF2-[0-9]+$'", name="ck_base_prices_jira_ticket_format"
+        ),
         Index(
             "ix_public_base_prices_edp_id_effective_from",
             "edp_id",
@@ -267,6 +271,10 @@ class BasePrice(Base):
     staff_id: Mapped[str] = mapped_column(String(36), nullable=False)
     staff_full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     staff_email: Mapped[str] = mapped_column(String(254), nullable=False)
+    # Who asked for the change, and the ticket recording the request. Null only
+    # on rows that predate these columns.
+    requestor: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    jira_ticket: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     def __repr__(self) -> str:
         return (
