@@ -11,6 +11,7 @@ from fastapi.responses import Response
 from app.aerial_proxy.router import close_client as close_aerial_client
 from app.aerial_proxy.router import router as aerial_proxy_router
 from app.assess.router import router as assess_router
+from app.base_prices.router import router as base_prices_router
 from app.boundary.router import router as boundary_router
 from app.common.auth import require_api_key
 from app.common.mongo import get_mongo_client
@@ -94,6 +95,7 @@ app.include_router(tiles_router, dependencies=protected_dependencies)
 app.include_router(aerial_proxy_router, dependencies=protected_dependencies)
 app.include_router(wwtw_router, dependencies=protected_dependencies)
 app.include_router(levy_router, dependencies=protected_dependencies)
+app.include_router(base_prices_router, dependencies=protected_dependencies)
 
 if ApiServerConfig().testing_enabled:
     from app.test.router import router as test_router
