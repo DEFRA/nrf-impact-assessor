@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!-- Alembic revision: 2ddd520a2291 -->
+
+    <changeSet id="14-inflation-index-provenance" author="nrf">
+        <addColumn tableName="levy_inflation_index" schemaName="public">
+            <column name="comment" type="varchar(500)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="staff_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="staff_full_name" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="staff_email" type="varchar(254)">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+        <sql>ALTER TABLE public.levy_inflation_index
+            ADD CONSTRAINT ck_levy_inflation_index_cil_index
+            CHECK (cil_index &gt; 0 AND cil_index &lt;&gt; 'NaN')</sql>
+        <sql>ALTER TABLE public.levy_inflation_index
+            ADD CONSTRAINT ck_levy_inflation_index_comment_not_blank
+            CHECK (comment ~ '\S')</sql>
+        <rollback>
+            <sql>ALTER TABLE public.levy_inflation_index
+                DROP CONSTRAINT ck_levy_inflation_index_comment_not_blank</sql>
+            <sql>ALTER TABLE public.levy_inflation_index
+                DROP CONSTRAINT ck_levy_inflation_index_cil_index</sql>
+            <dropColumn tableName="levy_inflation_index" schemaName="public"
+                        columnName="comment"/>
+            <dropColumn tableName="levy_inflation_index" schemaName="public"
+                        columnName="staff_id"/>
+            <dropColumn tableName="levy_inflation_index" schemaName="public"
+                        columnName="staff_full_name"/>
+            <dropColumn tableName="levy_inflation_index" schemaName="public"
+                        columnName="staff_email"/>
+        </rollback>
+    </changeSet>
+
+    <!-- The 2026 base row and the 2027 charging-schedule row (both factor
+         1.0000) are seeded so a quote can always be priced from 1 Jan 2027,
+         when every quote crosses charging years. ON CONFLICT DO NOTHING keeps
+         any rows a local fixture load already inserted. -->
+    <changeSet id="14-inflation-index-seeds" author="nrf">
+        <sql>INSERT INTO public.levy_inflation_index
+            (id, charging_year, cil_index, index_factor, comment,
+             staff_id, staff_full_name, staff_email)
+            VALUES (gen_random_uuid(), 2026, 400.0000, 1.0000,
+                'Seeded with the published RICS CIL Index values',
+                'system', 'system', 'system@nrf.invalid')
+            ON CONFLICT (charging_year) DO NOTHING</sql>
+        <sql>INSERT INTO public.levy_inflation_index
+            (id, charging_year, cil_index, index_factor, comment,
+             staff_id, staff_full_name, staff_email)
+            VALUES (gen_random_uuid(), 2027, 400.0000, 1.0000,
+                'Factor is 1.0000 throughout 2027, as set by the charging schedule',
+                'system', 'system', 'system@nrf.invalid')
+            ON CONFLICT (charging_year) DO NOTHING</sql>
+        <rollback>
+            <sql>DELETE FROM public.levy_inflation_index
+                WHERE staff_id = 'system'
+                AND comment IN ('Seeded with the published RICS CIL Index values',
+                                'Factor is 1.0000 throughout 2027, as set by the charging schedule')</sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

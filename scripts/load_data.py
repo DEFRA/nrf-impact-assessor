@@ -844,6 +844,10 @@ def _levy_index_from_row(row: dict) -> LevyInflationIndex:
         charging_year=int(row["charging_year"]),
         cil_index=Decimal(str(row["cil_index"])),
         index_factor=Decimal(str(row["index_factor"])),
+        comment=row["comment"],
+        staff_id=row["staff_id"],
+        staff_full_name=row["staff_full_name"],
+        staff_email=row["staff_email"],
     )
 
 
