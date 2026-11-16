@@ -21,9 +21,9 @@ is measured from); the 2027 factor is 1.0000 because inflation for the
 first year is built into the charging schedule, not derived from a
 published index.
 
-downgrade() removes only rows still carrying the seed signature
-(system staff), so admin-created rows survive, then drops the constraints
-and columns.
+downgrade() removes only the rows it seeded, picked out by their charging
+years and the seed signature (system staff), so backfilled history rows and
+admin-created rows survive, then drops the constraints and columns.
 
 Revision ID: 2ddd520a2291
 Revises: c9e1a3b5d7f2
@@ -68,6 +68,7 @@ SEED_ROWS = (
     ),
 )
 SEED_COMMENTS = tuple(comment for _, _, _, comment in SEED_ROWS)
+SEED_YEARS = tuple(year for year, _, _, _ in SEED_ROWS)
 
 
 def upgrade() -> None:
@@ -132,15 +133,20 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Only the migration's own seeds go; rows an admin saved are kept, and
-    # any that priced a quote would block here on the audit table's RESTRICT
-    # foreign keys, which is the safe direction to fail.
+    # Only the rows this migration seeded go, picked out by their charging
+    # years: the backfill stamps every pre-existing row with the same system
+    # staff and seed comment, so the signature alone cannot tell a seed from
+    # history. Rows an admin saved are kept, and any that priced a quote
+    # would block here on the audit table's RESTRICT foreign keys, which is
+    # the safe direction to fail.
     op.execute(
         sa.text(
             "DELETE FROM public.levy_inflation_index "
-            "WHERE staff_id = :staff_id AND comment IN :comments"
+            "WHERE staff_id = :staff_id AND comment IN :comments "
+            "AND charging_year IN :years"
         ).bindparams(
             bindparam("comments", value=SEED_COMMENTS, expanding=True),
+            bindparam("years", value=SEED_YEARS, expanding=True),
             staff_id=SYSTEM_USER,
         )
     )

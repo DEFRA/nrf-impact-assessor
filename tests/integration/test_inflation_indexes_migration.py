@@ -1,7 +1,8 @@
 """Migration 2ddd520a2291 adds the inflation index provenance columns
 (comment, staff) with a backfill and the two check constraints, and seeds
 the 2026 base row and the 2027 charging-schedule row idempotently.
-Downgrades and upgrades again, keeping admin-created rows."""
+Downgrades and upgrades again, removing only the seeds it inserted and
+keeping backfilled history rows and admin-created rows."""
 
 from collections.abc import Iterator
 
@@ -140,3 +141,22 @@ def test_downgrade_keeps_admin_rows_and_upgrades_again(engine: Engine):
     run_alembic(MIGRATION_DB, "upgrade", REVISION)
 
     assert [r["charging_year"] for r in _indexes(engine)] == [2026, 2027, 2099]
+
+
+def test_downgrade_keeps_rows_that_predate_the_columns(engine: Engine):
+    # The backfill stamps pre-existing rows with the same system staff and
+    # seed comment as the seeds, so the downgrade must tell them apart by
+    # charging year or it deletes history.
+    _insert_old_shape_row(engine, 2021)
+    _insert_old_shape_row(engine, 2025)
+
+    run_alembic(MIGRATION_DB, "upgrade", REVISION)
+    run_alembic(MIGRATION_DB, "downgrade", PREVIOUS_REVISION)
+
+    with engine.connect() as conn:
+        years = (
+            conn.execute(text("SELECT charging_year FROM public.levy_inflation_index"))
+            .scalars()
+            .all()
+        )
+    assert years == [2021, 2025]

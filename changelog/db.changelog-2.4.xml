@@ -88,7 +88,8 @@
             <sql>DELETE FROM public.levy_inflation_index
                 WHERE staff_id = 'system'
                 AND comment IN ('Seeded with the published RICS CIL Index values',
-                                'Factor is 1.0000 throughout 2027, as set by the charging schedule')</sql>
+                                'Factor is 1.0000 throughout 2027, as set by the charging schedule')
+                AND charging_year IN (2026, 2027)</sql>
         </rollback>
     </changeSet>
 
