@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import geopandas as gpd
 import pytest
@@ -480,6 +480,23 @@ def insert_base_price(
         ).scalar_one()
         session.commit()
     return base_price_id
+
+
+def insert_inflation_index(
+    repository: Repository, year: int, factor: str, cil_index: str = "400"
+) -> UUID:
+    """Insert a committed levy_inflation_index row and return its id."""
+    with repository.session() as session:
+        index_id = session.execute(
+            text(
+                "INSERT INTO public.levy_inflation_index "
+                "(id, charging_year, cil_index, index_factor) VALUES "
+                "(gen_random_uuid(), :year, :cil_index, :factor) RETURNING id"
+            ),
+            {"year": year, "cil_index": cil_index, "factor": factor},
+        ).scalar_one()
+        session.commit()
+    return index_id
 
 
 def _database_url(database: str) -> str:

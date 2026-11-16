@@ -7,7 +7,6 @@ positive pounds and pence is rejected by the table."""
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import UUID
 
 import pytest
 from sqlalchemy import select, text
@@ -23,7 +22,11 @@ from app.repositories.levy import (
 )
 from app.repositories.repository import Repository
 from tests.conftest import make_levy_calculation
-from tests.integration.conftest import insert_base_price, set_active_version
+from tests.integration.conftest import (
+    insert_base_price,
+    insert_inflation_index,
+    set_active_version,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -227,22 +230,6 @@ def test_a_blank_comment_is_rejected(repository: Repository, comment: str):
         _insert_base_price_with(repository, "comment", comment)
 
 
-def _insert_index(
-    repository: Repository, year: int, factor: str, cil_index: str = "400"
-) -> UUID:
-    with repository.session() as session:
-        index_id = session.execute(
-            text(
-                "INSERT INTO public.levy_inflation_index "
-                "(id, charging_year, cil_index, index_factor) VALUES "
-                "(gen_random_uuid(), :year, :cil_index, :factor) RETURNING id"
-            ),
-            {"year": year, "cil_index": cil_index, "factor": factor},
-        ).scalar_one()
-        session.commit()
-    return index_id
-
-
 # --- get_levy_pricing_rows ---------------------------------------------------
 
 
@@ -250,8 +237,8 @@ def test_pricing_rows_join_the_edp_start_and_calculation_year_indices(
     repository: Repository,
 ):
     base_price_id = insert_base_price(repository, 7)
-    start_id = _insert_index(repository, 2026, "1.0000")
-    calc_id = _insert_index(repository, 2027, "1.0500")
+    start_id = insert_inflation_index(repository, 2026, "1.0000")
+    calc_id = insert_inflation_index(repository, 2027, "1.0500")
 
     with repository.session() as session:
         rows = get_levy_pricing_rows(session, 7, datetime(2027, 3, 1, tzinfo=UTC))
@@ -266,7 +253,7 @@ def test_pricing_rows_join_the_edp_start_and_calculation_year_indices(
 
 def test_pricing_rows_leave_a_missing_index_none(repository: Repository):
     insert_base_price(repository, 7)
-    start_id = _insert_index(repository, 2026, "1.0000")
+    start_id = insert_inflation_index(repository, 2026, "1.0000")
 
     with repository.session() as session:
         rows = get_levy_pricing_rows(session, 7, datetime(2027, 3, 1, tzinfo=UTC))
@@ -277,7 +264,7 @@ def test_pricing_rows_leave_a_missing_index_none(repository: Repository):
 
 def test_pricing_rows_need_a_base_price_in_force(repository: Repository):
     insert_base_price(repository, 7, datetime(2026, 1, 1, tzinfo=UTC))
-    _insert_index(repository, 2026, "1.0000")
+    insert_inflation_index(repository, 2026, "1.0000")
 
     with repository.session() as session:
         in_force = datetime(2026, 9, 14, tzinfo=UTC)
@@ -292,8 +279,8 @@ def test_pricing_rows_need_a_base_price_in_force(repository: Repository):
 
 def test_record_levy_calculation_round_trips(repository: Repository):
     charge_id = insert_base_price(repository, 1)
-    start_id = _insert_index(repository, 2026, "1.0000")
-    calc_id = _insert_index(repository, 2028, "1.0512")
+    start_id = insert_inflation_index(repository, 2026, "1.0000")
+    calc_id = insert_inflation_index(repository, 2028, "1.0512")
     levy = make_levy_calculation(
         levy_charge_id=charge_id,
         edp_start_year_index_id=start_id,
@@ -455,8 +442,8 @@ def test_an_index_row_that_priced_a_quote_cannot_be_deleted(
     repository: Repository,
 ):
     charge_id = insert_base_price(repository, 1)
-    start_id = _insert_index(repository, 2026, "1.0000")
-    calc_id = _insert_index(repository, 2028, "1.0512")
+    start_id = insert_inflation_index(repository, 2026, "1.0000")
+    calc_id = insert_inflation_index(repository, 2028, "1.0512")
     levy = make_levy_calculation(
         levy_charge_id=charge_id,
         edp_start_year_index_id=start_id,
