@@ -16,7 +16,14 @@ from pydantic import (
 from pydantic.alias_generators import to_camel
 
 from app.common.api_fields import CamelModel as _CamelModel
-from app.common.api_fields import Comment, StaffEmail, StaffFullName, StaffId
+from app.common.api_fields import (
+    Comment,
+    JiraTicket,
+    Requestor,
+    StaffEmail,
+    StaffFullName,
+    StaffId,
+)
 from app.repositories import base_prices as store
 from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
@@ -55,6 +62,8 @@ class BasePriceCreate(_CamelModel):
         description="UTC date-time the price takes effect, in the future"
     )
     comment: Comment
+    requestor: Requestor
+    jira_ticket: JiraTicket
     staff_id: StaffId
     staff_full_name: StaffFullName
     staff_email: StaffEmail
@@ -66,6 +75,8 @@ class BasePriceUpdate(_CamelModel):
     base_price: BasePriceAmount | None = None
     effective_from: UtcDatetime | None = None
     comment: Comment | None = None
+    requestor: Requestor | None = None
+    jira_ticket: JiraTicket | None = None
     staff_id: StaffId | None = None
     staff_full_name: StaffFullName | None = None
     staff_email: StaffEmail | None = None
@@ -97,6 +108,8 @@ class BasePriceResponse(_CamelModel):
     created_at: datetime
     effective_from: datetime
     comment: str
+    requestor: str | None
+    jira_ticket: str | None
     staff_id: str
     staff_full_name: str
     staff_email: str

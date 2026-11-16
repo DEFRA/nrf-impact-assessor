@@ -5,9 +5,30 @@
     xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
 
+    <!-- Alembic revision: c9e1a3b5d7f2 -->
+
+    <!-- Nullable: rows that already exist, such as the seeded first price, have
+         neither. The API requires both for every price it adds. -->
+    <changeSet id="14-base-prices-requestor-and-jira-ticket" author="nrf">
+        <addColumn tableName="base_prices" schemaName="public">
+            <column name="requestor" type="varchar(255)"/>
+            <column name="jira_ticket" type="varchar(20)"/>
+        </addColumn>
+        <sql>ALTER TABLE public.base_prices
+            ADD CONSTRAINT ck_base_prices_requestor_not_blank
+            CHECK (requestor ~ '\S')</sql>
+        <sql>ALTER TABLE public.base_prices
+            ADD CONSTRAINT ck_base_prices_jira_ticket_format
+            CHECK (jira_ticket ~ '^NRF2-[0-9]+$')</sql>
+        <rollback>
+            <dropColumn tableName="base_prices" schemaName="public" columnName="jira_ticket"/>
+            <dropColumn tableName="base_prices" schemaName="public" columnName="requestor"/>
+        </rollback>
+    </changeSet>
+
     <!-- Alembic revision: 2ddd520a2291 -->
 
-    <changeSet id="14-inflation-index-provenance" author="nrf">
+    <changeSet id="15-inflation-index-provenance" author="nrf">
         <addColumn tableName="levy_inflation_index" schemaName="public">
             <column name="comment" type="varchar(500)">
                 <constraints nullable="false"/>
@@ -48,7 +69,7 @@
          1.0000) are seeded so a quote can always be priced from 1 Jan 2027,
          when every quote crosses charging years. ON CONFLICT DO NOTHING keeps
          any rows a local fixture load already inserted. -->
-    <changeSet id="14-inflation-index-seeds" author="nrf">
+    <changeSet id="15-inflation-index-seeds" author="nrf">
         <sql>INSERT INTO public.levy_inflation_index
             (id, charging_year, cil_index, index_factor, comment,
              staff_id, staff_full_name, staff_email)
@@ -68,6 +89,27 @@
                 WHERE staff_id = 'system'
                 AND comment IN ('Seeded with the published RICS CIL Index values',
                                 'Factor is 1.0000 throughout 2027, as set by the charging schedule')</sql>
+        </rollback>
+    </changeSet>
+
+    <!-- Alembic revision: e05a352f9ebe -->
+
+    <!-- Nullable: rows seeded by the provenance changeset have neither. The
+         API requires both for every index it adds. -->
+    <changeSet id="16-inflation-index-requestor-and-jira-ticket" author="nrf">
+        <addColumn tableName="levy_inflation_index" schemaName="public">
+            <column name="requestor" type="varchar(255)"/>
+            <column name="jira_ticket" type="varchar(20)"/>
+        </addColumn>
+        <sql>ALTER TABLE public.levy_inflation_index
+            ADD CONSTRAINT ck_levy_inflation_index_requestor_not_blank
+            CHECK (requestor ~ '\S')</sql>
+        <sql>ALTER TABLE public.levy_inflation_index
+            ADD CONSTRAINT ck_levy_inflation_index_jira_ticket_format
+            CHECK (jira_ticket ~ '^NRF2-[0-9]+$')</sql>
+        <rollback>
+            <dropColumn tableName="levy_inflation_index" schemaName="public" columnName="jira_ticket"/>
+            <dropColumn tableName="levy_inflation_index" schemaName="public" columnName="requestor"/>
         </rollback>
     </changeSet>
 

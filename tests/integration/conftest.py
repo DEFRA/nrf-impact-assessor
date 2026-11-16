@@ -442,6 +442,8 @@ def insert_base_price(
     effective_from: datetime = datetime(2026, 1, 1, tzinfo=UTC),
     price: str = "2675",
     edp_start_date: date = date(2026, 1, 1),
+    requestor: str | None = "Test Requestor",
+    jira_ticket: str | None = "NRF2-1000",
 ) -> int:
     """Insert a committed base_prices row, and its EDP when missing, and return
     the base price id.
@@ -461,8 +463,10 @@ def insert_base_price(
             text(
                 "INSERT INTO public.base_prices "
                 "(base_price, edp_id, effective_from, comment, "
+                "requestor, jira_ticket, "
                 "staff_id, staff_full_name, staff_email) VALUES "
                 "(:price, :id, :effective_from, 'Test', "
+                ":requestor, :jira_ticket, "
                 "'staff-id', 'Test Staff', 'test.user@example.com') "
                 "RETURNING id"
             ),
@@ -470,6 +474,8 @@ def insert_base_price(
                 "id": edp_id,
                 "effective_from": effective_from,
                 "price": Decimal(price),
+                "requestor": requestor,
+                "jira_ticket": jira_ticket,
             },
         ).scalar_one()
         session.commit()

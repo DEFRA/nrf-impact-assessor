@@ -15,6 +15,8 @@ VALID_BODY = {
     "basePrice": 2700.5,
     "effectiveFrom": "2099-01-01T00:00:00Z",
     "comment": "NE advice",
+    "requestor": "Grace Hopper",
+    "jiraTicket": "NRF2-1234",
     "staffId": "entra-oid",
     "staffFullName": "Ada Admin",
     "staffEmail": "ada@example.com",
@@ -45,6 +47,15 @@ def client(mocker):
         {"effectiveFrom": "2099-01-01T01:00:00+01:00"},
         {"comment": "   "},
         {"comment": "x" * 501},
+        {"requestor": "   "},
+        {"requestor": "x" * 256},
+        {"jiraTicket": "nrf2-1234"},
+        {"jiraTicket": "ABC-1234"},
+        {"jiraTicket": "NRF2-"},
+        {"jiraTicket": "NRF2-12a"},
+        {"jiraTicket": "NRF2-1234\n"},
+        {"jiraTicket": " NRF2-1234"},
+        {"jiraTicket": "NRF2-" + "1" * 20},
         {"staffEmail": ""},
         {"staffId": "x" * 37},
         {"edpId": 0},
@@ -66,7 +77,15 @@ def test_add_requires_every_field(client, missing):
 
 @pytest.mark.parametrize(
     "body",
-    [{}, {"basePrice": None}, {"edpId": 2}, {"basePrice": 1.234}],
+    [
+        {},
+        {"basePrice": None},
+        {"edpId": 2},
+        {"basePrice": 1.234},
+        {"requestor": None},
+        {"jiraTicket": None},
+        {"jiraTicket": "1234"},
+    ],
 )
 def test_change_rejects_an_invalid_body(client, body):
     assert client.patch(f"{URL}/1", json=body).status_code == 422

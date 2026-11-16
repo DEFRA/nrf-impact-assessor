@@ -18,7 +18,14 @@ from pydantic.alias_generators import to_camel
 from app.common.api_fields import (
     CamelModel as _CamelModel,
 )
-from app.common.api_fields import Comment, StaffEmail, StaffFullName, StaffId
+from app.common.api_fields import (
+    Comment,
+    JiraTicket,
+    Requestor,
+    StaffEmail,
+    StaffFullName,
+    StaffId,
+)
 from app.models.db import LevyInflationIndex
 from app.repositories import inflation_indexes as store
 from app.repositories.engine import get_shared_repository
@@ -53,6 +60,8 @@ class InflationIndexCreate(_CamelModel):
     charging_year: ChargingYear
     cil_index: CilIndex
     comment: Comment
+    requestor: Requestor
+    jira_ticket: JiraTicket
     staff_id: StaffId
     staff_full_name: StaffFullName
     staff_email: StaffEmail
@@ -64,6 +73,8 @@ class InflationIndexUpdate(_CamelModel):
 
     cil_index: CilIndex | None = None
     comment: Comment | None = None
+    requestor: Requestor | None = None
+    jira_ticket: JiraTicket | None = None
     staff_id: StaffId | None = None
     staff_full_name: StaffFullName | None = None
     staff_email: StaffEmail | None = None
@@ -95,6 +106,8 @@ class InflationIndexResponse(_CamelModel):
     effective_from: datetime
     created_at: datetime
     comment: str
+    requestor: str | None
+    jira_ticket: str | None
     staff_id: str
     staff_full_name: str
     staff_email: str
@@ -109,6 +122,8 @@ def _to_response(row: LevyInflationIndex) -> InflationIndexResponse:
         effective_from=store.effective_from(row.charging_year),
         created_at=row.created_at,
         comment=row.comment,
+        requestor=row.requestor,
+        jira_ticket=row.jira_ticket,
         staff_id=row.staff_id,
         staff_full_name=row.staff_full_name,
         staff_email=row.staff_email,

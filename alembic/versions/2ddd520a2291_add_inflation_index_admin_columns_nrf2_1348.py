@@ -26,7 +26,7 @@ downgrade() removes only rows still carrying the seed signature
 and columns.
 
 Revision ID: 2ddd520a2291
-Revises: b7d3f9a1c5e2
+Revises: c9e1a3b5d7f2
 Create Date: 2026-11-12 14:59:09.778088
 """
 
@@ -38,7 +38,7 @@ from sqlalchemy import bindparam
 from alembic import op
 
 revision: str = "2ddd520a2291"
-down_revision: str | Sequence[str] | None = "b7d3f9a1c5e2"
+down_revision: str | Sequence[str] | None = "c9e1a3b5d7f2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

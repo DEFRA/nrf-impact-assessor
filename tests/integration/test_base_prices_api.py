@@ -37,6 +37,8 @@ def _body(**overrides) -> dict:
         "basePrice": 3000.5,
         "effectiveFrom": _iso(_future()),
         "comment": "NE advice",
+        "requestor": "Grace Hopper",
+        "jiraTicket": "NRF2-1234",
         "staffId": "entra-oid",
         "staffFullName": "Ada Admin",
         "staffEmail": "ada@example.com",
@@ -75,6 +77,8 @@ def test_lists_each_edp_with_its_history_newest_first(
         "createdAt",
         "effectiveFrom",
         "comment",
+        "requestor",
+        "jiraTicket",
         "staffId",
         "staffFullName",
         "staffEmail",
@@ -107,6 +111,8 @@ def test_adds_a_base_price_and_keeps_the_original(
     created = response.json()
     assert created["basePrice"] == 3000.5
     assert created["staffEmail"] == "ada@example.com"
+    assert created["requestor"] == "Grace Hopper"
+    assert created["jiraTicket"] == "NRF2-1234"
     assert _count(repository) == 2
 
 
@@ -198,6 +204,8 @@ def test_changes_a_future_base_price_in_place(
             "basePrice": 3100,
             "effectiveFrom": _iso(new_date),
             "comment": "Revised",
+            "requestor": "Alan Turing",
+            "jiraTicket": "NRF2-2000",
             "staffId": "other-oid",
             "staffFullName": "Bob Admin",
             "staffEmail": "bob@example.com",
@@ -210,6 +218,8 @@ def test_changes_a_future_base_price_in_place(
     assert changed["basePrice"] == 3100.0
     assert datetime.fromisoformat(changed["effectiveFrom"]) == new_date
     assert changed["comment"] == "Revised"
+    assert changed["requestor"] == "Alan Turing"
+    assert changed["jiraTicket"] == "NRF2-2000"
     assert changed["staffFullName"] == "Bob Admin"
     assert _count(repository) == 2
 
@@ -225,6 +235,34 @@ def test_change_leaves_fields_not_sent_untouched(
     assert response.json()["comment"] == "Only this"
     assert response.json()["basePrice"] == 2675.0
     assert response.json()["staffEmail"] == "test.user@example.com"
+
+
+def test_change_can_set_only_the_requestor_and_ticket(
+    client: TestClient, repository: Repository
+):
+    future_id = insert_base_price(repository, effective_from=_future())
+
+    response = client.patch(
+        f"{URL}/{future_id}",
+        json={"requestor": "Alan Turing", "jiraTicket": "NRF2-2000"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["requestor"] == "Alan Turing"
+    assert response.json()["jiraTicket"] == "NRF2-2000"
+    assert response.json()["comment"] == "Test"
+
+
+def test_a_price_saved_before_these_fields_existed_lists_them_as_null(
+    client: TestClient, repository: Repository
+):
+    insert_base_price(repository, requestor=None, jira_ticket=None)
+
+    [edp] = client.get(URL).json()
+
+    [price] = edp["basePrices"]
+    assert price["requestor"] is None
+    assert price["jiraTicket"] is None
 
 
 def test_change_is_refused_once_the_base_price_has_taken_effect(
