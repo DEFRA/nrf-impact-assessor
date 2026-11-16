@@ -16,6 +16,8 @@ VALID_BODY = {
     "chargingYear": datetime.now(UTC).year + 2,
     "cilIndex": 384.21,
     "comment": "NE advice",
+    "requestor": "Grace Hopper",
+    "jiraTicket": "NRF2-1234",
     "staffId": "entra-oid",
     "staffFullName": "Ada Admin",
     "staffEmail": "ada@example.com",
@@ -47,6 +49,15 @@ def client(mocker):
         {"chargingYear": 2101},
         {"comment": "   "},
         {"comment": "x" * 501},
+        {"requestor": "   "},
+        {"requestor": "x" * 256},
+        {"jiraTicket": "nrf2-1234"},
+        {"jiraTicket": "ABC-1234"},
+        {"jiraTicket": "NRF2-"},
+        {"jiraTicket": "NRF2-12a"},
+        {"jiraTicket": "NRF2-1234\n"},
+        {"jiraTicket": " NRF2-1234"},
+        {"jiraTicket": "NRF2-" + "1" * 20},
         {"staffEmail": ""},
         {"staffId": "x" * 37},
         {"extra": 1},
@@ -67,7 +78,15 @@ def test_add_requires_every_field(client, missing):
 
 @pytest.mark.parametrize(
     "body",
-    [{}, {"cilIndex": None}, {"chargingYear": 2029}, {"cilIndex": 1.23456}],
+    [
+        {},
+        {"cilIndex": None},
+        {"chargingYear": 2029},
+        {"cilIndex": 1.23456},
+        {"requestor": None},
+        {"jiraTicket": None},
+        {"jiraTicket": "1234"},
+    ],
 )
 def test_change_rejects_an_invalid_body(client, body):
     response = client.patch(f"{URL}/{ANY_ID}", json=body)

@@ -41,6 +41,8 @@ def _body(**overrides) -> dict:
         "chargingYear": _future_year(),
         "cilIndex": 384.21,
         "comment": "NE advice",
+        "requestor": "Grace Hopper",
+        "jiraTicket": "NRF2-1234",
         "staffId": "entra-oid",
         "staffFullName": "Ada Admin",
         "staffEmail": "ada@example.com",
@@ -82,6 +84,8 @@ def test_lists_the_history_newest_year_first_with_a_derived_effective_from(
         "effectiveFrom",
         "createdAt",
         "comment",
+        "requestor",
+        "jiraTicket",
         "staffId",
         "staffFullName",
         "staffEmail",
@@ -103,6 +107,8 @@ def test_adds_an_index_with_the_factor_derived_from_the_base_row(
     assert created["chargingYear"] == _future_year()
     assert created["cilIndex"] == 384.21
     assert created["indexFactor"] == 0.9605  # 384.21 / 400, 4 dp half-up
+    assert created["requestor"] == "Grace Hopper"
+    assert created["jiraTicket"] == "NRF2-1234"
     assert created["staffEmail"] == "ada@example.com"
     assert _count(repository) == 2
 
@@ -208,6 +214,8 @@ def test_changes_a_future_index_rederiving_the_factor(
         json={
             "cilIndex": 420.00,
             "comment": "Revised",
+            "requestor": "Alan Turing",
+            "jiraTicket": "NRF2-2000",
             "staffId": "other-oid",
             "staffFullName": "Bob Admin",
             "staffEmail": "bob@example.com",
@@ -220,6 +228,8 @@ def test_changes_a_future_index_rederiving_the_factor(
     assert changed["cilIndex"] == 420.00
     assert changed["indexFactor"] == 1.05  # 420 / 400
     assert changed["comment"] == "Revised"
+    assert changed["requestor"] == "Alan Turing"
+    assert changed["jiraTicket"] == "NRF2-2000"
     assert changed["staffFullName"] == "Bob Admin"
     assert datetime.fromisoformat(changed["effectiveFrom"]) == datetime(
         _future_year(), 1, 1, tzinfo=UTC
@@ -239,6 +249,34 @@ def test_change_leaves_fields_not_sent_untouched(
     assert response.json()["cilIndex"] == 400.0
     assert response.json()["indexFactor"] == 1.0
     assert response.json()["staffEmail"] == "test.user@example.com"
+
+
+def test_change_can_set_only_the_requestor_and_ticket(
+    client: TestClient, repository: Repository
+):
+    insert_inflation_index(repository, BASE_YEAR)
+    future_id = insert_inflation_index(repository, _future_year())
+
+    response = client.patch(
+        f"{URL}/{future_id}",
+        json={"requestor": "Alan Turing", "jiraTicket": "NRF2-2000"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["requestor"] == "Alan Turing"
+    assert response.json()["jiraTicket"] == "NRF2-2000"
+    assert response.json()["comment"] == "Test"
+
+
+def test_an_index_saved_before_these_fields_existed_lists_them_as_null(
+    client: TestClient, repository: Repository
+):
+    insert_inflation_index(repository, _future_year(), requestor=None, jira_ticket=None)
+
+    [row] = client.get(URL).json()
+
+    assert row["requestor"] is None
+    assert row["jiraTicket"] is None
 
 
 def test_change_cannot_move_an_index_to_another_year(

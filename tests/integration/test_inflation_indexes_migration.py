@@ -15,7 +15,7 @@ pytestmark = pytest.mark.integration
 
 MIGRATION_DB = "test_nrf_impact_inflation_indexes"
 REVISION = "2ddd520a2291"
-PREVIOUS_REVISION = "b7d3f9a1c5e2"
+PREVIOUS_REVISION = "c9e1a3b5d7f2"
 BACKFILL_COMMENT = "Seeded with the published RICS CIL Index values"
 SCHEDULE_COMMENT = "Factor is 1.0000 throughout 2027, as set by the charging schedule"
 PROVENANCE_COLUMNS = ("comment", "staff_id", "staff_full_name", "staff_email")
