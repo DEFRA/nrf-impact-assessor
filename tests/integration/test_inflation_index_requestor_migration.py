@@ -8,13 +8,18 @@ from collections.abc import Iterator
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import IntegrityError
 
 from tests.integration.conftest import run_alembic, scratch_database
+from tests.integration.requestor_migration_checks import (
+    INVALID_REQUESTOR_TICKET_PAIRS,
+    assert_downgrade_and_upgrade_again,
+    assert_insert_is_refused,
+)
 
 pytestmark = pytest.mark.integration
 
 MIGRATION_DB = "test_nrf_impact_inflation_index_requestor"
+TABLE = "levy_inflation_index"
 REVISION = "e05a352f9ebe"
 PREVIOUS_REVISION = "2ddd520a2291"
 NEW_COLUMNS = {"requestor", "jira_ticket"}
@@ -26,17 +31,6 @@ def engine() -> Iterator[Engine]:
     with scratch_database(MIGRATION_DB) as engine:
         run_alembic(MIGRATION_DB, "upgrade", PREVIOUS_REVISION)
         yield engine
-
-
-def _columns(engine: Engine) -> set[str]:
-    with engine.connect() as conn:
-        rows = conn.execute(
-            text(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_schema = 'public' AND table_name = 'levy_inflation_index'"
-            )
-        )
-        return {row[0] for row in rows}
 
 
 def _insert(engine: Engine, requestor: str | None, jira_ticket: str | None) -> None:
@@ -79,32 +73,16 @@ def test_accepts_a_requestor_and_a_ticket(engine: Engine):
     assert count == 1
 
 
-@pytest.mark.parametrize(
-    ("requestor", "jira_ticket"),
-    [
-        ("   ", "NRF2-1234"),
-        ("Grace Hopper", "nrf2-1234"),
-        ("Grace Hopper", "NRF2-"),
-        ("Grace Hopper", "NRF2-12a"),
-        ("Grace Hopper", "ABC-1234"),
-        ("Grace Hopper", "NRF2-1234 "),
-    ],
-)
+@pytest.mark.parametrize(("requestor", "jira_ticket"), INVALID_REQUESTOR_TICKET_PAIRS)
 def test_refuses_a_blank_requestor_or_a_malformed_ticket(
     engine: Engine, requestor: str, jira_ticket: str
 ):
     run_alembic(MIGRATION_DB, "upgrade", REVISION)
 
-    with pytest.raises(IntegrityError):
-        _insert(engine, requestor=requestor, jira_ticket=jira_ticket)
+    assert_insert_is_refused(engine, _insert, requestor, jira_ticket)
 
 
 def test_downgrade_and_upgrade_again(engine: Engine):
-    run_alembic(MIGRATION_DB, "upgrade", REVISION)
-    assert _columns(engine) >= NEW_COLUMNS
-
-    run_alembic(MIGRATION_DB, "downgrade", PREVIOUS_REVISION)
-    assert NEW_COLUMNS.isdisjoint(_columns(engine))
-
-    run_alembic(MIGRATION_DB, "upgrade", REVISION)
-    assert _columns(engine) >= NEW_COLUMNS
+    assert_downgrade_and_upgrade_again(
+        engine, MIGRATION_DB, TABLE, REVISION, PREVIOUS_REVISION, NEW_COLUMNS
+    )

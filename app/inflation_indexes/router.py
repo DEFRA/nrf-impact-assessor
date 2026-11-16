@@ -8,11 +8,11 @@ derived from the fixed 2026 base row, never accepted from the caller.
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Annotated, NoReturn, Self
+from typing import Annotated, NoReturn
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 from app.common.api_fields import (
@@ -25,6 +25,7 @@ from app.common.api_fields import (
     StaffEmail,
     StaffFullName,
     StaffId,
+    UpdateModel,
 )
 from app.models.db import LevyInflationIndex
 from app.repositories import inflation_indexes as store
@@ -67,7 +68,7 @@ class InflationIndexCreate(_CamelModel):
     staff_email: StaffEmail
 
 
-class InflationIndexUpdate(_CamelModel):
+class InflationIndexUpdate(UpdateModel):
     """Change an index whose charging year has not begun. chargingYear cannot
     change: it is the row's identity, so a different year is a different row."""
 
@@ -78,16 +79,6 @@ class InflationIndexUpdate(_CamelModel):
     staff_id: StaffId | None = None
     staff_full_name: StaffFullName | None = None
     staff_email: StaffEmail | None = None
-
-    @model_validator(mode="after")
-    def _require_a_change(self) -> Self:
-        if not self.model_fields_set:
-            msg = "at least one field must be provided"
-            raise ValueError(msg)
-        if any(getattr(self, name) is None for name in self.model_fields_set):
-            msg = "provided fields cannot be null"
-            raise ValueError(msg)
-        return self
 
 
 class InflationIndexResponse(_CamelModel):

@@ -8,6 +8,9 @@ from fastapi.testclient import TestClient
 from app.common.auth import API_KEY_HEADER, require_api_key
 from app.config import config
 from app.main import app
+from tests.unit.api.invalid_request_bodies import (
+    INVALID_REQUESTOR_JIRA_TICKET_OVERRIDES,
+)
 
 URL = "/base-prices"
 VALID_BODY = {
@@ -47,15 +50,7 @@ def client(mocker):
         {"effectiveFrom": "2099-01-01T01:00:00+01:00"},
         {"comment": "   "},
         {"comment": "x" * 501},
-        {"requestor": "   "},
-        {"requestor": "x" * 256},
-        {"jiraTicket": "nrf2-1234"},
-        {"jiraTicket": "ABC-1234"},
-        {"jiraTicket": "NRF2-"},
-        {"jiraTicket": "NRF2-12a"},
-        {"jiraTicket": "NRF2-1234\n"},
-        {"jiraTicket": " NRF2-1234"},
-        {"jiraTicket": "NRF2-" + "1" * 20},
+        *INVALID_REQUESTOR_JIRA_TICKET_OVERRIDES,
         {"staffEmail": ""},
         {"staffId": "x" * 37},
         {"edpId": 0},

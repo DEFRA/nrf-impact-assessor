@@ -67,7 +67,7 @@ SEED_ROWS = (
         "Factor is 1.0000 throughout 2027, as set by the charging schedule",
     ),
 )
-SEED_COMMENTS = tuple({comment for _, _, _, comment in SEED_ROWS})
+SEED_COMMENTS = tuple(comment for _, _, _, comment in SEED_ROWS)
 
 
 def upgrade() -> None:

@@ -6,9 +6,9 @@ camelCase wire contract. Centralising the annotations keeps the lengths and
 stripping rules from drifting between the two routers.
 """
 
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -18,6 +18,21 @@ class CamelModel(BaseModel):
     model_config = ConfigDict(
         alias_generator=to_camel, populate_by_name=True, extra="forbid"
     )
+
+
+class UpdateModel(CamelModel):
+    """A change body: every field optional, but at least one must be sent and
+    none of the sent ones may be null."""
+
+    @model_validator(mode="after")
+    def _require_a_change(self) -> Self:
+        if not self.model_fields_set:
+            msg = "at least one field must be provided"
+            raise ValueError(msg)
+        if any(getattr(self, name) is None for name in self.model_fields_set):
+            msg = "provided fields cannot be null"
+            raise ValueError(msg)
+        return self
 
 
 Comment = Annotated[

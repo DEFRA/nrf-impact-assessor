@@ -26,27 +26,28 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 TABLE = "levy_inflation_index"
-REQUESTOR_CHECK = "ck_levy_inflation_index_requestor_not_blank"
-JIRA_TICKET_CHECK = "ck_levy_inflation_index_jira_ticket_format"
+# column -> (type, check constraint name, check expression)
+PROVENANCE_COLUMNS = {
+    "requestor": (
+        sa.String(255),
+        "ck_levy_inflation_index_requestor_not_blank",
+        r"requestor ~ '\S'",
+    ),
+    "jira_ticket": (
+        sa.String(20),
+        "ck_levy_inflation_index_jira_ticket_format",
+        r"jira_ticket ~ '^NRF2-[0-9]+$'",
+    ),
+}
 
 
 def upgrade() -> None:
-    op.add_column(
-        TABLE, sa.Column("requestor", sa.String(255), nullable=True), schema="public"
-    )
-    op.add_column(
-        TABLE, sa.Column("jira_ticket", sa.String(20), nullable=True), schema="public"
-    )
-    op.create_check_constraint(
-        REQUESTOR_CHECK, TABLE, r"requestor ~ '\S'", schema="public"
-    )
-    op.create_check_constraint(
-        JIRA_TICKET_CHECK, TABLE, r"jira_ticket ~ '^NRF2-[0-9]+$'", schema="public"
-    )
+    for column, (type_, constraint, expression) in PROVENANCE_COLUMNS.items():
+        op.add_column(TABLE, sa.Column(column, type_, nullable=True), schema="public")
+        op.create_check_constraint(constraint, TABLE, expression, schema="public")
 
 
 def downgrade() -> None:
-    op.drop_constraint(JIRA_TICKET_CHECK, TABLE, schema="public", type_="check")
-    op.drop_constraint(REQUESTOR_CHECK, TABLE, schema="public", type_="check")
-    op.drop_column(TABLE, "jira_ticket", schema="public")
-    op.drop_column(TABLE, "requestor", schema="public")
+    for column, (_, constraint, _) in reversed(list(PROVENANCE_COLUMNS.items())):
+        op.drop_constraint(constraint, TABLE, schema="public", type_="check")
+        op.drop_column(TABLE, column, schema="public")

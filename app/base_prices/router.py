@@ -3,7 +3,7 @@
 import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Annotated, NoReturn, Self
+from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import (
@@ -11,7 +11,6 @@ from pydantic import (
     AwareDatetime,
     ConfigDict,
     Field,
-    model_validator,
 )
 from pydantic.alias_generators import to_camel
 
@@ -23,6 +22,7 @@ from app.common.api_fields import (
     StaffEmail,
     StaffFullName,
     StaffId,
+    UpdateModel,
 )
 from app.repositories import base_prices as store
 from app.repositories.engine import get_shared_repository
@@ -69,7 +69,7 @@ class BasePriceCreate(_CamelModel):
     staff_email: StaffEmail
 
 
-class BasePriceUpdate(_CamelModel):
+class BasePriceUpdate(UpdateModel):
     """Change a base price that has not taken effect. edpId cannot change."""
 
     base_price: BasePriceAmount | None = None
@@ -80,16 +80,6 @@ class BasePriceUpdate(_CamelModel):
     staff_id: StaffId | None = None
     staff_full_name: StaffFullName | None = None
     staff_email: StaffEmail | None = None
-
-    @model_validator(mode="after")
-    def _require_a_change(self) -> Self:
-        if not self.model_fields_set:
-            msg = "at least one field must be provided"
-            raise ValueError(msg)
-        if any(getattr(self, name) is None for name in self.model_fields_set):
-            msg = "provided fields cannot be null"
-            raise ValueError(msg)
-        return self
 
 
 class BasePriceResponse(_CamelModel):
