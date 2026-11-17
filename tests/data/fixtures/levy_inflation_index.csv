@@ -1,7 +1,8 @@
-charging_year,cil_index,index_factor
-2021,333,0.8325
-2022,332,0.8300
-2023,355,0.8875
-2024,381,0.9525
-2025,391,0.9775
-2026,400,1.0000
+charging_year,cil_index,index_factor,comment,staff_id,staff_full_name,staff_email
+2021,333,0.8325,Seeded with the published RICS CIL Index values,system,system,system@nrf.invalid
+2022,332,0.8300,Seeded with the published RICS CIL Index values,system,system,system@nrf.invalid
+2023,355,0.8875,Seeded with the published RICS CIL Index values,system,system,system@nrf.invalid
+2024,381,0.9525,Seeded with the published RICS CIL Index values,system,system,system@nrf.invalid
+2025,391,0.9775,Seeded with the published RICS CIL Index values,system,system,system@nrf.invalid
+2026,400,1.0000,Seeded with the published RICS CIL Index values,system,system,system@nrf.invalid
+2027,400,1.0000,"Factor is 1.0000 throughout 2027, as set by the charging schedule",system,system,system@nrf.invalid

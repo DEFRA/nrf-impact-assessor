@@ -320,6 +320,14 @@ generated `restore_commands.txt` clears it with `DELETE FROM` instead (listed in
 an index row, rather than orphaning the audit trail. `edps` and `base_prices`
 are not in the list: a migration seeds them and admins manage them.
 
+The `levy_inflation_index.csv` fixture carries the provenance columns
+(`comment`, `staff_*`) the admin CRUD writes, so a reload never nulls them.
+Since NRF2-1348 admins own this table: the CSV sync only seeds the baseline
+years — a reload **deletes any admin-added year the CSV does not list**, so
+re-run `load_data.py` with care while testing admin-added future years
+locally (or add the year to the CSV). A priced quote still blocks the delete
+through the audit table's `RESTRICT` foreign keys.
+
 ### Full database backup
 
 Single `.sql.gz` containing the entire `nrf_impact` database (schema + data + custom types + grants).

@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import geopandas as gpd
 import pytest
@@ -480,6 +480,44 @@ def insert_base_price(
         ).scalar_one()
         session.commit()
     return base_price_id
+
+
+def insert_inflation_index(
+    repository: Repository,
+    charging_year: int,
+    cil_index: str = "400",
+    index_factor: str = "1.0000",
+    comment: str = "Test",
+    requestor: str | None = "Test Requestor",
+    jira_ticket: str | None = "NRF2-1000",
+) -> UUID:
+    """Insert a committed levy_inflation_index row and return its id.
+
+    Shared because the inflation-index endpoint and lookup tests all seed
+    their own index rows.
+    """
+    with repository.session() as session:
+        index_id = session.execute(
+            text(
+                "INSERT INTO public.levy_inflation_index "
+                "(id, charging_year, cil_index, index_factor, comment, "
+                "requestor, jira_ticket, "
+                "staff_id, staff_full_name, staff_email) VALUES "
+                "(gen_random_uuid(), :year, :cil_index, :factor, :comment, "
+                ":requestor, :jira_ticket, "
+                "'staff-id', 'Test Staff', 'test.user@example.com') RETURNING id"
+            ),
+            {
+                "year": charging_year,
+                "cil_index": Decimal(cil_index),
+                "factor": Decimal(index_factor),
+                "comment": comment,
+                "requestor": requestor,
+                "jira_ticket": jira_ticket,
+            },
+        ).scalar_one()
+        session.commit()
+    return index_id
 
 
 def _database_url(database: str) -> str:
