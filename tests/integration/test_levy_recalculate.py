@@ -84,8 +84,8 @@ def test_a_changed_base_price_is_not_inflated_in_a_later_charging_year(
         repository, price="3000", effective_from=datetime(2027, 2, 1, tzinfo=UTC)
     )
     # The factors differ, so applying inflation would raise the levy by 5%.
-    insert_inflation_index(repository, 2026, "1.0000")
-    insert_inflation_index(repository, 2027, "1.0500")
+    insert_inflation_index(repository, 2026, index_factor="1.0000")
+    insert_inflation_index(repository, 2027, index_factor="1.0500")
 
     response = client.post(URL, json=BODY | {"requestDate": "2027-03-01T12:00:00Z"})
 

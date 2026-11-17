@@ -3,20 +3,27 @@
 import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Annotated, NoReturn, Self
+from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import (
     AfterValidator,
     AwareDatetime,
-    BaseModel,
     ConfigDict,
     Field,
-    StringConstraints,
-    model_validator,
 )
 from pydantic.alias_generators import to_camel
 
+from app.common.api_fields import CamelModel as _CamelModel
+from app.common.api_fields import (
+    Comment,
+    JiraTicket,
+    Requestor,
+    StaffEmail,
+    StaffFullName,
+    StaffId,
+    UpdateModel,
+)
 from app.repositories import base_prices as store
 from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
@@ -44,34 +51,6 @@ BasePriceAmount = Annotated[
         description="Base price per unit in pounds, under 100,000,000, 2dp",
     ),
 ]
-Comment = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)
-]
-StaffId = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)
-]
-StaffFullName = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)
-]
-StaffEmail = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=254)
-]
-Requestor = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
-    Field(description="Name of the person who asked for the change"),
-]
-JiraTicket = Annotated[
-    str,
-    StringConstraints(pattern=r"^NRF2-[0-9]+$", max_length=20),
-    Field(description="Jira ticket recording the request, like NRF2-1234"),
-]
-
-
-class _CamelModel(BaseModel):
-    model_config = ConfigDict(
-        alias_generator=to_camel, populate_by_name=True, extra="forbid"
-    )
 
 
 class BasePriceCreate(_CamelModel):
@@ -90,7 +69,7 @@ class BasePriceCreate(_CamelModel):
     staff_email: StaffEmail
 
 
-class BasePriceUpdate(_CamelModel):
+class BasePriceUpdate(UpdateModel):
     """Change a base price that has not taken effect. edpId cannot change."""
 
     base_price: BasePriceAmount | None = None
@@ -101,16 +80,6 @@ class BasePriceUpdate(_CamelModel):
     staff_id: StaffId | None = None
     staff_full_name: StaffFullName | None = None
     staff_email: StaffEmail | None = None
-
-    @model_validator(mode="after")
-    def _require_a_change(self) -> Self:
-        if not self.model_fields_set:
-            msg = "at least one field must be provided"
-            raise ValueError(msg)
-        if any(getattr(self, name) is None for name in self.model_fields_set):
-            msg = "provided fields cannot be null"
-            raise ValueError(msg)
-        return self
 
 
 class BasePriceResponse(_CamelModel):

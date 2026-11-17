@@ -483,17 +483,38 @@ def insert_base_price(
 
 
 def insert_inflation_index(
-    repository: Repository, year: int, factor: str, cil_index: str = "400"
+    repository: Repository,
+    charging_year: int,
+    cil_index: str = "400",
+    index_factor: str = "1.0000",
+    comment: str = "Test",
+    requestor: str | None = "Test Requestor",
+    jira_ticket: str | None = "NRF2-1000",
 ) -> UUID:
-    """Insert a committed levy_inflation_index row and return its id."""
+    """Insert a committed levy_inflation_index row and return its id.
+
+    Shared because the inflation-index endpoint and lookup tests all seed
+    their own index rows.
+    """
     with repository.session() as session:
         index_id = session.execute(
             text(
                 "INSERT INTO public.levy_inflation_index "
-                "(id, charging_year, cil_index, index_factor) VALUES "
-                "(gen_random_uuid(), :year, :cil_index, :factor) RETURNING id"
+                "(id, charging_year, cil_index, index_factor, comment, "
+                "requestor, jira_ticket, "
+                "staff_id, staff_full_name, staff_email) VALUES "
+                "(gen_random_uuid(), :year, :cil_index, :factor, :comment, "
+                ":requestor, :jira_ticket, "
+                "'staff-id', 'Test Staff', 'test.user@example.com') RETURNING id"
             ),
-            {"year": year, "cil_index": cil_index, "factor": factor},
+            {
+                "year": charging_year,
+                "cil_index": Decimal(cil_index),
+                "factor": Decimal(index_factor),
+                "comment": comment,
+                "requestor": requestor,
+                "jira_ticket": jira_ticket,
+            },
         ).scalar_one()
         session.commit()
     return index_id

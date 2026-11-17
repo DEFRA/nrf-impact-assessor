@@ -230,6 +230,24 @@ def test_a_blank_comment_is_rejected(repository: Repository, comment: str):
         _insert_base_price_with(repository, "comment", comment)
 
 
+@pytest.mark.parametrize("cil_index", ["0", "-1", "NaN"])
+def test_an_inflation_index_that_is_not_a_positive_number_is_rejected(
+    repository: Repository, cil_index: str
+):
+    with pytest.raises(IntegrityError, match="ck_levy_inflation_index_cil_index"):
+        insert_inflation_index(repository, 2030, cil_index=cil_index)
+
+
+@pytest.mark.parametrize("comment", ["", "   ", "\t\n"])
+def test_a_blank_inflation_index_comment_is_rejected(
+    repository: Repository, comment: str
+):
+    with pytest.raises(
+        IntegrityError, match="ck_levy_inflation_index_comment_not_blank"
+    ):
+        insert_inflation_index(repository, 2030, comment=comment)
+
+
 # --- get_levy_pricing_rows ---------------------------------------------------
 
 
@@ -237,8 +255,8 @@ def test_pricing_rows_join_the_edp_start_and_calculation_year_indices(
     repository: Repository,
 ):
     base_price_id = insert_base_price(repository, 7)
-    start_id = insert_inflation_index(repository, 2026, "1.0000")
-    calc_id = insert_inflation_index(repository, 2027, "1.0500")
+    start_id = insert_inflation_index(repository, 2026, index_factor="1.0000")
+    calc_id = insert_inflation_index(repository, 2027, index_factor="1.0500")
 
     with repository.session() as session:
         rows = get_levy_pricing_rows(session, 7, datetime(2027, 3, 1, tzinfo=UTC))
@@ -253,7 +271,7 @@ def test_pricing_rows_join_the_edp_start_and_calculation_year_indices(
 
 def test_pricing_rows_leave_a_missing_index_none(repository: Repository):
     insert_base_price(repository, 7)
-    start_id = insert_inflation_index(repository, 2026, "1.0000")
+    start_id = insert_inflation_index(repository, 2026, index_factor="1.0000")
 
     with repository.session() as session:
         rows = get_levy_pricing_rows(session, 7, datetime(2027, 3, 1, tzinfo=UTC))
@@ -262,9 +280,26 @@ def test_pricing_rows_leave_a_missing_index_none(repository: Repository):
     assert rows.calculation_year_index is None
 
 
+def test_pricing_rows_ignore_an_index_year_that_has_not_begun(
+    repository: Repository,
+):
+    # A saved future index must not leak into an earlier calculation: the
+    # join is on the calculation year, so the 2028 row only applies from
+    # 1 January 2028 (NRF2-1348 scenario 9).
+    insert_base_price(repository, 7)
+    start_id = insert_inflation_index(repository, 2026, index_factor="1.0000")
+    insert_inflation_index(repository, 2028, index_factor="1.0512")
+
+    with repository.session() as session:
+        rows = get_levy_pricing_rows(session, 7, datetime(2026, 6, 1, tzinfo=UTC))
+
+    assert rows.edp_start_year_index.id == start_id
+    assert rows.calculation_year_index.id == start_id
+
+
 def test_pricing_rows_need_a_base_price_in_force(repository: Repository):
     insert_base_price(repository, 7, datetime(2026, 1, 1, tzinfo=UTC))
-    insert_inflation_index(repository, 2026, "1.0000")
+    insert_inflation_index(repository, 2026, index_factor="1.0000")
 
     with repository.session() as session:
         in_force = datetime(2026, 9, 14, tzinfo=UTC)
@@ -279,8 +314,8 @@ def test_pricing_rows_need_a_base_price_in_force(repository: Repository):
 
 def test_record_levy_calculation_round_trips(repository: Repository):
     charge_id = insert_base_price(repository, 1)
-    start_id = insert_inflation_index(repository, 2026, "1.0000")
-    calc_id = insert_inflation_index(repository, 2028, "1.0512")
+    start_id = insert_inflation_index(repository, 2026, index_factor="1.0000")
+    calc_id = insert_inflation_index(repository, 2028, index_factor="1.0512")
     levy = make_levy_calculation(
         levy_charge_id=charge_id,
         edp_start_year_index_id=start_id,
@@ -442,8 +477,8 @@ def test_an_index_row_that_priced_a_quote_cannot_be_deleted(
     repository: Repository,
 ):
     charge_id = insert_base_price(repository, 1)
-    start_id = insert_inflation_index(repository, 2026, "1.0000")
-    calc_id = insert_inflation_index(repository, 2028, "1.0512")
+    start_id = insert_inflation_index(repository, 2026, index_factor="1.0000")
+    calc_id = insert_inflation_index(repository, 2028, index_factor="1.0512")
     levy = make_levy_calculation(
         levy_charge_id=charge_id,
         edp_start_year_index_id=start_id,
