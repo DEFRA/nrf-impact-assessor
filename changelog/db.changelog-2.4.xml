@@ -28,21 +28,31 @@
 
     <!-- Alembic revision: 2ddd520a2291 -->
 
+    <!-- Columns are added nullable and backfilled before the NOT NULL
+         constraints, mirroring Alembic revision 2ddd520a2291: rows that
+         already exist (a fixture load or an earlier insert) have neither,
+         so adding them NOT NULL outright fails with "column ... contains
+         null values". -->
     <changeSet id="15-inflation-index-provenance" author="nrf">
         <addColumn tableName="levy_inflation_index" schemaName="public">
-            <column name="comment" type="varchar(500)">
-                <constraints nullable="false"/>
-            </column>
-            <column name="staff_id" type="varchar(36)">
-                <constraints nullable="false"/>
-            </column>
-            <column name="staff_full_name" type="varchar(255)">
-                <constraints nullable="false"/>
-            </column>
-            <column name="staff_email" type="varchar(254)">
-                <constraints nullable="false"/>
-            </column>
+            <column name="comment" type="varchar(500)"/>
+            <column name="staff_id" type="varchar(36)"/>
+            <column name="staff_full_name" type="varchar(255)"/>
+            <column name="staff_email" type="varchar(254)"/>
         </addColumn>
+        <sql>UPDATE public.levy_inflation_index
+            SET comment = 'Seeded with the published RICS CIL Index values',
+                staff_id = 'system',
+                staff_full_name = 'system',
+                staff_email = 'system@nrf.invalid'</sql>
+        <addNotNullConstraint tableName="levy_inflation_index" schemaName="public"
+                              columnName="comment" columnDataType="varchar(500)"/>
+        <addNotNullConstraint tableName="levy_inflation_index" schemaName="public"
+                              columnName="staff_id" columnDataType="varchar(36)"/>
+        <addNotNullConstraint tableName="levy_inflation_index" schemaName="public"
+                              columnName="staff_full_name" columnDataType="varchar(255)"/>
+        <addNotNullConstraint tableName="levy_inflation_index" schemaName="public"
+                              columnName="staff_email" columnDataType="varchar(254)"/>
         <sql>ALTER TABLE public.levy_inflation_index
             ADD CONSTRAINT ck_levy_inflation_index_cil_index
             CHECK (cil_index &gt; 0 AND cil_index &lt;&gt; 'NaN')</sql>
