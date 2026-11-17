@@ -16,7 +16,7 @@ from app.boundary.router import (
 )
 from app.repositories.repository import Repository
 
-from .conftest import set_active_version
+from .conftest import insert_edp_boundary, set_active_version
 
 pytestmark = pytest.mark.integration
 
@@ -228,20 +228,6 @@ def test_names_are_deduplicated_and_sorted(repository: Repository):
     assert result == ["Alpha SSSI", "Unnamed exclusion area", "Zulu SSSI"]
 
 
-def _insert_edp(repository: Repository, name, wkt, version=1):
-    with repository.session() as session:
-        session.execute(
-            text(
-                "INSERT INTO public.edp_boundary_layer "
-                "(id, version, geometry, name, attributes) VALUES "
-                "(gen_random_uuid(), :v, ST_GeomFromText(:wkt, 27700), :n, "
-                "jsonb_build_object('EDP_Name', :n))"
-            ),
-            {"v": version, "wkt": wkt, "n": name},
-        )
-        session.commit()
-
-
 def test_edp_query_ignores_non_active_version_rows(repository: Repository):
     """Version filtering needs its own test for the EDP query.
 
@@ -249,8 +235,8 @@ def test_edp_query_ignores_non_active_version_rows(repository: Repository):
     inserted here — otherwise this code path would never execute.
     """
     edp = box(600000, 300000, 601000, 301000).wkt
-    _insert_edp(repository, "Stale EDP", edp, version=1)
-    _insert_edp(repository, "Current EDP", edp, version=2)
+    insert_edp_boundary(repository, "Stale EDP", edp, version=1)
+    insert_edp_boundary(repository, "Current EDP", edp, version=2)
     set_active_version(repository, "edp_boundary_layer", 2)
 
     results = _find_intersecting_edps(
@@ -266,8 +252,8 @@ def test_edp_sharing_only_an_edge_is_not_listed(repository: Repository):
     The boundary sits inside West EDP and runs along its border with East EDP,
     so East EDP shares an edge with it but none of its area.
     """
-    _insert_edp(repository, "West EDP", box(600000, 300000, 601000, 301000).wkt)
-    _insert_edp(repository, "East EDP", box(601000, 300000, 602000, 301000).wkt)
+    insert_edp_boundary(repository, "West EDP", box(600000, 300000, 601000, 301000).wkt)
+    insert_edp_boundary(repository, "East EDP", box(601000, 300000, 602000, 301000).wkt)
 
     results = _find_intersecting_edps(
         _gdf(box(600800, 300400, 601000, 300600)), repository

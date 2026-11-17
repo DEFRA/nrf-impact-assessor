@@ -10,30 +10,15 @@ arbitrary EPSG:27700 coordinates chosen only to be self-consistent.
 import geopandas as gpd
 import pytest
 from shapely.geometry import Polygon, box
-from sqlalchemy import text
 
 from app.boundary.router import _is_within_edp
 from app.repositories.repository import Repository
 
-from .conftest import set_active_version
+from .conftest import insert_edp_boundary, set_active_version
 
 pytestmark = pytest.mark.integration
 
 _EDP = box(600000, 300000, 601000, 301000)
-
-
-def _insert_edp(repository: Repository, name, wkt, version=1):
-    with repository.session() as session:
-        session.execute(
-            text(
-                "INSERT INTO public.edp_boundary_layer "
-                "(id, version, geometry, name, attributes) VALUES "
-                "(gen_random_uuid(), :v, ST_GeomFromText(:wkt, 27700), :n, "
-                "jsonb_build_object('EDP_Name', :n))"
-            ),
-            {"v": version, "wkt": wkt, "n": name},
-        )
-        session.commit()
 
 
 def _gdf(geom):
@@ -72,14 +57,14 @@ def _gdf(geom):
     ],
 )
 def test_boundary_position_against_the_edp(repository, boundary, expected):
-    _insert_edp(repository, "Norfolk EDP", _EDP.wkt)
+    insert_edp_boundary(repository, "Norfolk EDP", _EDP.wkt)
 
     assert _is_within_edp(_gdf(boundary), repository) is expected
 
 
 def test_overshoot_inside_the_tolerance_is_within(repository: Repository):
     """Coordinate rounding past the edge is not a breach."""
-    _insert_edp(repository, "Norfolk EDP", _EDP.wkt)
+    insert_edp_boundary(repository, "Norfolk EDP", _EDP.wkt)
 
     # Pokes 9 cm beyond the northern edge.
     boundary = box(600400, 300500, 600600, 301000.09)
@@ -93,7 +78,7 @@ def test_overshoot_beyond_the_tolerance_is_not_within(repository: Repository):
     Paired with the test above it, this pins the tolerance from both sides:
     2 cm more of the same overshoot is the whole difference.
     """
-    _insert_edp(repository, "Norfolk EDP", _EDP.wkt)
+    insert_edp_boundary(repository, "Norfolk EDP", _EDP.wkt)
 
     # Pokes 11 cm beyond the northern edge.
     boundary = box(600400, 300500, 600600, 301000.11)
@@ -108,7 +93,7 @@ def test_long_edge_traced_with_a_small_overshoot_is_within(repository: Repositor
     thousands of times any area floor, yet it is still an edge that was
     followed rather than crossed.
     """
-    _insert_edp(repository, "Norfolk EDP", _EDP.wkt)
+    insert_edp_boundary(repository, "Norfolk EDP", _EDP.wkt)
 
     boundary = box(600000, 300500, 601000, 301000.05)
 
@@ -122,7 +107,7 @@ def test_narrow_spur_reaching_far_outside_is_not_within(repository: Repository):
     the tolerance in width, yet every point of it beyond the first 10 cm is a
     breach.
     """
-    _insert_edp(repository, "Norfolk EDP", _EDP.wkt)
+    insert_edp_boundary(repository, "Norfolk EDP", _EDP.wkt)
 
     boundary = Polygon(
         [
@@ -142,8 +127,8 @@ def test_narrow_spur_reaching_far_outside_is_not_within(repository: Repository):
 
 def test_boundary_spanning_two_adjacent_edps_is_within(repository: Repository):
     """Neither EDP covers it alone, but together they do."""
-    _insert_edp(repository, "West EDP", _EDP.wkt)
-    _insert_edp(repository, "East EDP", box(601000, 300000, 602000, 301000).wkt)
+    insert_edp_boundary(repository, "West EDP", _EDP.wkt)
+    insert_edp_boundary(repository, "East EDP", box(601000, 300000, 602000, 301000).wkt)
 
     boundary = box(600900, 300400, 601100, 300600)
 
@@ -156,8 +141,10 @@ def test_non_active_version_rows_are_ignored(repository: Repository):
     The stale version covers the boundary and the current one does not, so a
     query spanning both versions would wrongly report it as within.
     """
-    _insert_edp(repository, "Norfolk EDP", box(600000, 300000, 602000, 301000).wkt)
-    _insert_edp(repository, "Norfolk EDP", _EDP.wkt, version=2)
+    insert_edp_boundary(
+        repository, "Norfolk EDP", box(600000, 300000, 602000, 301000).wkt
+    )
+    insert_edp_boundary(repository, "Norfolk EDP", _EDP.wkt, version=2)
     set_active_version(repository, "edp_boundary_layer", 2)
 
     boundary = box(600900, 300400, 601100, 300600)

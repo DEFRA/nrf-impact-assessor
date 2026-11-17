@@ -1,5 +1,6 @@
 """Integration test fixtures for PostGIS repository tests."""
 
+import json
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -432,6 +433,35 @@ def set_active_version(repository: Repository, table: str, version: int) -> None
                 "ON CONFLICT (table_name) DO UPDATE SET active_version = :v"
             ),
             {"t": table, "v": version},
+        )
+        session.commit()
+
+
+def insert_edp_boundary(
+    repository: Repository,
+    name: str,
+    wkt: str,
+    version: int = 1,
+    edp_id: int | None = None,
+) -> None:
+    """Insert one edp_boundary_layer row, carrying EDP_Id in attributes when
+    given.
+
+    Shared because the EDP lookup, intersection and base price tests each seed
+    their own boundaries at a chosen version.
+    """
+    attributes = {"EDP_Name": name}
+    if edp_id is not None:
+        attributes["EDP_Id"] = edp_id
+    with repository.session() as session:
+        session.execute(
+            text(
+                "INSERT INTO public.edp_boundary_layer "
+                "(id, version, geometry, name, attributes) VALUES "
+                "(gen_random_uuid(), :v, ST_GeomFromText(:wkt, 27700), :n, "
+                "CAST(:attrs AS jsonb))"
+            ),
+            {"v": version, "wkt": wkt, "n": name, "attrs": json.dumps(attributes)},
         )
         session.commit()
 

@@ -9,14 +9,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
 
 from app.main import app
 from app.models.db import LevyCalculationRecord
 from app.models.job import BoundaryGeojson, ImpactAssessmentJob, IntersectingEdp
 from app.orchestrator import JobOrchestrator
 from app.repositories.repository import Repository
-from tests.integration.conftest import insert_base_price
+from tests.integration.conftest import insert_base_price, insert_edp_boundary
 
 pytestmark = pytest.mark.integration
 
@@ -31,20 +30,6 @@ WKT = (
 
 def _iso(value: datetime) -> str:
     return value.isoformat().replace("+00:00", "Z")
-
-
-def _insert_edp_boundary(repository: Repository) -> None:
-    with repository.session() as session:
-        session.execute(
-            text(
-                "INSERT INTO public.edp_boundary_layer "
-                "(id, version, geometry, name, attributes) VALUES "
-                "(gen_random_uuid(), 1, ST_GeomFromText(:wkt, 27700), :n, "
-                "jsonb_build_object('EDP_Name', :n, 'EDP_Id', CAST(:id AS integer)))"
-            ),
-            {"wkt": WKT, "n": EDP_LABEL, "id": EDP_ID},
-        )
-        session.commit()
 
 
 def _job() -> ImpactAssessmentJob:
@@ -65,7 +50,7 @@ def test_a_new_quote_is_priced_and_audited_at_the_base_price_in_force_now(
     # The EDP starts in the current charging year, so no inflation step (and
     # no index row) is needed whenever this runs.
     edp_start = date(now.year, 1, 1)
-    _insert_edp_boundary(repository)
+    insert_edp_boundary(repository, EDP_LABEL, WKT, edp_id=EDP_ID)
     insert_base_price(
         repository,
         effective_from=now - timedelta(days=400),

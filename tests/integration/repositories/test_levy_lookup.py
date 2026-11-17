@@ -24,6 +24,7 @@ from app.repositories.repository import Repository
 from tests.conftest import make_levy_calculation
 from tests.integration.conftest import (
     insert_base_price,
+    insert_edp_boundary,
     insert_inflation_index,
     set_active_version,
 )
@@ -37,35 +38,9 @@ WKT = (
 )
 
 
-_INSERT_EDP_WITH_ID = (
-    "INSERT INTO public.edp_boundary_layer "
-    "(id, version, geometry, name, attributes) VALUES "
-    "(gen_random_uuid(), :v, ST_GeomFromText(:wkt, 27700), :n, "
-    "jsonb_build_object('EDP_Name', :n, 'EDP_Id', CAST(:id AS integer)))"
-)
-_INSERT_EDP_WITHOUT_ID = (
-    "INSERT INTO public.edp_boundary_layer "
-    "(id, version, geometry, name, attributes) VALUES "
-    "(gen_random_uuid(), :v, ST_GeomFromText(:wkt, 27700), :n, "
-    "jsonb_build_object('EDP_Name', :n))"
-)
-
-
-def _insert_edp(repository: Repository, label: str, edp_id, version: int = 1) -> None:
-    params = {"v": version, "wkt": WKT, "n": label}
-    if edp_id is None:
-        sql = _INSERT_EDP_WITHOUT_ID
-    else:
-        sql = _INSERT_EDP_WITH_ID
-        params["id"] = edp_id
-    with repository.session() as session:
-        session.execute(text(sql), params)
-        session.commit()
-
-
 def test_resolves_id_from_active_version_only(repository: Repository):
-    _insert_edp(repository, LABEL, edp_id=7, version=1)
-    _insert_edp(repository, LABEL, edp_id=8, version=2)
+    insert_edp_boundary(repository, LABEL, WKT, edp_id=7, version=1)
+    insert_edp_boundary(repository, LABEL, WKT, edp_id=8, version=2)
     set_active_version(repository, "edp_boundary_layer", 2)
 
     with repository.session() as session:
@@ -73,23 +48,23 @@ def test_resolves_id_from_active_version_only(repository: Repository):
 
 
 def test_no_edp_id_attribute_means_none(repository: Repository):
-    _insert_edp(repository, LABEL, edp_id=None)
+    insert_edp_boundary(repository, LABEL, WKT, edp_id=None)
 
     with repository.session() as session:
         assert resolve_edp_id(session, LABEL) is None
 
 
 def test_polygons_sharing_a_label_and_id_resolve(repository: Repository):
-    _insert_edp(repository, LABEL, edp_id=7)
-    _insert_edp(repository, LABEL, edp_id=7)
+    insert_edp_boundary(repository, LABEL, WKT, edp_id=7)
+    insert_edp_boundary(repository, LABEL, WKT, edp_id=7)
 
     with repository.session() as session:
         assert resolve_edp_id(session, LABEL) == 7
 
 
 def test_a_label_with_two_ids_means_none(repository: Repository):
-    _insert_edp(repository, LABEL, edp_id=7)
-    _insert_edp(repository, LABEL, edp_id=8)
+    insert_edp_boundary(repository, LABEL, WKT, edp_id=7)
+    insert_edp_boundary(repository, LABEL, WKT, edp_id=8)
 
     with repository.session() as session:
         assert resolve_edp_id(session, LABEL) is None
