@@ -102,7 +102,7 @@ The repository layer mixes the SQLAlchemy ORM/query builder with raw `text()` fo
 - Add or update focused pytest coverage for API behaviour, validation, error paths, and geospatial edge cases.
 - Prefer existing test fixtures and helper patterns under `tests/`.
 - Run the smallest relevant test set first, then broader tests when shared behaviour changes.
-- A test that a database constraint rejects a row must match that constraint's name in the error (e.g. `pytest.raises(IntegrityError, match="ck_levy_charges_base_charge_per_unit")`), not just the error type. A table with several constraints otherwise lets a different violation (an overlap exclusion, a NOT NULL) pass the test.
+- A test that a database constraint rejects a row must match that constraint's name in the error (e.g. `pytest.raises(IntegrityError, match="ck_base_prices_base_price")`), not just the error type. A table with several constraints otherwise lets a different violation (a foreign key, a NOT NULL) pass the test.
 
 ## Key Priorities
 

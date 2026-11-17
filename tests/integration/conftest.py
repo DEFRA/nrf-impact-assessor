@@ -1,9 +1,10 @@
 """Integration test fixtures for PostGIS repository tests."""
 
+import json
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -34,7 +35,8 @@ REFERENCE_TABLES = (
     "edp_excluded_areas",
     "data_active_version",
     "lookup_table",
-    "levy_charges",
+    "base_prices",
+    "edps",
     "audit_levy_calculations",
     "levy_inflation_index",
 )
@@ -435,36 +437,117 @@ def set_active_version(repository: Repository, table: str, version: int) -> None
         session.commit()
 
 
-def insert_levy_charge(
+def insert_edp_boundary(
+    repository: Repository,
+    name: str,
+    wkt: str,
+    version: int = 1,
+    edp_id: int | None = None,
+) -> None:
+    """Insert one edp_boundary_layer row, carrying EDP_Id in attributes when
+    given.
+
+    Shared because the EDP lookup, intersection and base price tests each seed
+    their own boundaries at a chosen version.
+    """
+    attributes = {"EDP_Name": name}
+    if edp_id is not None:
+        attributes["EDP_Id"] = edp_id
+    with repository.session() as session:
+        session.execute(
+            text(
+                "INSERT INTO public.edp_boundary_layer "
+                "(id, version, geometry, name, attributes) VALUES "
+                "(gen_random_uuid(), :v, ST_GeomFromText(:wkt, 27700), :n, "
+                "CAST(:attrs AS jsonb))"
+            ),
+            {"v": version, "wkt": wkt, "n": name, "attrs": json.dumps(attributes)},
+        )
+        session.commit()
+
+
+def insert_base_price(
     repository: Repository,
     edp_id: int = 1,
-    valid_from: date = date(2026, 1, 1),
-    valid_to: date = date(2026, 12, 31),
+    effective_from: datetime = datetime(2026, 1, 1, tzinfo=UTC),
     price: str = "2675",
-) -> UUID:
-    """Insert a committed levy_charges row and return its id.
+    edp_start_date: date = date(2026, 1, 1),
+    requestor: str | None = "Test Requestor",
+    jira_ticket: str | None = "NRF2-1000",
+) -> int:
+    """Insert a committed base_prices row, and its EDP when missing, and return
+    the base price id.
 
     Shared because the levy endpoint, lookup and constraint tests all seed
-    their own charge rows.
+    their own base prices.
     """
     with repository.session() as session:
-        charge_id = session.execute(
+        session.execute(
             text(
-                "INSERT INTO public.levy_charges "
-                "(id, edp_id, edp_name, edp_start_date, charge_valid_from, "
-                "charge_valid_to, base_charge_per_unit) VALUES "
-                "(gen_random_uuid(), :id, 'Test EDP', :f, :f, :t, :price) "
+                "INSERT INTO public.edps (id, name, start_date) "
+                "VALUES (:id, 'Test EDP', :start_date) ON CONFLICT (id) DO NOTHING"
+            ),
+            {"id": edp_id, "start_date": edp_start_date},
+        )
+        base_price_id = session.execute(
+            text(
+                "INSERT INTO public.base_prices "
+                "(base_price, edp_id, effective_from, comment, "
+                "requestor, jira_ticket, "
+                "staff_id, staff_full_name, staff_email) VALUES "
+                "(:price, :id, :effective_from, 'Test', "
+                ":requestor, :jira_ticket, "
+                "'staff-id', 'Test Staff', 'test.user@example.com') "
                 "RETURNING id"
             ),
             {
                 "id": edp_id,
-                "f": valid_from,
-                "t": valid_to,
+                "effective_from": effective_from,
                 "price": Decimal(price),
+                "requestor": requestor,
+                "jira_ticket": jira_ticket,
             },
         ).scalar_one()
         session.commit()
-    return charge_id
+    return base_price_id
+
+
+def insert_inflation_index(
+    repository: Repository,
+    charging_year: int,
+    cil_index: str = "400",
+    index_factor: str = "1.0000",
+    comment: str = "Test",
+    requestor: str | None = "Test Requestor",
+    jira_ticket: str | None = "NRF2-1000",
+) -> UUID:
+    """Insert a committed levy_inflation_index row and return its id.
+
+    Shared because the inflation-index endpoint and lookup tests all seed
+    their own index rows.
+    """
+    with repository.session() as session:
+        index_id = session.execute(
+            text(
+                "INSERT INTO public.levy_inflation_index "
+                "(id, charging_year, cil_index, index_factor, comment, "
+                "requestor, jira_ticket, "
+                "staff_id, staff_full_name, staff_email) VALUES "
+                "(gen_random_uuid(), :year, :cil_index, :factor, :comment, "
+                ":requestor, :jira_ticket, "
+                "'staff-id', 'Test Staff', 'test.user@example.com') RETURNING id"
+            ),
+            {
+                "year": charging_year,
+                "cil_index": Decimal(cil_index),
+                "factor": Decimal(index_factor),
+                "comment": comment,
+                "requestor": requestor,
+                "jira_ticket": jira_ticket,
+            },
+        ).scalar_one()
+        session.commit()
+    return index_id
 
 
 def _database_url(database: str) -> str:

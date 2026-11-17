@@ -1,11 +1,12 @@
 """Lookups and the audit record the levy calculation needs: the EDP id for a
-label, the charge and RICS CIL inflation index rows that price an EDP on a
-date, and the audit record of a calculation. Kept out of the
+label, the base price and RICS CIL inflation index rows that price an EDP at
+a moment, and the audit record of a calculation. Kept out of the
 Repository class, which is large and spatial; these are small ORM
 operations."""
 
 import logging
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 from typing import NamedTuple
 from uuid import UUID
 
@@ -15,9 +16,10 @@ from sqlalchemy.orm import Session, aliased
 from app.calculators.levy import LevyCalculation
 from app.data_sync.active_version import get_active_version
 from app.models.db import (
+    BasePrice,
+    Edp,
     EdpBoundaryLayer,
     LevyCalculationRecord,
-    LevyCharge,
     LevyInflationIndex,
 )
 
@@ -61,42 +63,66 @@ def resolve_edp_id(session: Session, label: str) -> int | None:
     return int(text)
 
 
-class LevyPricingRows(NamedTuple):
-    """The charge row and the RICS CIL index rows that price a levy."""
+class BasePriceInForce(NamedTuple):
+    """The base price in force for an EDP, with the EDP fields the levy
+    calculation and its audit record carry. id is the base_prices row's id."""
 
-    charge: LevyCharge
+    id: int
+    edp_id: int
+    edp_name: str
+    edp_start_date: date
+    base_charge_per_unit: Decimal
+
+
+class LevyPricingRows(NamedTuple):
+    """The charge and the RICS CIL index rows that price a levy."""
+
+    charge: BasePriceInForce
     edp_start_year_index: LevyInflationIndex | None
     calculation_year_index: LevyInflationIndex | None
 
 
 def get_levy_pricing_rows(
-    session: Session, edp_id: int, on_date: date
+    session: Session, edp_id: int, at: datetime
 ) -> LevyPricingRows | None:
-    """The charge row covering on_date with the index rows for its EDP start
-    year and on_date's year, in one round trip. None when there is no charge.
+    """The EDP's base price in force at `at` (its latest row with
+    effective_from at or before `at`) with the index rows for its start year
+    and for the year `at` falls in, in one round trip. None when the EDP
+    does not exist or has no base price in force yet.
 
-    Either index is None when that year has none. Both are fetched even in
-    the EDP start year, where calculate_levy ignores them; a lookup by the
-    unique charging_year costs less than a second query.
+    `at` must be timezone-aware and in UTC. Either index is None when that year has none.
+    Both are fetched even in the EDP start year, where calculate_levy ignores
+    them; a lookup by the unique charging_year costs less than a second query.
     """
     start_index = aliased(LevyInflationIndex)
     calculation_index = aliased(LevyInflationIndex)
     stmt = (
-        select(LevyCharge, start_index, calculation_index)
+        select(BasePrice, Edp, start_index, calculation_index)
+        .join(Edp, Edp.id == BasePrice.edp_id)
         .outerjoin(
             start_index,
-            start_index.charging_year
-            == cast(extract("year", LevyCharge.edp_start_date), Integer),
+            start_index.charging_year == cast(extract("year", Edp.start_date), Integer),
         )
-        .outerjoin(calculation_index, calculation_index.charging_year == on_date.year)
-        .where(
-            LevyCharge.edp_id == edp_id,
-            LevyCharge.charge_valid_from <= on_date,
-            LevyCharge.charge_valid_to >= on_date,
+        .outerjoin(
+            calculation_index,
+            calculation_index.charging_year == at.year,
         )
+        .where(BasePrice.edp_id == edp_id, BasePrice.effective_from <= at)
+        .order_by(BasePrice.effective_from.desc())
+        .limit(1)
     )
     row = session.execute(stmt).one_or_none()
-    return LevyPricingRows(*row) if row else None
+    if row is None:
+        return None
+    base_price, edp, start, calculation = row
+    charge = BasePriceInForce(
+        id=base_price.id,
+        edp_id=edp.id,
+        edp_name=edp.name,
+        edp_start_date=edp.start_date,
+        base_charge_per_unit=base_price.base_price,
+    )
+    return LevyPricingRows(charge, start, calculation)
 
 
 def record_levy_calculation(

@@ -6,7 +6,6 @@ Test-specific fixtures should be defined in their respective test files.
 
 from datetime import date
 from decimal import Decimal
-from uuid import UUID
 
 import pytest
 
@@ -36,7 +35,7 @@ EDP_NAME = (
 
 
 # Fixed so a test can assert the audit row names the charge it was given.
-LEVY_CHARGE_ID = UUID("00000000-0000-0000-0000-00000000c4a1")
+LEVY_CHARGE_ID = 41
 
 
 def make_levy_calculation(**overrides) -> LevyCalculation:

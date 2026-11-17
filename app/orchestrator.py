@@ -41,7 +41,7 @@ _NO_UNITS = "no housing units on job"
 _NO_EDP_MATCH = "boundary intersects no EDP"
 _MULTIPLE_EDPS = "boundary intersects multiple EDPs"
 _NO_EDP_ID = "no EDP_id for label in edp_boundary_layer"
-_NO_CHARGE = "no charge for EDP on date in levy_charges"
+_NO_CHARGE = "no base price in force for EDP"
 
 
 class RecordedLevy(NamedTuple):
@@ -318,13 +318,14 @@ class JobOrchestrator:
         Raises:
             LevyChargeUnavailableError: no housing units on the job, the
                 boundary intersects zero or multiple EDPs, no EDP_id for the
-                label in the active boundary layer, no levy_charges row for
-                that id covering today's date, or (when today falls in a
+                label in the active boundary layer, no base price in force
+                for that id today, or (when today falls in a
                 different charging year than the EDP's publication) no RICS
                 CIL index for one of those years.
         """
         job_id = job.reference or "unknown"
-        calculation_date = datetime.now(UTC).date()
+        calculated_at = datetime.now(UTC)
+        calculation_date = calculated_at.date()
 
         def unavailable(reason: str, where: str) -> LevyChargeUnavailableError:
             msg = (
@@ -354,7 +355,7 @@ class JobOrchestrator:
                 raise unavailable(_NO_EDP_ID, f"edp={label!r}")
             where = f"edp={label!r}, edp_id={edp_id}"
             try:
-                levy = price_levy(session, edp_id, units, calculation_date)
+                levy = price_levy(session, edp_id, units, calculated_at)
             except LevyChargeUnavailableError as e:
                 raise unavailable(str(e), where) from e
             if levy is None:

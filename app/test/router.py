@@ -472,7 +472,7 @@ def _build_stub_patch_payload(stub_edps: int = 1) -> dict:
         catchment_impacts=catchments,
     )
     stub_levy = LevyCalculation(
-        levy_charge_id=uuid4(),
+        levy_charge_id=1,
         edp_id=1,
         edp_name=_STUB_EDP_LABEL,
         edp_start_date=date(2026, 1, 1),
