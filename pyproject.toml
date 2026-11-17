@@ -9,12 +9,12 @@ dependencies = [
     "alembic-postgresql-enum>=1.10.0",
     "asgi-logger==0.1.0",
     "aws-embedded-metrics==3.5.0",
-    "boto3==1.43.123",
+    "boto3==1.43.127",
     "cachetools>=5.3.0",
-    "dnspython==2.9.1",
+    "dnspython==2.9.2",
     "ecs-logging==2.3.0",
     "email-validator>=2.3.0",
-    "fastapi[standard]==0.162.0",
+    "fastapi[standard]==0.162.2",
     "geoalchemy2>=0.20.0",
     "geopandas>=1.1.4",
     "httpx==0.28.1",
@@ -42,9 +42,9 @@ dev = [
     "pytest-asyncio==1.4.1.post1",
     "pytest-cov==7.1.0",
     "pytest-mock>=3.15.1",
-    "ruff==0.17.3",
+    "ruff==0.17.4",
     "taskipy==1.14.1",
-    "boto3-stubs==1.43.123"
+    "boto3-stubs==1.43.127"
 ]
 
 
