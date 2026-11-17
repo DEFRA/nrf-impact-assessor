@@ -7,13 +7,18 @@ from collections.abc import Iterator
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import IntegrityError
 
 from tests.integration.conftest import run_alembic, scratch_database
+from tests.integration.requestor_migration_checks import (
+    INVALID_REQUESTOR_TICKET_PAIRS,
+    assert_downgrade_and_upgrade_again,
+    assert_insert_is_refused,
+)
 
 pytestmark = pytest.mark.integration
 
 MIGRATION_DB = "test_nrf_impact_base_price_requestor"
+TABLE = "base_prices"
 REVISION = "c9e1a3b5d7f2"
 PREVIOUS_REVISION = "b7d3f9a1c5e2"
 NEW_COLUMNS = {"requestor", "jira_ticket"}
@@ -25,17 +30,6 @@ def engine() -> Iterator[Engine]:
     with scratch_database(MIGRATION_DB) as engine:
         run_alembic(MIGRATION_DB, "upgrade", PREVIOUS_REVISION)
         yield engine
-
-
-def _columns(engine: Engine) -> set[str]:
-    with engine.connect() as conn:
-        rows = conn.execute(
-            text(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_schema = 'public' AND table_name = 'base_prices'"
-            )
-        )
-        return {row[0] for row in rows}
 
 
 def _insert(engine: Engine, requestor: str | None, jira_ticket: str | None) -> None:
@@ -57,7 +51,7 @@ def test_the_seeded_first_price_has_no_requestor_or_ticket(engine: Engine):
 
     with engine.connect() as conn:
         row = conn.execute(
-            text("SELECT requestor, jira_ticket FROM public.base_prices")
+            text(f"SELECT requestor, jira_ticket FROM public.{TABLE}")  # noqa: S608
         ).one()
     assert tuple(row) == (None, None)
 
@@ -70,38 +64,23 @@ def test_accepts_a_requestor_and_a_ticket(engine: Engine):
     with engine.connect() as conn:
         count = conn.execute(
             text(
-                "SELECT count(*) FROM public.base_prices WHERE jira_ticket IS NOT NULL"
+                f"SELECT count(*) FROM public.{TABLE} "  # noqa: S608
+                "WHERE jira_ticket IS NOT NULL"
             )
         ).scalar_one()
     assert count == 1
 
 
-@pytest.mark.parametrize(
-    ("requestor", "jira_ticket"),
-    [
-        ("   ", "NRF2-1234"),
-        ("Grace Hopper", "nrf2-1234"),
-        ("Grace Hopper", "NRF2-"),
-        ("Grace Hopper", "NRF2-12a"),
-        ("Grace Hopper", "ABC-1234"),
-        ("Grace Hopper", "NRF2-1234 "),
-    ],
-)
+@pytest.mark.parametrize(("requestor", "jira_ticket"), INVALID_REQUESTOR_TICKET_PAIRS)
 def test_refuses_a_blank_requestor_or_a_malformed_ticket(
     engine: Engine, requestor: str, jira_ticket: str
 ):
     run_alembic(MIGRATION_DB, "upgrade", REVISION)
 
-    with pytest.raises(IntegrityError):
-        _insert(engine, requestor=requestor, jira_ticket=jira_ticket)
+    assert_insert_is_refused(engine, _insert, requestor, jira_ticket)
 
 
 def test_downgrade_and_upgrade_again(engine: Engine):
-    run_alembic(MIGRATION_DB, "upgrade", REVISION)
-    assert _columns(engine) >= NEW_COLUMNS
-
-    run_alembic(MIGRATION_DB, "downgrade", PREVIOUS_REVISION)
-    assert NEW_COLUMNS.isdisjoint(_columns(engine))
-
-    run_alembic(MIGRATION_DB, "upgrade", REVISION)
-    assert _columns(engine) >= NEW_COLUMNS
+    assert_downgrade_and_upgrade_again(
+        engine, MIGRATION_DB, TABLE, REVISION, PREVIOUS_REVISION, NEW_COLUMNS
+    )

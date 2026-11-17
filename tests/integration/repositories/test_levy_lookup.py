@@ -228,19 +228,48 @@ def test_a_blank_comment_is_rejected(repository: Repository, comment: str):
 
 
 def _insert_index(
-    repository: Repository, year: int, factor: str, cil_index: str = "400"
+    repository: Repository,
+    year: int,
+    factor: str,
+    cil_index: str = "400",
+    comment: str = "Test",
 ) -> UUID:
     with repository.session() as session:
         index_id = session.execute(
             text(
                 "INSERT INTO public.levy_inflation_index "
-                "(id, charging_year, cil_index, index_factor) VALUES "
-                "(gen_random_uuid(), :year, :cil_index, :factor) RETURNING id"
+                "(id, charging_year, cil_index, index_factor, comment, "
+                "staff_id, staff_full_name, staff_email) VALUES "
+                "(gen_random_uuid(), :year, :cil_index, :factor, :comment, "
+                "'staff-id', 'Test Staff', 'test.user@example.com') RETURNING id"
             ),
-            {"year": year, "cil_index": cil_index, "factor": factor},
+            {
+                "year": year,
+                "cil_index": cil_index,
+                "factor": factor,
+                "comment": comment,
+            },
         ).scalar_one()
         session.commit()
     return index_id
+
+
+@pytest.mark.parametrize("cil_index", ["0", "-1", "NaN"])
+def test_an_inflation_index_that_is_not_a_positive_number_is_rejected(
+    repository: Repository, cil_index: str
+):
+    with pytest.raises(IntegrityError, match="ck_levy_inflation_index_cil_index"):
+        _insert_index(repository, 2030, "1.0000", cil_index=cil_index)
+
+
+@pytest.mark.parametrize("comment", ["", "   ", "\t\n"])
+def test_a_blank_inflation_index_comment_is_rejected(
+    repository: Repository, comment: str
+):
+    with pytest.raises(
+        IntegrityError, match="ck_levy_inflation_index_comment_not_blank"
+    ):
+        _insert_index(repository, 2030, "1.0000", comment=comment)
 
 
 # --- get_levy_pricing_rows ---------------------------------------------------
@@ -273,6 +302,23 @@ def test_pricing_rows_leave_a_missing_index_none(repository: Repository):
 
     assert rows.edp_start_year_index.id == start_id
     assert rows.calculation_year_index is None
+
+
+def test_pricing_rows_ignore_an_index_year_that_has_not_begun(
+    repository: Repository,
+):
+    # A saved future index must not leak into an earlier calculation: the
+    # join is on the calculation year, so the 2028 row only applies from
+    # 1 January 2028 (NRF2-1348 scenario 9).
+    insert_base_price(repository, 7)
+    start_id = _insert_index(repository, 2026, "1.0000")
+    _insert_index(repository, 2028, "1.0512")
+
+    with repository.session() as session:
+        rows = get_levy_pricing_rows(session, 7, datetime(2026, 6, 1, tzinfo=UTC))
+
+    assert rows.edp_start_year_index.id == start_id
+    assert rows.calculation_year_index.id == start_id
 
 
 def test_pricing_rows_need_a_base_price_in_force(repository: Repository):
