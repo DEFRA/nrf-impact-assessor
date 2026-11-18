@@ -345,6 +345,61 @@ class LevyInflationIndex(Base):
         )
 
 
+class LevyInflationIndexHistory(Base):
+    """History row for one admin change to an inflation index: added,
+    amended or deleted (NRF2-1348).
+
+    Copies the index's values as the change saved them, so a history row
+    outlives both the amendment and the deletion of its index. The row's
+    staff_* is the admin who made this change; comment is the comment they
+    entered with it. Rows before this table existed (the seeds) have no
+    history; the history starts when the table does.
+    """
+
+    __tablename__ = "levy_inflation_index_history"
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('added', 'amended', 'deleted')",
+            name="ck_levy_inflation_index_history_action",
+        ),
+        CheckConstraint(
+            r"comment ~ '\S'",
+            name="ck_levy_inflation_index_history_comment_not_blank",
+        ),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    # Names the index row this change was about. No foreign key: a deleted
+    # index must not take its history with it (the calculation audit's RESTRICT
+    # links still stop an index that priced a quote being deleted at all).
+    inflation_index_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    charging_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The index's values as the change saved them. index_factor is copied so
+    # the history shows the factor that applied at each change, even after the
+    # base row is re-derived by a later change.
+    cil_index: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    index_factor: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    action: Mapped[str] = mapped_column(String(10), nullable=False)
+    comment: Mapped[str] = mapped_column(String(500), nullable=False)
+    staff_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    staff_full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    staff_email: Mapped[str] = mapped_column(String(254), nullable=False)
+    requestor: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    jira_ticket: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # When the change was saved. Ordered descending, this is the change
+    # history the admin frontend displays.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<LevyInflationIndexHistory(year={self.charging_year}, "
+            f"action={self.action})>"
+        )
+
+
 class LevyCalculationRecord(Base):
     """Audit row for one levy calculation.
 

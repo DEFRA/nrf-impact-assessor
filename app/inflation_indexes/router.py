@@ -2,7 +2,8 @@
 
 One row per charging year, in force for that whole year. The admin frontend
 sends the published RICS CIL Index number; the factor applied to a levy is
-derived from the fixed 2026 base row, never accepted from the caller.
+derived from the fixed 2026 base row, never accepted from the caller. Every
+add, change and delete also writes a change-history row (NRF2-1348).
 """
 
 import logging
@@ -27,7 +28,7 @@ from app.common.api_fields import (
     StaffId,
     UpdateModel,
 )
-from app.models.db import LevyInflationIndex
+from app.models.db import LevyInflationIndex, LevyInflationIndexHistory
 from app.repositories import inflation_indexes as store
 from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
@@ -104,6 +105,43 @@ class InflationIndexResponse(_CamelModel):
     staff_email: str
 
 
+class InflationIndexDelete(_CamelModel):
+    """Delete an inflation index. Staff fields identify who is deleting it
+    and comment says why, for the history record the deletion writes."""
+
+    comment: Comment
+    staff_id: StaffId
+    staff_full_name: StaffFullName
+    staff_email: StaffEmail
+
+
+class InflationIndexHistoryResponse(_CamelModel):
+    """One recorded change to an inflation index: added, amended or deleted.
+
+    The index's values as the change saved them, so a row outlives the
+    amendment or deletion of its index."""
+
+    model_config = ConfigDict(
+        frozen=True,
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    id: UUID
+    inflation_index_id: UUID
+    charging_year: int
+    cil_index: float
+    index_factor: float
+    action: str
+    comment: str
+    requestor: str | None
+    jira_ticket: str | None
+    staff_id: str
+    staff_full_name: str
+    staff_email: str
+    created_at: datetime
+
+
 def _to_response(row: LevyInflationIndex) -> InflationIndexResponse:
     return InflationIndexResponse(
         id=row.id,
@@ -118,6 +156,26 @@ def _to_response(row: LevyInflationIndex) -> InflationIndexResponse:
         staff_id=row.staff_id,
         staff_full_name=row.staff_full_name,
         staff_email=row.staff_email,
+    )
+
+
+def _to_history_response(
+    row: LevyInflationIndexHistory,
+) -> InflationIndexHistoryResponse:
+    return InflationIndexHistoryResponse(
+        id=row.id,
+        inflation_index_id=row.inflation_index_id,
+        charging_year=row.charging_year,
+        cil_index=row.cil_index,
+        index_factor=row.index_factor,
+        action=row.action,
+        comment=row.comment,
+        requestor=row.requestor,
+        jira_ticket=row.jira_ticket,
+        staff_id=row.staff_id,
+        staff_full_name=row.staff_full_name,
+        staff_email=row.staff_email,
+        created_at=row.created_at,
     )
 
 
@@ -164,6 +222,20 @@ def list_inflation_indexes() -> list[InflationIndexResponse]:
     """Return the full index history, newest charging year first."""
     with _get_repository().session() as session:
         return [_to_response(row) for row in store.list_inflation_indexes(session)]
+
+
+@router.get(
+    "/inflation-indexes/history",
+    response_model_by_alias=True,
+    summary="List every recorded change, most recent first",
+)
+def list_inflation_index_history() -> list[InflationIndexHistoryResponse]:
+    """Return the change history: one row per add, amendment or deletion."""
+    with _get_repository().session() as session:
+        return [
+            _to_history_response(row)
+            for row in store.list_inflation_index_history(session)
+        ]
 
 
 @router.post(
@@ -251,13 +323,23 @@ def update_inflation_index(
         409: {
             "description": "The charging year has begun, or the index has priced a quote"
         },
+        422: {"description": "Invalid request"},
     },
 )
-def delete_inflation_index(index_id: UUID) -> None:
-    """Delete an index whose charging year has not begun yet."""
+def delete_inflation_index(index_id: UUID, body: InflationIndexDelete) -> None:
+    """Delete an index whose charging year has not begun yet, recording the
+    deletion and who made it in the change history."""
     with _get_repository().session() as session:
         try:
-            store.delete_inflation_index(session, index_id, now=datetime.now(UTC))
+            store.delete_inflation_index(
+                session,
+                index_id,
+                now=datetime.now(UTC),
+                comment=body.comment,
+                staff_id=body.staff_id,
+                staff_full_name=body.staff_full_name,
+                staff_email=body.staff_email,
+            )
         except store.InflationIndexNotFoundError:
             _raise_not_found(f"No inflation index with id {index_id}")
         except store.InflationIndexTakenEffectError:
@@ -272,4 +354,4 @@ def delete_inflation_index(index_id: UUID) -> None:
                 "and cannot be deleted",
             )
         session.commit()
-        logger.info(f"Inflation index deleted: id={index_id}")
+        logger.info(f"Inflation index deleted: id={index_id} staff_id={body.staff_id}")

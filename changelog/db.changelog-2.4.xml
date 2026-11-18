@@ -124,4 +124,70 @@
         </rollback>
     </changeSet>
 
+    <!-- Alembic revision: a3f6c8d2e4b7 -->
+
+    <!-- One row per admin change (added, amended, deleted) to an inflation
+         index, written in the same transaction as the change. The table
+         starts empty: the seeded rows predate admin changes, so there is
+         nothing to backfill. inflation_index_id has no foreign key on
+         purpose: a deleted index must keep its history. -->
+    <changeSet id="17-inflation-index-history" author="nrf">
+        <createTable tableName="levy_inflation_index_history" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="inflation_index_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="charging_year" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="cil_index" type="numeric(10,4)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="index_factor" type="numeric(10,4)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="action" type="varchar(10)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="comment" type="varchar(500)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="staff_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="staff_full_name" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="staff_email" type="varchar(254)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="requestor" type="varchar(255)">
+                <constraints nullable="true"/>
+            </column>
+            <column name="jira_ticket" type="varchar(20)">
+                <constraints nullable="true"/>
+            </column>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <sql>ALTER TABLE public.levy_inflation_index_history
+            ADD CONSTRAINT ck_levy_inflation_index_history_action
+            CHECK (action IN ('added', 'amended', 'deleted'))</sql>
+        <sql>ALTER TABLE public.levy_inflation_index_history
+            ADD CONSTRAINT ck_levy_inflation_index_history_comment_not_blank
+            CHECK (comment ~ '\S')</sql>
+        <createIndex indexName="ix_public_levy_inflation_index_history_inflation_index_id"
+                     tableName="levy_inflation_index_history" schemaName="public">
+            <column name="inflation_index_id"/>
+        </createIndex>
+        <rollback>
+            <dropIndex indexName="ix_public_levy_inflation_index_history_inflation_index_id"
+                       tableName="levy_inflation_index_history" schemaName="public"/>
+            <dropTable tableName="levy_inflation_index_history" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
 </databaseChangeLog>

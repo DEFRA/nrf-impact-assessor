@@ -39,6 +39,7 @@ REFERENCE_TABLES = (
     "edps",
     "audit_levy_calculations",
     "levy_inflation_index",
+    "levy_inflation_index_history",
 )
 
 
