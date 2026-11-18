@@ -30,6 +30,11 @@ class Base(DeclarativeBase):
     """Base class for all database models."""
 
 
+# The shared check expression for every table whose comment must contain a
+# non-whitespace character
+COMMENT_NOT_BLANK = r"comment ~ '\S'"
+
+
 class SpatialLayerMixin:
     """Shared columns for spatial layers with name and JSONB attributes."""
 
@@ -237,7 +242,7 @@ class BasePrice(Base):
             "base_price > 0 AND base_price <> 'NaN'",
             name="ck_base_prices_base_price",
         ),
-        CheckConstraint(r"comment ~ '\S'", name="ck_base_prices_comment_not_blank"),
+        CheckConstraint(COMMENT_NOT_BLANK, name="ck_base_prices_comment_not_blank"),
         CheckConstraint(r"requestor ~ '\S'", name="ck_base_prices_requestor_not_blank"),
         CheckConstraint(
             r"jira_ticket ~ '^NRF2-[0-9]+$'", name="ck_base_prices_jira_ticket_format"
@@ -304,7 +309,7 @@ class LevyInflationIndex(Base):
             name="ck_levy_inflation_index_cil_index",
         ),
         CheckConstraint(
-            r"comment ~ '\S'", name="ck_levy_inflation_index_comment_not_blank"
+            COMMENT_NOT_BLANK, name="ck_levy_inflation_index_comment_not_blank"
         ),
         CheckConstraint(
             r"requestor ~ '\S'", name="ck_levy_inflation_index_requestor_not_blank"
@@ -363,7 +368,7 @@ class LevyInflationIndexHistory(Base):
             name="ck_levy_inflation_index_history_action",
         ),
         CheckConstraint(
-            r"comment ~ '\S'",
+            COMMENT_NOT_BLANK,
             name="ck_levy_inflation_index_history_comment_not_blank",
         ),
         {"schema": "public"},
