@@ -367,7 +367,9 @@ class NutrientAssessment:
             )
         )
 
-        return rlb_gdf.merge(uplift_sum, on="rlb_id", how="left")
+        return rlb_gdf.merge(
+            uplift_sum, on="rlb_id", how="left", validate="many_to_one"
+        )
 
     def _calculate_wastewater_impacts(
         self, rlb_gdf: gpd.GeoDataFrame
