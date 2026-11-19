@@ -1,4 +1,4 @@
-"""add levy_inflation_index_history (NRF2-1348)
+"""add levy_inflation_index_history
 
 One row per admin change (added, amended, deleted) to an inflation index,
 written in the same transaction as the change it records. The table is new

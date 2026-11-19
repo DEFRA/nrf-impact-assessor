@@ -7,9 +7,9 @@ scheduled change an admin can still amend or delete. The index factor is
 derived on write from the fixed 2026 base row, never supplied by the caller.
 
 Every add, amendment and deletion also writes a levy_inflation_index_history
-row in the same transaction, snapshotting the index as the change saved it
-(NRF2-1348 scenario 10). History rows have no foreign key to the index, so a
-deleted index keeps its history.
+row in the same transaction, snapshotting the index as the change saved it —
+the change history the admin frontend displays. History rows have no foreign
+key to the index, so a deleted index keeps its history.
 
 Each write runs in one transaction that locks the row it depends on. There is
 no parent row to serialise adds on (unlike base prices), so concurrent adds

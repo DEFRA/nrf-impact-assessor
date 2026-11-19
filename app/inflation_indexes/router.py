@@ -3,7 +3,7 @@
 One row per charging year, in force for that whole year. The admin frontend
 sends the published RICS CIL Index number; the factor applied to a levy is
 derived from the fixed 2026 base row, never accepted from the caller. Every
-add, change and delete also writes a change-history row (NRF2-1348).
+add, change and delete also writes a change-history row.
 """
 
 import logging

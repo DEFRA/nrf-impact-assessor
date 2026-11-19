@@ -352,7 +352,7 @@ class LevyInflationIndex(Base):
 
 class LevyInflationIndexHistory(Base):
     """History row for one admin change to an inflation index: added,
-    amended or deleted (NRF2-1348).
+    amended or deleted.
 
     Copies the index's values as the change saved them, so a history row
     outlives both the amendment and the deletion of its index. The row's
