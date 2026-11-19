@@ -6,7 +6,6 @@ arrives on the job as `intersectingEdps[].label`.
 """
 
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
 
 import pytest
 
@@ -20,8 +19,8 @@ from app.models.domain import (
     SpatialAssignment,
 )
 from app.models.job import BoundaryGeojson, ImpactAssessmentJob, IntersectingEdp
-from app.orchestrator import JobOrchestrator, JobProcessingError, RecordedLevy
-from tests.conftest import EDP_NAME, make_levy_calculation
+from app.orchestrator import JobOrchestrator, JobProcessingError, PricedLevy
+from tests.conftest import CALCULATED_AT, EDP_NAME, make_levy_calculation
 
 
 def _result() -> ImpactAssessmentResult:
@@ -91,7 +90,7 @@ def _run_callback(
         ),
     ):
         adapter.to_domain_models.return_value = {"assessment_results": [_result()]}
-        recorded = None if levy is None else RecordedLevy(levy, uuid4())
+        recorded = None if levy is None else PricedLevy(levy, CALCULATED_AT)
         orch._send_results_callback(job, {"impact_summary": MagicMock()}, recorded)
 
     return orch.backend_client
@@ -155,7 +154,7 @@ def test_callback_is_still_sent_when_the_catchment_query_fails():
         orch._send_results_callback(
             _job([EDP_NAME]),
             {"impact_summary": MagicMock()},
-            RecordedLevy(make_levy_calculation(), uuid4()),
+            PricedLevy(make_levy_calculation(), CALCULATED_AT),
         )
 
     payload = orch.backend_client.patch_quote.call_args.args[1]

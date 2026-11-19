@@ -1,6 +1,6 @@
 """Database enums."""
 
-from enum import Enum, StrEnum
+from enum import Enum
 
 
 class AssessmentType(Enum):
@@ -8,10 +8,3 @@ class AssessmentType(Enum):
 
     NUTRIENT = "nutrient"
     GCN = "gcn"
-
-
-class EdpType(StrEnum):
-    """EDP types sent to nrf-backend in the PATCH /quotes payload."""
-
-    NUTRIENT = "NUTRIENT"
-    GCN = "GCN"

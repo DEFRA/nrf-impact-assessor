@@ -113,13 +113,10 @@ DB_TABLES = \
 
 # DB_TABLES entries that another table's foreign key points at. Postgres refuses
 # to TRUNCATE these even when the referencing table is empty, so the generated
-# restore clears them with DELETE instead. CASCADE is not an option: it would
-# wipe audit_levy_calculations. The DELETE still fails while audit rows reference
-# an index row, which is the intended fail-closed behaviour. The levy tables are
-# not data-sync tables (NRF2-913 decision 1); upload only the rest to S3. edps and
+# restore clears them with DELETE instead. None today. The levy tables are not
+# data-sync tables (NRF2-913 decision 1); upload only the rest to S3. edps and
 # base_prices are left out: the migration seeds them and admins manage them.
-DB_FK_REFERENCED_TABLES = \
-	public.levy_inflation_index
+DB_FK_REFERENCED_TABLES =
 
 db-tables: ## List public tables with their exact row counts
 	@$(PG_EXEC) psql $(PG_CONN) -U $(DB_USER) -d $(DB_NAME) -tA -c \

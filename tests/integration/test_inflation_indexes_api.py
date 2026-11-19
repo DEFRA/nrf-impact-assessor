@@ -17,10 +17,8 @@ from sqlalchemy.orm import Session
 
 from app.main import app
 from app.models.db import LevyInflationIndex
-from app.repositories.levy import record_levy_calculation
 from app.repositories.repository import Repository
-from tests.conftest import make_levy_calculation
-from tests.integration.conftest import insert_base_price, insert_inflation_index
+from tests.integration.conftest import insert_inflation_index
 
 pytestmark = pytest.mark.integration
 
@@ -330,31 +328,6 @@ def test_delete_is_refused_once_the_charging_year_has_begun(
     assert response.status_code == 409
     assert response.json()["detail"]["error"] == "inflation_index_taken_effect"
     assert _count(repository) == 1
-
-
-def test_delete_of_an_index_that_priced_a_quote_is_refused(
-    client: TestClient, repository: Repository
-):
-    charge_id = insert_base_price(repository)
-    start_id = insert_inflation_index(repository, BASE_YEAR)
-    future_id = insert_inflation_index(repository, _future_year())
-    levy = make_levy_calculation(
-        levy_charge_id=charge_id,
-        edp_start_year_index_id=start_id,
-        edp_start_year_index_factor=Decimal("1.0000"),
-        calculation_year_index_id=future_id,
-        calculation_year_index_factor=Decimal("1.0000"),
-    )
-    with repository.session() as session:
-        record_levy_calculation(session, "NRL-000001", levy)
-        session.commit()
-
-    response = client.delete(f"{URL}/{future_id}")
-
-    assert response.status_code == 409
-    assert response.json()["detail"]["error"] == "inflation_index_in_use"
-    assert "used to price a quote" in response.json()["detail"]["message"]
-    assert _count(repository) == 2
 
 
 def test_delete_of_an_unknown_index_is_not_found(client: TestClient):

@@ -24,11 +24,11 @@ from pydantic import BaseModel, Field
 LEVY_CALCULATOR_VERSION = 1
 
 _PENNY = Decimal("0.01")
-# The largest amount audit_levy_calculations' numeric(12,2) columns hold.
+# The largest amount nrf-backend's quote_edp_results numeric(12,2) levy columns hold.
 MAX_LEVY_AMOUNT = Decimal("9999999999.99")
 # The smallest unrounded amount that rounds half-up past MAX_LEVY_AMOUNT.
 _FIRST_AMOUNT_TOO_LARGE = MAX_LEVY_AMOUNT + _PENNY / 2
-# The most units audit_levy_calculations' integer units column holds. A cheap
+# The most units nrf-backend's quote_edp_results integer units column holds. A cheap
 # enough charge prices more units than this within MAX_LEVY_AMOUNT.
 MAX_LEVY_UNITS = 2**31 - 1
 
@@ -43,7 +43,7 @@ class LevyChargeUnavailableError(RuntimeError):
 
 
 class LevyAmountTooLargeError(LevyChargeUnavailableError):
-    """The levy exceeds MAX_LEVY_AMOUNT, so it cannot be recorded for audit.
+    """The levy exceeds MAX_LEVY_AMOUNT, so it cannot be stored in the backend.
 
     Carries the amount and units so the recalculate endpoint can tell the
     caller why, unlike the other reasons a levy is unavailable.
@@ -54,12 +54,12 @@ class LevyAmountTooLargeError(LevyChargeUnavailableError):
         self.units = units
         super().__init__(
             f"levy amount {amount} for edp_id={edp_id}, units={units} "
-            f"exceeds the {MAX_LEVY_AMOUNT} an audit record holds"
+            f"exceeds the {MAX_LEVY_AMOUNT} a quote_edp_results row holds"
         )
 
 
 class LevyUnitsTooLargeError(LevyChargeUnavailableError):
-    """units exceeds MAX_LEVY_UNITS, so it cannot be recorded for audit.
+    """units exceeds MAX_LEVY_UNITS, so it cannot be stored in the backend.
 
     Carries the units so the recalculate endpoint can tell the caller why.
     """
@@ -68,7 +68,7 @@ class LevyUnitsTooLargeError(LevyChargeUnavailableError):
         self.units = units
         super().__init__(
             f"units={units} for edp_id={edp_id} exceeds the {MAX_LEVY_UNITS} "
-            "an audit record holds"
+            "a quote_edp_results row holds"
         )
 
 
@@ -157,9 +157,9 @@ def calculate_levy(
             in a different charging year than the EDP's publication and
             either index is missing.
         LevyAmountTooLargeError: either amount exceeds MAX_LEVY_AMOUNT, so
-            it could not be recorded for audit. A LevyChargeUnavailableError.
+            it could not be stored in the backend. A LevyChargeUnavailableError.
         LevyUnitsTooLargeError: units exceeds MAX_LEVY_UNITS, so it could not
-            be recorded for audit. A LevyChargeUnavailableError.
+            be stored in the backend. A LevyChargeUnavailableError.
     """
     if units <= 0:
         msg = f"units must be positive, got {units}"
