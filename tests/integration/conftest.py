@@ -38,6 +38,7 @@ REFERENCE_TABLES = (
     "base_prices",
     "edps",
     "levy_inflation_index",
+    "levy_inflation_index_history",
 )
 
 

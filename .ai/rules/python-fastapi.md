@@ -15,6 +15,7 @@ alwaysApply: true
 - Name variables descriptively using auxiliary verbs: `is_active`, `has_permission`, `should_retry`.
 - Use lowercase with underscores for all new Python file and directory names.
 - Apply the RORO pattern (Receive an Object, Return an Object) for non-trivial function boundaries.
+- Never mention a Jira ticket number (e.g. `NRF2-1234`) in a comment or docstring — it is harder to follow than the information itself and goes out of date. The commit and PR already carry the ticket link; put the rationale inline in the comment instead, concisely.
 - Follow `.ruff.toml` for formatting, import ordering, lint rules, and ignored rules.
 
 ## Functions and Async

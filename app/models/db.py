@@ -30,6 +30,11 @@ class Base(DeclarativeBase):
     """Base class for all database models."""
 
 
+# The shared check expression for every table whose comment must contain a
+# non-whitespace character
+COMMENT_NOT_BLANK = r"comment ~ '\S'"
+
+
 class SpatialLayerMixin:
     """Shared columns for spatial layers with name and JSONB attributes."""
 
@@ -237,7 +242,7 @@ class BasePrice(Base):
             "base_price > 0 AND base_price <> 'NaN'",
             name="ck_base_prices_base_price",
         ),
-        CheckConstraint(r"comment ~ '\S'", name="ck_base_prices_comment_not_blank"),
+        CheckConstraint(COMMENT_NOT_BLANK, name="ck_base_prices_comment_not_blank"),
         CheckConstraint(r"requestor ~ '\S'", name="ck_base_prices_requestor_not_blank"),
         CheckConstraint(
             r"jira_ticket ~ '^NRF2-[0-9]+$'", name="ck_base_prices_jira_ticket_format"
@@ -303,7 +308,7 @@ class LevyInflationIndex(Base):
             name="ck_levy_inflation_index_cil_index",
         ),
         CheckConstraint(
-            r"comment ~ '\S'", name="ck_levy_inflation_index_comment_not_blank"
+            COMMENT_NOT_BLANK, name="ck_levy_inflation_index_comment_not_blank"
         ),
         CheckConstraint(
             r"requestor ~ '\S'", name="ck_levy_inflation_index_requestor_not_blank"
@@ -342,6 +347,52 @@ class LevyInflationIndex(Base):
             f"<LevyInflationIndex(year={self.charging_year}, "
             f"factor={self.index_factor})>"
         )
+
+
+class LevyInflationIndexHistory(Base):
+    """History row for one inflation index addition.
+
+    Copies the index's values as it was added, so a history row outlives the
+    amendment and the deletion of its index. The row's staff_* is the admin
+    who added it; comment is the comment they entered. Rows before this table
+    existed (the seeds) have no history; the history starts when the table
+    does.
+    """
+
+    __tablename__ = "levy_inflation_index_history"
+    __table_args__ = (
+        CheckConstraint(
+            COMMENT_NOT_BLANK,
+            name="ck_levy_inflation_index_history_comment_not_blank",
+        ),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    # Names the index row this addition was about. No foreign key: a deleted
+    # index must not take its history with it (the calculation audit's RESTRICT
+    # links still stop an index that priced a quote being deleted at all).
+    inflation_index_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    charging_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The index's values as it was added. index_factor is copied so the
+    # history shows the factor the addition produced, even after a later
+    # amendment re-derives the live row's.
+    cil_index: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    index_factor: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    comment: Mapped[str] = mapped_column(String(500), nullable=False)
+    staff_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    staff_full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    staff_email: Mapped[str] = mapped_column(String(254), nullable=False)
+    requestor: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    jira_ticket: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # When the index was added. Ordered descending, this is the additions
+    # history the admin frontend displays.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<LevyInflationIndexHistory(year={self.charging_year})>"
 
 
 class DataSyncRun(Base):

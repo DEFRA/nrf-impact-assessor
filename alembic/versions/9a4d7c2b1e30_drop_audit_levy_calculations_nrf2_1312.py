@@ -10,7 +10,7 @@ levy_charge_id an integer with no foreign key, the two index columns
 RESTRICT-bound to levy_inflation_index.
 
 Revision ID: 9a4d7c2b1e30
-Revises: e05a352f9ebe
+Revises: a3f6c8d2e4b7
 Create Date: 2026-11-17 12:00:00.000000
 """
 
@@ -22,7 +22,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "9a4d7c2b1e30"
-down_revision: str | Sequence[str] | None = "e05a352f9ebe"
+down_revision: str | Sequence[str] | None = "a3f6c8d2e4b7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -6,6 +6,12 @@ charging year and is in force for that whole year; until then it is a
 scheduled change an admin can still amend or delete. The index factor is
 derived on write from the fixed 2026 base row, never supplied by the caller.
 
+Every add also writes a levy_inflation_index_history row in the same
+transaction, snapshotting the index as it was added — the additions history
+the admin frontend displays. Amendments and deletions are not recorded
+(confirmed with the product owner). History rows have no foreign key to the
+index, so a deleted index keeps its addition record.
+
 Each write runs in one transaction that locks the row it depends on. There is
 no parent row to serialise adds on (unlike base prices), so concurrent adds
 of the same year are settled by uq_levy_inflation_index_year: the losing
@@ -22,7 +28,7 @@ from sqlalchemy import exists, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.db import LevyInflationIndex
+from app.models.db import LevyInflationIndex, LevyInflationIndexHistory
 
 # The charging-schedule base the index factor is measured from: its row's
 # factor is 1.0000 by definition, and every later factor is
@@ -65,6 +71,40 @@ def list_inflation_indexes(session: Session) -> list[LevyInflationIndex]:
         )
         .scalars()
         .all()
+    )
+
+
+def list_inflation_index_history(
+    session: Session,
+) -> list[LevyInflationIndexHistory]:
+    """Every additions history row, most recent addition first."""
+    return (
+        session.execute(
+            select(LevyInflationIndexHistory).order_by(
+                LevyInflationIndexHistory.created_at.desc()
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+def _record_added_history(session: Session, row: LevyInflationIndex) -> None:
+    """Snapshot the index into the history table as it was added, including
+    the admin who added it and the comment they entered."""
+    session.add(
+        LevyInflationIndexHistory(
+            inflation_index_id=row.id,
+            charging_year=row.charging_year,
+            cil_index=row.cil_index,
+            index_factor=row.index_factor,
+            comment=row.comment,
+            requestor=row.requestor,
+            jira_ticket=row.jira_ticket,
+            staff_id=row.staff_id,
+            staff_full_name=row.staff_full_name,
+            staff_email=row.staff_email,
+        )
     )
 
 
@@ -112,6 +152,7 @@ def add_inflation_index(
     except IntegrityError as e:
         session.rollback()
         raise YearAlreadyExistsError(charging_year) from e
+    _record_added_history(session, row)
     return row
 
 
