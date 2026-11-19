@@ -49,17 +49,8 @@ def _body(**overrides) -> dict:
     } | overrides
 
 
-def _delete_body(**overrides) -> dict:
-    return {
-        "comment": "NE advice withdrawn",
-        "staffId": "deleter-oid",
-        "staffFullName": "Dee Admin",
-        "staffEmail": "dee@example.com",
-    } | overrides
-
-
 def _history(repository: Repository) -> list[LevyInflationIndexHistory]:
-    """Every history row, oldest first, as the changes were made."""
+    """Every history row, oldest first, as the additions were made."""
     with repository.session() as session:
         return list(
             session.scalars(
@@ -335,7 +326,7 @@ def test_deletes_a_future_index(client: TestClient, repository: Repository):
     insert_inflation_index(repository, BASE_YEAR)
     future_id = insert_inflation_index(repository, _future_year())
 
-    response = client.request("DELETE", f"{URL}/{future_id}", json=_delete_body())
+    response = client.delete(f"{URL}/{future_id}")
 
     assert response.status_code == 204
     assert _count(repository) == 1
@@ -346,12 +337,11 @@ def test_delete_is_refused_once_the_charging_year_has_begun(
 ):
     current_id = insert_inflation_index(repository, _current_year())
 
-    response = client.request("DELETE", f"{URL}/{current_id}", json=_delete_body())
+    response = client.delete(f"{URL}/{current_id}")
 
     assert response.status_code == 409
     assert response.json()["detail"]["error"] == "inflation_index_taken_effect"
     assert _count(repository) == 1
-    assert _history(repository) == []
 
 
 def test_delete_of_an_index_that_priced_a_quote_is_refused(
@@ -371,26 +361,21 @@ def test_delete_of_an_index_that_priced_a_quote_is_refused(
         record_levy_calculation(session, "NRL-000001", levy)
         session.commit()
 
-    response = client.request("DELETE", f"{URL}/{future_id}", json=_delete_body())
+    response = client.delete(f"{URL}/{future_id}")
 
     assert response.status_code == 409
     assert response.json()["detail"]["error"] == "inflation_index_in_use"
     assert "used to price a quote" in response.json()["detail"]["message"]
     assert _count(repository) == 2
-    assert _history(repository) == []
 
 
 def test_delete_of_an_unknown_index_is_not_found(client: TestClient):
-    response = client.request(
-        "DELETE",
-        f"{URL}/00000000-0000-0000-0000-000000000000",
-        json=_delete_body(),
-    )
+    response = client.delete(f"{URL}/00000000-0000-0000-0000-000000000000")
 
     assert response.status_code == 404
 
 
-def test_add_records_the_change_in_the_history(
+def test_add_records_the_addition_in_the_history(
     client: TestClient, repository: Repository
 ):
     insert_inflation_index(repository, BASE_YEAR)
@@ -403,7 +388,6 @@ def test_add_records_the_change_in_the_history(
     assert row.charging_year == _future_year()
     assert row.cil_index == Decimal("384.21")
     assert row.index_factor == Decimal("0.9605")
-    assert row.action == "added"
     assert row.comment == "NE advice"
     assert row.requestor == "Grace Hopper"
     assert row.jira_ticket == "NRF2-1234"
@@ -425,9 +409,7 @@ def test_a_refused_add_writes_no_history(client: TestClient, repository: Reposit
     assert _history(repository) == []
 
 
-def test_change_records_the_amended_state_in_the_history(
-    client: TestClient, repository: Repository
-):
+def test_change_writes_no_history(client: TestClient, repository: Repository):
     insert_inflation_index(repository, BASE_YEAR)
     future_id = insert_inflation_index(repository, _future_year())
 
@@ -445,67 +427,50 @@ def test_change_records_the_amended_state_in_the_history(
     )
 
     assert response.status_code == 200
-    [row] = _history(repository)
-    assert row.inflation_index_id == future_id
-    assert row.action == "amended"
-    assert row.cil_index == Decimal("420.0000")
-    assert row.index_factor == Decimal("1.0500")
-    assert row.comment == "Revised"
-    assert (row.staff_id, row.staff_full_name, row.staff_email) == (
-        "other-oid",
-        "Bob Admin",
-        "bob@example.com",
-    )
+    assert _history(repository) == []
 
 
-def test_delete_keeps_a_history_row_for_the_deleted_index(
-    client: TestClient, repository: Repository
-):
-    insert_inflation_index(repository, BASE_YEAR)
-    future_id = insert_inflation_index(repository, _future_year())
-
-    response = client.request("DELETE", f"{URL}/{future_id}", json=_delete_body())
-
-    assert response.status_code == 204
-    assert _count(repository) == 1  # only the base row; the index is gone
-    [row] = _history(repository)
-    assert row.inflation_index_id == future_id
-    assert row.charging_year == _future_year()
-    assert row.action == "deleted"
-    assert row.comment == "NE advice withdrawn"
-    # The deleter's details, not the index's last editor
-    assert (row.staff_id, row.staff_full_name, row.staff_email) == (
-        "deleter-oid",
-        "Dee Admin",
-        "dee@example.com",
-    )
-
-
-def test_lists_the_change_history_most_recent_first(
+def test_delete_writes_no_history_and_keeps_the_addition_record(
     client: TestClient, repository: Repository
 ):
     insert_inflation_index(repository, BASE_YEAR)
     added = client.post(URL, json=_body())
     future_id = UUID(added.json()["id"])
-    client.patch(f"{URL}/{future_id}", json={"comment": "Revised"})
-    client.request("DELETE", f"{URL}/{future_id}", json=_delete_body())
+
+    response = client.delete(f"{URL}/{future_id}")
+
+    assert response.status_code == 204
+    # The index is gone; its addition record survives it
+    assert _count(repository) == 1
+    [row] = _history(repository)
+    assert row.inflation_index_id == future_id
+    assert row.charging_year == _future_year()
+    assert row.comment == "NE advice"
+
+
+def test_lists_the_additions_history_most_recent_first(
+    client: TestClient, repository: Repository
+):
+    insert_inflation_index(repository, BASE_YEAR)
+    first_id = UUID(client.post(URL, json=_body()).json()["id"])
+    second_id = UUID(
+        client.post(URL, json=_body(chargingYear=_future_year() + 1)).json()["id"]
+    )
 
     response = client.get(f"{URL}/history")
 
     assert response.status_code == 200
-    [deleted, amended, added] = response.json()
-    assert [row["action"] for row in (deleted, amended, added)] == [
-        "deleted",
-        "amended",
-        "added",
+    [second, first] = response.json()
+    assert [row["inflationIndexId"] for row in (second, first)] == [
+        str(second_id),
+        str(first_id),
     ]
-    assert set(deleted) == {
+    assert set(second) == {
         "id",
         "inflationIndexId",
         "chargingYear",
         "cilIndex",
         "indexFactor",
-        "action",
         "comment",
         "requestor",
         "jiraTicket",
@@ -514,13 +479,10 @@ def test_lists_the_change_history_most_recent_first(
         "staffEmail",
         "createdAt",
     }
-    assert deleted["inflationIndexId"] == str(future_id)
-    assert added["inflationIndexId"] == str(future_id)
-    assert amended["comment"] == "Revised"
-    assert deleted["comment"] == "NE advice withdrawn"
+    assert second["comment"] == "NE advice"
 
 
-def test_the_change_history_starts_empty(client: TestClient):
+def test_the_additions_history_starts_empty(client: TestClient):
     response = client.get(f"{URL}/history")
 
     assert response.status_code == 200

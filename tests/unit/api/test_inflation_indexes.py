@@ -25,12 +25,6 @@ VALID_BODY = {
     "staffFullName": "Ada Admin",
     "staffEmail": "ada@example.com",
 }
-VALID_DELETE_BODY = {
-    "comment": "NE advice withdrawn",
-    "staffId": "entra-oid",
-    "staffFullName": "Ada Admin",
-    "staffEmail": "ada@example.com",
-}
 
 
 @pytest.fixture
@@ -93,35 +87,6 @@ def test_change_rejects_an_invalid_body(client, body):
     response = client.patch(f"{URL}/{ANY_ID}", json=body)
 
     assert response.status_code == 422
-
-
-@pytest.mark.parametrize(
-    "overrides",
-    [
-        {"comment": "   "},
-        {"comment": "x" * 501},
-        {"staffEmail": ""},
-        {"staffId": "x" * 37},
-        {"extra": 1},
-    ],
-)
-def test_delete_rejects_an_invalid_body(client, overrides):
-    response = client.request(
-        "DELETE", f"{URL}/{ANY_ID}", json=VALID_DELETE_BODY | overrides
-    )
-
-    assert response.status_code == 422
-
-
-@pytest.mark.parametrize("missing", list(VALID_DELETE_BODY))
-def test_delete_requires_every_field(client, missing):
-    body = {k: v for k, v in VALID_DELETE_BODY.items() if k != missing}
-
-    assert client.request("DELETE", f"{URL}/{ANY_ID}", json=body).status_code == 422
-
-
-def test_delete_without_a_body_is_rejected(client):
-    assert client.delete(f"{URL}/{ANY_ID}").status_code == 422
 
 
 @pytest.mark.parametrize("api_key", [None, "wrong-key"])

@@ -1,8 +1,8 @@
 """add levy_inflation_index_history
 
-One row per admin change (added, amended, deleted) to an inflation index,
-written in the same transaction as the change it records. The table is new
-and starts empty: the seeded rows predate admin changes, so there is no
+One row per inflation index addition, written in the same transaction as
+the add. Amendments and deletions are not recorded. The table is new and
+starts empty: the seeded rows predate admin additions, so there is no
 backfill — the history begins when the table does.
 
 inflation_index_id has no foreign key on purpose: a deleted index must keep
@@ -36,7 +36,6 @@ def upgrade() -> None:
         sa.Column("charging_year", sa.Integer(), nullable=False),
         sa.Column("cil_index", sa.Numeric(10, 4), nullable=False),
         sa.Column("index_factor", sa.Numeric(10, 4), nullable=False),
-        sa.Column("action", sa.String(10), nullable=False),
         sa.Column("comment", sa.String(500), nullable=False),
         sa.Column("staff_id", sa.String(36), nullable=False),
         sa.Column("staff_full_name", sa.String(255), nullable=False),
@@ -50,10 +49,6 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.CheckConstraint(
-            "action IN ('added', 'amended', 'deleted')",
-            name="ck_levy_inflation_index_history_action",
-        ),
         sa.CheckConstraint(
             r"comment ~ '\S'",
             name="ck_levy_inflation_index_history_comment_not_blank",

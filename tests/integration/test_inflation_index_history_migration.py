@@ -1,8 +1,7 @@
 """Migration a3f6c8d2e4b7 adds levy_inflation_index_history: one row per
-admin change to an inflation index. The table starts empty (the seeded rows
-predate admin changes, so there is nothing to backfill), keeps no foreign
-key to the index, and its check constraints reject an unknown action or a
-blank comment."""
+inflation index addition. The table starts empty (the seeded rows predate
+admin additions, so there is nothing to backfill), keeps no foreign key to
+the index, and its comment check constraint rejects a blank comment."""
 
 from collections.abc import Iterator
 
@@ -18,6 +17,15 @@ pytestmark = pytest.mark.integration
 MIGRATION_DB = "test_nrf_impact_inflation_index_history"
 REVISION = "a3f6c8d2e4b7"
 PREVIOUS_REVISION = "e05a352f9ebe"
+
+INSERT_ROW = (
+    "INSERT INTO public.levy_inflation_index_history "
+    "(id, inflation_index_id, charging_year, cil_index, "
+    "index_factor, comment, staff_id, staff_full_name, "
+    "staff_email) VALUES (gen_random_uuid(), "
+    "gen_random_uuid(), 2028, 384.21, 0.9605, "
+    ":comment, 'entra-oid', 'Ada Admin', 'ada@example.com')"
+)
 
 
 @pytest.fixture
@@ -42,7 +50,6 @@ def test_adds_the_history_table_with_its_checks(engine: Engine):
         "charging_year",
         "cil_index",
         "index_factor",
-        "action",
         "comment",
         "staff_id",
         "staff_full_name",
@@ -63,10 +70,7 @@ def test_adds_the_history_table_with_its_checks(engine: Engine):
             "levy_inflation_index_history", schema="public"
         )
     }
-    assert {
-        "ck_levy_inflation_index_history_action",
-        "ck_levy_inflation_index_history_comment_not_blank",
-    } <= checks
+    assert "ck_levy_inflation_index_history_comment_not_blank" in checks
     indexes = {
         i["name"]
         for i in inspector.get_indexes("levy_inflation_index_history", schema="public")
@@ -74,39 +78,19 @@ def test_adds_the_history_table_with_its_checks(engine: Engine):
     assert "ix_public_levy_inflation_index_history_inflation_index_id" in indexes
 
 
-def test_accepts_a_row_for_each_action_and_rejects_an_unknown_one(
-    engine: Engine,
-):
+def test_accepts_an_addition_row_and_rejects_a_blank_comment(engine: Engine):
     run_alembic(MIGRATION_DB, "upgrade", REVISION)
 
     with engine.begin() as conn:
-        for action in ("added", "amended", "deleted"):
-            conn.execute(
-                text(
-                    "INSERT INTO public.levy_inflation_index_history "
-                    "(id, inflation_index_id, charging_year, cil_index, "
-                    "index_factor, action, comment, staff_id, staff_full_name, "
-                    "staff_email) VALUES (gen_random_uuid(), "
-                    "gen_random_uuid(), 2028, 384.21, 0.9605, :action, "
-                    "'NE advice', 'entra-oid', 'Ada Admin', 'ada@example.com')"
-                ),
-                {"action": action},
-            )
+        conn.execute(text(INSERT_ROW), {"comment": "NE advice"})
 
     with (
-        pytest.raises(IntegrityError, match="ck_levy_inflation_index_history_action"),
+        pytest.raises(
+            IntegrityError, match="ck_levy_inflation_index_history_comment_not_blank"
+        ),
         engine.begin() as conn,
     ):
-        conn.execute(
-            text(
-                "INSERT INTO public.levy_inflation_index_history "
-                "(id, inflation_index_id, charging_year, cil_index, "
-                "index_factor, action, comment, staff_id, staff_full_name, "
-                "staff_email) VALUES (gen_random_uuid(), "
-                "gen_random_uuid(), 2028, 384.21, 0.9605, 'forged', "
-                "'NE advice', 'entra-oid', 'Ada Admin', 'ada@example.com')"
-            )
-        )
+        conn.execute(text(INSERT_ROW), {"comment": "   "})
 
 
 def test_downgrade_drops_the_table(engine: Engine):

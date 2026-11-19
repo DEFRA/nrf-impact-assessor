@@ -6,10 +6,11 @@ charging year and is in force for that whole year; until then it is a
 scheduled change an admin can still amend or delete. The index factor is
 derived on write from the fixed 2026 base row, never supplied by the caller.
 
-Every add, amendment and deletion also writes a levy_inflation_index_history
-row in the same transaction, snapshotting the index as the change saved it —
-the change history the admin frontend displays. History rows have no foreign
-key to the index, so a deleted index keeps its history.
+Every add also writes a levy_inflation_index_history row in the same
+transaction, snapshotting the index as it was added — the additions history
+the admin frontend displays. Amendments and deletions are not recorded
+(confirmed with the product owner). History rows have no foreign key to the
+index, so a deleted index keeps its addition record.
 
 Each write runs in one transaction that locks the row it depends on. There is
 no parent row to serialise adds on (unlike base prices), so concurrent adds
@@ -80,7 +81,7 @@ def list_inflation_indexes(session: Session) -> list[LevyInflationIndex]:
 def list_inflation_index_history(
     session: Session,
 ) -> list[LevyInflationIndexHistory]:
-    """Every change history row, most recent change first."""
+    """Every additions history row, most recent addition first."""
     return (
         session.execute(
             select(LevyInflationIndexHistory).order_by(
@@ -92,35 +93,21 @@ def list_inflation_index_history(
     )
 
 
-def _record_history(
-    session: Session,
-    row: LevyInflationIndex,
-    action: str,
-    *,
-    comment: str | None = None,
-    staff_id: str | None = None,
-    staff_full_name: str | None = None,
-    staff_email: str | None = None,
-) -> None:
-    """Snapshot the index into the history table as the change saved it.
-
-    The row's own staff_* is the last editor, which is who made an added or
-    amended change. A delete passes the deleter's details instead, because
-    the row is about to go and never knew them.
-    """
+def _record_added_history(session: Session, row: LevyInflationIndex) -> None:
+    """Snapshot the index into the history table as it was added, including
+    the admin who added it and the comment they entered."""
     session.add(
         LevyInflationIndexHistory(
             inflation_index_id=row.id,
             charging_year=row.charging_year,
             cil_index=row.cil_index,
             index_factor=row.index_factor,
-            action=action,
-            comment=comment if comment is not None else row.comment,
+            comment=row.comment,
             requestor=row.requestor,
             jira_ticket=row.jira_ticket,
-            staff_id=staff_id or row.staff_id,
-            staff_full_name=staff_full_name or row.staff_full_name,
-            staff_email=staff_email or row.staff_email,
+            staff_id=row.staff_id,
+            staff_full_name=row.staff_full_name,
+            staff_email=row.staff_email,
         )
     )
 
@@ -169,20 +156,17 @@ def add_inflation_index(
     except IntegrityError as e:
         session.rollback()
         raise YearAlreadyExistsError(charging_year) from e
-    _record_history(session, row, "added")
+    _record_added_history(session, row)
     return row
 
 
 def update_inflation_index(
     session: Session, index_id: UUID, changes: dict[str, Any], now: datetime
 ) -> LevyInflationIndex:
-    """Apply changes to an index whose charging year has not begun yet,
-    recording the amended state in the history table.
+    """Apply changes to an index whose charging year has not begun yet.
 
     charging_year cannot change: it is the row's identity, so a different
-    year is a different row (delete this one and add that one). The history
-    row's staff_* is the row's last editor, so a change that omits the staff
-    fields attributes its history to the previous editor.
+    year is a different row (delete this one and add that one).
     """
     row = _lock_future_index(session, index_id, now)
     for field, value in changes.items():
@@ -190,37 +174,17 @@ def update_inflation_index(
     if "cil_index" in changes:
         row.index_factor = _derive_index_factor(session, row.cil_index)
     session.flush()
-    _record_history(session, row, "amended")
     return row
 
 
-def delete_inflation_index(
-    session: Session,
-    index_id: UUID,
-    now: datetime,
-    *,
-    comment: str,
-    staff_id: str,
-    staff_full_name: str,
-    staff_email: str,
-) -> None:
-    """Delete an index whose charging year has not begun yet, recording the
-    deletion in the history table with the deleter's details and comment.
+def delete_inflation_index(session: Session, index_id: UUID, now: datetime) -> None:
+    """Delete an index whose charging year has not begun yet.
 
     A row that has priced a quote is blocked by the audit table's RESTRICT
     foreign keys; the failed delete is rolled back and reported as
     InflationIndexInUseError.
     """
     row = _lock_future_index(session, index_id, now)
-    _record_history(
-        session,
-        row,
-        "deleted",
-        comment=comment,
-        staff_id=staff_id,
-        staff_full_name=staff_full_name,
-        staff_email=staff_email,
-    )
     session.delete(row)
     try:
         session.flush()
