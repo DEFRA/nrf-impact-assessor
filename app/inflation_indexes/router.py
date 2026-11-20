@@ -267,9 +267,7 @@ def add_inflation_index(body: InflationIndexCreate) -> InflationIndexResponse:
     response_model_by_alias=True,
     responses={
         404: {"description": "Inflation index not found"},
-        409: {
-            "description": "The charging year has begun, or the index has priced a quote"
-        },
+        409: {"description": "The charging year has begun"},
         422: {"description": "Invalid request"},
         500: {"description": "The base charging year's index row is missing"},
     },
@@ -308,9 +306,7 @@ def update_inflation_index(
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
         404: {"description": "Inflation index not found"},
-        409: {
-            "description": "The charging year has begun, or the index has priced a quote"
-        },
+        409: {"description": "The charging year has begun"},
     },
 )
 def delete_inflation_index(index_id: UUID) -> None:
@@ -324,12 +320,6 @@ def delete_inflation_index(index_id: UUID) -> None:
             _raise_conflict(
                 "inflation_index_taken_effect",
                 f"Inflation index {index_id} has taken effect and cannot be deleted",
-            )
-        except store.InflationIndexInUseError:
-            _raise_conflict(
-                "inflation_index_in_use",
-                f"Inflation index {index_id} has been used to price a quote "
-                "and cannot be deleted",
             )
         session.commit()
         logger.info(f"Inflation index deleted: id={index_id}")

@@ -23,13 +23,12 @@ should use.
 
 ## Data management
 
-The foreign keys in this database are `data_load_history.run_id`, `base_prices.edp_id` and the two index keys on `audit_levy_calculations`. `levy_inflation_index_history.inflation_index_id` intentionally has none — a deleted index must keep its history.
+The foreign keys in this database are `data_load_history.run_id` and `base_prices.edp_id`. `levy_inflation_index_history.inflation_index_id` intentionally has none — a deleted index must keep its history.
 
 ```mermaid
 erDiagram
     data_sync_run ||--o{ data_load_history : "audits"
     edps ||--o{ base_prices : "priced by"
-    levy_inflation_index |o--o{ audit_levy_calculations : "inflated"
 
     data_sync_run {
         uuid id PK "app-generated uuid4, no DB default"
@@ -100,27 +99,6 @@ erDiagram
         varchar staff_email "max 254"
     }
 
-    audit_levy_calculations {
-        uuid id PK "app-generated uuid4, no DB default"
-        varchar quote_reference "indexed; NRL-000000"
-        integer edp_id
-        varchar edp_name
-        date edp_start_date
-        integer calculator_version
-        numeric base_charge_per_unit "numeric(12,4)"
-        integer units "dwellings used"
-        date calculation_date
-        numeric provisional_amount "numeric(12,2)"
-        numeric inflation_adjusted_amount "numeric(12,2)"
-        integer levy_charge_id "indexed; base_prices row used, no FK"
-        uuid edp_start_year_index_id FK "nullable; levy_inflation_index row, RESTRICT"
-        numeric edp_start_year_index_factor "nullable; numeric(10,4)"
-        uuid calculation_year_index_id FK "nullable; levy_inflation_index row, RESTRICT"
-        numeric calculation_year_index_factor "nullable; numeric(10,4)"
-        timestamptz created_at "default now()"
-        timestamptz sent_at "nullable; set when nrf-backend accepts the quote PATCH"
-    }
-
     levy_inflation_index {
         uuid id PK "app-generated uuid4, no DB default"
         integer charging_year UK "indexed; one row per year"
@@ -175,8 +153,7 @@ reads the EDP's row with the latest `effective_from` at or before the moment
 being priced. The first row is the provisional price the EDP launched with,
 seeded by migration `b7d3f9a1c5e2` (EDP 1 at 2675.00 from 00:00 UTC on the EDP
 start date) with the user recorded as `system`. `levy_charges` was dropped, not
-converted, and the migration deletes existing `audit_levy_calculations` rows
-because their `levy_charge_id` values named rows that no longer exist. All
+converted. All
 timestamps are stored and passed as UTC; the charging year is the UTC year.
 
 `levy_inflation_index` holds the published RICS CIL Index per charging year and
@@ -198,25 +175,18 @@ Amendments and deletions are not recorded, and the table started empty (the
 seeded rows predate it). `inflation_index_id` has no foreign key on purpose, so
 deleting an index does not take its history with it.
 
-`audit_levy_calculations` holds one audit row per calculation; it is
-written by the orchestrator and never truncated by data sync. Each row copies the
-values it used and names the `base_prices` row and, when an inflation step
-applied, the two `levy_inflation_index` rows they came from (otherwise the index
-columns are NULL). The rounded per-unit charges are not stored:
-`calculator_version` pins the rounding rule that derives them from
-`base_charge_per_unit` and the index factors, and they appear in the audit log
-line. Comparing the copy with the current row shows whether a value
-was corrected after the event or the wrong row was picked up. The index foreign keys are
-`RESTRICT`: an index row that has priced a quote cannot be deleted, so correct
-it with a visible update or a new row. `levy_charge_id` has no foreign key,
-because an admin can delete a base price that has not taken effect.
+Levy calculations are not recorded in this database. Each calculation is sent
+to nrf-backend, which keeps the history in `quote_edp_results`: the values it
+used, the `base_prices` row (`levy_charge_id`) and, when an inflation step
+applied, the two `levy_inflation_index` rows it came from. The rounded per-unit
+charges are not stored: `calculator_version` pins the rounding rule that
+derives them from the base charge per unit and the index factors.
 
 `audit_model_results` is the assessment-run audit: one row per
 `process_job` attempt, so a redelivered job records one row per try. On success
 `model_output` holds the model's output as JSONB; on failure `error_details`
-holds why. `model_version` pins the model's git version the run used. Like
-`audit_levy_calculations`, it is written by the orchestrator and never truncated
-by data sync.
+holds why. `model_version` pins the model's git version the run used. It is
+written by the orchestrator and never truncated by data sync.
 
 ## Spatial reference layers
 
@@ -287,10 +257,7 @@ spatially at query time.
 | `ck_levy_inflation_index_comment_not_blank` | `CHECK (comment ~ '\S')` — a comment needs at least one non-whitespace character. |
 | `ck_levy_inflation_index_history_comment_not_blank` | `CHECK (comment ~ '\S')` — same rule on the history copy. |
 | `ix_levy_inflation_index_history_inflation_index_id` | `(inflation_index_id)` — finds when an index was added and by whom. |
-| `ix_public_audit_levy_calculations_quote_reference` | `(quote_reference)` — fetches the audit trail for a quote. |
-| `ix_public_audit_levy_calculations_levy_charge_id` | `(levy_charge_id)` — finds every quote a base price row priced, e.g. after a correction. |
 | `ix_public_audit_model_results_nrl_reference` | `(nrl_reference)` — fetches the assessment-run audit trail for a quote. |
-| `fk_audit_levy_calculations_*` | `ON DELETE RESTRICT` to `levy_inflation_index` — an index row that priced a quote cannot be deleted. |
 | `ix_public_<layer>_geometry` | GiST on every spatial layer. |
 
 ## UUID primary keys have no database default

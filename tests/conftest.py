@@ -4,7 +4,7 @@ This file contains fixtures that are shared across multiple test modules.
 Test-specific fixtures should be defined in their respective test files.
 """
 
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
@@ -32,6 +32,9 @@ EDP_NAME = (
     "Broadland Ramsar and River Wensum SAC Environmental Delivery Plan "
     "addressing nutrient pollution (2027 to 2037)"
 )
+
+
+CALCULATED_AT = datetime(2026, 9, 14, 10, 30, 15, tzinfo=UTC)
 
 
 # Fixed so a test can assert the audit row names the charge it was given.

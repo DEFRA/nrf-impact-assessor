@@ -58,10 +58,6 @@ class BaseIndexMissingError(Exception):
     """The base charging year's row is missing, so no factor can be derived."""
 
 
-class InflationIndexInUseError(Exception):
-    """The index row has priced a quote, so it cannot be deleted."""
-
-
 def effective_from(charging_year: int) -> datetime:
     """The moment an index for `charging_year` takes effect: 1 Jan 00:00 UTC."""
     return datetime(charging_year, 1, 1, tzinfo=UTC)
@@ -178,19 +174,10 @@ def update_inflation_index(
 
 
 def delete_inflation_index(session: Session, index_id: UUID, now: datetime) -> None:
-    """Delete an index whose charging year has not begun yet.
-
-    A row that has priced a quote is blocked by the audit table's RESTRICT
-    foreign keys; the failed delete is rolled back and reported as
-    InflationIndexInUseError.
-    """
+    """Delete an index whose charging year has not begun yet."""
     row = _lock_future_index(session, index_id, now)
     session.delete(row)
-    try:
-        session.flush()
-    except IntegrityError as e:
-        session.rollback()
-        raise InflationIndexInUseError(index_id) from e
+    session.flush()
 
 
 def _lock_future_index(
