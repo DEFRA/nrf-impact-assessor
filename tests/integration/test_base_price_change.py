@@ -56,14 +56,13 @@ def test_a_new_quote_is_priced_at_the_base_price_in_force_now(
         price="2675",
         edp_start_date=edp_start,
     )
-    in_force_id = insert_base_price(
-        repository, effective_from=now - timedelta(days=1), price="3000"
-    )
+    insert_base_price(repository, effective_from=now - timedelta(days=1), price="3000")
     insert_base_price(repository, effective_from=now + timedelta(days=30), price="3500")
 
     priced = JobOrchestrator(MagicMock(), repository)._calculate_levy(_job())
 
-    assert priced.levy.levy_charge_id == in_force_id
+    assert priced.levy.original_base_charge_per_unit == Decimal("2675")
+    assert priced.levy.original_base_amount == Decimal("10700.00")
     assert priced.levy.base_charge_per_unit == Decimal("3000")
     assert priced.levy.provisional_amount == Decimal("12000.00")
     assert priced.levy.inflation_adjusted_amount == Decimal("12000.00")

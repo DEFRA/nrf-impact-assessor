@@ -473,15 +473,14 @@ def _build_stub_patch_payload(stub_edps: int = 1) -> dict:
     )
     calculated_at = datetime.now(UTC)
     stub_levy = LevyCalculation(
-        levy_charge_id=1,
         edp_id=1,
-        edp_name=_STUB_EDP_LABEL,
         edp_start_date=date(2026, 1, 1),
-        calculation_date=calculated_at.date(),
         calculator_version=LEVY_CALCULATOR_VERSION,
         units=1,
         base_charge_per_unit=Decimal("2675.0000"),
+        original_base_charge_per_unit=Decimal("2675.0000"),
         provisional_amount=Decimal("2675.00"),
+        original_base_amount=Decimal("2675.00"),
         inflation_adjusted_amount=Decimal("2675.00"),
     )
     payload = build_quote_patch_payload(

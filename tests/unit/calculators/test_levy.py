@@ -21,16 +21,14 @@ from app.calculators.levy import (
 
 CALC_DATE = date(2026, 9, 14)
 EARLIER_CALC_DATE = date(2022, 6, 1)  # an earlier charging year than the EDP start
-CHARGE_ID = 41
 
 
-def _charge(price: str) -> SimpleNamespace:
+def _charge(price: str, original_price: str | None = None) -> SimpleNamespace:
     return SimpleNamespace(
-        id=CHARGE_ID,
         edp_id=1,
-        edp_name="Norfolk EDP",
         edp_start_date=date(2026, 1, 1),
         base_charge_per_unit=Decimal(price),
+        original_base_charge_per_unit=Decimal(original_price or price),
     )
 
 
@@ -107,6 +105,15 @@ def test_rejects_a_provisional_levy_too_large_for_the_audit_record():
     assert exc.value.units == 101
     # Still a LevyChargeUnavailableError, so the quote job stops as before.
     assert isinstance(exc.value, LevyChargeUnavailableError)
+
+
+def test_rejects_an_original_base_amount_too_large_for_the_audit_record():
+    charge = _charge("2675.00", original_price="99999999.99")
+
+    with pytest.raises(LevyAmountTooLargeError, match="exceeds") as exc:
+        calculate_levy(charge, units=101, calculation_date=CALC_DATE)
+
+    assert exc.value.amount == Decimal("10099999998.99")
 
 
 def test_rejects_an_inflated_levy_too_large_for_the_audit_record():
@@ -262,11 +269,6 @@ def test_no_adjustment_when_calculation_year_equals_edp_start_year(
     )
 
     assert result.inflation_adjusted_amount == result.provisional_amount
-    # Indices passed but not applied are not recorded as used.
-    assert result.edp_start_year_index_id is None
-    assert result.edp_start_year_index_factor is None
-    assert result.calculation_year_index_id is None
-    assert result.calculation_year_index_factor is None
 
 
 def test_applies_index_ratio_when_calculation_year_differs():
@@ -282,22 +284,6 @@ def test_applies_index_ratio_when_calculation_year_differs():
     # round_gbp(2675 * 10 * 0.83) = 22202.50
     assert result.inflation_adjusted_amount == Decimal("22202.50")
     assert result.provisional_amount == Decimal("26750.00")
-
-
-def test_records_the_index_rows_it_applied():
-    start, calc = _index("1.0000"), _index("0.8300")
-    result = calculate_levy(
-        _charge("2675.0000"),
-        units=10,
-        calculation_date=EARLIER_CALC_DATE,
-        edp_start_year_index=start,
-        calculation_year_index=calc,
-    )
-
-    assert result.edp_start_year_index_id == start.id
-    assert result.edp_start_year_index_factor == Decimal("1.0000")
-    assert result.calculation_year_index_id == calc.id
-    assert result.calculation_year_index_factor == Decimal("0.8300")
 
 
 def test_raises_when_calculation_year_differs_and_index_missing():
@@ -317,21 +303,30 @@ def test_skips_inflation_when_not_applied_even_if_indices_are_missing():
 
     assert result.provisional_amount == Decimal("26750.00")
     assert result.inflation_adjusted_amount == result.provisional_amount
-    assert result.edp_start_year_index_id is None
-    assert result.calculation_year_index_id is None
 
 
-def test_carries_audit_fields():
+def test_carries_the_levy_fields():
     result = calculate_levy(_charge("2675.0000"), units=10, calculation_date=CALC_DATE)
 
     assert isinstance(result, LevyCalculation)
-    assert result.levy_charge_id == CHARGE_ID
     assert result.edp_id == 1
-    assert result.edp_name == "Norfolk EDP"
     assert result.edp_start_date == date(2026, 1, 1)
-    assert result.calculation_date == CALC_DATE
     assert result.units == 10
     assert result.calculator_version == LEVY_CALCULATOR_VERSION == 1
+
+
+def test_original_base_is_the_original_charge_times_units_uninflated():
+    result = calculate_levy(
+        _charge("2675.00", original_price="2500.50"),
+        units=10,
+        calculation_date=EARLIER_CALC_DATE,
+        edp_start_year_index=_index("1.0000"),
+        calculation_year_index=_index("0.8300"),
+    )
+
+    assert result.original_base_charge_per_unit == Decimal("2500.50")
+    assert result.original_base_amount == Decimal("25005.00")
+    assert str(result.original_base_amount) == "25005.00"
 
 
 @pytest.mark.parametrize("units", [0, -1])

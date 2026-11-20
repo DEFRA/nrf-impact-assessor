@@ -360,18 +360,15 @@ class JobOrchestrator:
         # Logged so a quote can be traced without a database query.
         logger.info(
             "Levy calculated: "
-            f"quote={job_id} edp_id={levy.edp_id} edp_name={levy.edp_name!r} "
+            f"quote={job_id} edp_id={levy.edp_id} "
             f"edp_start_date={levy.edp_start_date} "
             f"calculator_version={levy.calculator_version} "
             f"base_charge_per_unit={levy.base_charge_per_unit} "
-            f"units={levy.units} calculation_date={levy.calculation_date} "
+            f"original_base_charge_per_unit={levy.original_base_charge_per_unit} "
+            f"units={levy.units} "
             f"provisional_amount={levy.provisional_amount} "
-            f"inflation_adjusted_amount={levy.inflation_adjusted_amount} "
-            f"levy_charge_id={levy.levy_charge_id} "
-            f"edp_start_year_index_id={levy.edp_start_year_index_id} "
-            f"edp_start_year_index_factor={levy.edp_start_year_index_factor} "
-            f"calculation_year_index_id={levy.calculation_year_index_id} "
-            f"calculation_year_index_factor={levy.calculation_year_index_factor}"
+            f"original_base_amount={levy.original_base_amount} "
+            f"inflation_adjusted_amount={levy.inflation_adjusted_amount}"
         )
         return PricedLevy(levy=levy, calculated_at=calculated_at)
 

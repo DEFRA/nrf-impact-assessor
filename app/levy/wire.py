@@ -44,9 +44,9 @@ class LevyWire(BaseModel):
             calculation_date=calculated_at,
             provisional_amount=float(levy.provisional_amount),
             inflation_adjusted_amount=float(levy.inflation_adjusted_amount),
-            original_base_amount=float(levy.provisional_amount),
+            original_base_amount=float(levy.original_base_amount),
             base_charge_per_unit=float(levy.base_charge_per_unit),
-            original_base_charge_per_unit=float(levy.base_charge_per_unit),
+            original_base_charge_per_unit=float(levy.original_base_charge_per_unit),
             calculator_version=levy.calculator_version,
             units=levy.units,
         )

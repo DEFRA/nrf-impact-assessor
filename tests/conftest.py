@@ -37,26 +37,18 @@ EDP_NAME = (
 CALCULATED_AT = datetime(2026, 9, 14, 10, 30, 15, tzinfo=UTC)
 
 
-# Fixed so a test can assert the audit row names the charge it was given.
-LEVY_CHARGE_ID = 41
-
-
 def make_levy_calculation(**overrides) -> LevyCalculation:
-    """Build a LevyCalculation carrying every scenario 7 audit field.
-
-    Shared so the audit-field contract lives in one place; pass keyword
-    overrides for the fields a test actually cares about.
-    """
+    """Build a LevyCalculation; pass keyword overrides for the fields a test
+    actually cares about."""
     fields = {
-        "levy_charge_id": LEVY_CHARGE_ID,
         "edp_id": 1,
-        "edp_name": EDP_NAME,
         "edp_start_date": date(2026, 1, 1),
-        "calculation_date": date(2026, 9, 14),
         "calculator_version": 1,
         "units": 10,
         "base_charge_per_unit": Decimal("2675.0000"),
+        "original_base_charge_per_unit": Decimal("2675.0000"),
         "provisional_amount": Decimal("26750.00"),
+        "original_base_amount": Decimal("26750.00"),
         "inflation_adjusted_amount": Decimal("26750.00"),
     }
     return LevyCalculation(**(fields | overrides))

@@ -62,13 +62,12 @@ def resolve_edp_id(session: Session, label: str) -> int | None:
 
 class BasePriceInForce(NamedTuple):
     """The base price in force for an EDP, with the EDP fields the levy
-    calculation and its audit record carry. id is the base_prices row's id."""
+    calculation carries, and its original (oldest) base price."""
 
-    id: int
     edp_id: int
-    edp_name: str
     edp_start_date: date
     base_charge_per_unit: Decimal
+    original_base_charge_per_unit: Decimal
 
 
 class LevyPricingRows(NamedTuple):
@@ -93,8 +92,16 @@ def get_levy_pricing_rows(
     """
     start_index = aliased(LevyInflationIndex)
     calculation_index = aliased(LevyInflationIndex)
+    oldest_price = aliased(BasePrice)
+    original_price = (
+        select(oldest_price.base_price)
+        .where(oldest_price.edp_id == edp_id)
+        .order_by(oldest_price.effective_from.asc(), oldest_price.id.asc())
+        .limit(1)
+        .scalar_subquery()
+    )
     stmt = (
-        select(BasePrice, Edp, start_index, calculation_index)
+        select(BasePrice, Edp, original_price, start_index, calculation_index)
         .join(Edp, Edp.id == BasePrice.edp_id)
         .outerjoin(
             start_index,
@@ -111,12 +118,11 @@ def get_levy_pricing_rows(
     row = session.execute(stmt).one_or_none()
     if row is None:
         return None
-    base_price, edp, start, calculation = row
+    base_price, edp, original, start, calculation = row
     charge = BasePriceInForce(
-        id=base_price.id,
         edp_id=edp.id,
-        edp_name=edp.name,
         edp_start_date=edp.start_date,
         base_charge_per_unit=base_price.base_price,
+        original_base_charge_per_unit=original,
     )
     return LevyPricingRows(charge, start, calculation)
