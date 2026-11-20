@@ -1,6 +1,6 @@
-"""Lookups and the audit record the levy calculation needs: the EDP id for a
-label, the base price and RICS CIL inflation index rows that price an EDP at
-a moment, and the audit record of a calculation. Kept out of the
+"""Lookups the levy calculation needs: the EDP id for a
+label, and the base price and RICS CIL inflation index rows that price an EDP at
+a moment. Kept out of the
 Repository class, which is large and spatial; these are small ORM
 operations."""
 
@@ -8,18 +8,15 @@ import logging
 from datetime import date, datetime
 from decimal import Decimal
 from typing import NamedTuple
-from uuid import UUID
 
-from sqlalchemy import Integer, cast, extract, func, select, update
+from sqlalchemy import Integer, cast, extract, select
 from sqlalchemy.orm import Session, aliased
 
-from app.calculators.levy import LevyCalculation
 from app.data_sync.active_version import get_active_version
 from app.models.db import (
     BasePrice,
     Edp,
     EdpBoundaryLayer,
-    LevyCalculationRecord,
     LevyInflationIndex,
 )
 
@@ -123,41 +120,3 @@ def get_levy_pricing_rows(
         base_charge_per_unit=base_price.base_price,
     )
     return LevyPricingRows(charge, start, calculation)
-
-
-def record_levy_calculation(
-    session: Session, quote_reference: str, levy: LevyCalculation
-) -> LevyCalculationRecord:
-    """Add the scenario 7 audit row for one calculation. The caller commits."""
-    row = LevyCalculationRecord(
-        quote_reference=quote_reference,
-        edp_id=levy.edp_id,
-        edp_name=levy.edp_name,
-        edp_start_date=levy.edp_start_date,
-        calculator_version=levy.calculator_version,
-        base_charge_per_unit=levy.base_charge_per_unit,
-        units=levy.units,
-        calculation_date=levy.calculation_date,
-        provisional_amount=levy.provisional_amount,
-        inflation_adjusted_amount=levy.inflation_adjusted_amount,
-        levy_charge_id=levy.levy_charge_id,
-        edp_start_year_index_id=levy.edp_start_year_index_id,
-        edp_start_year_index_factor=levy.edp_start_year_index_factor,
-        calculation_year_index_id=levy.calculation_year_index_id,
-        calculation_year_index_factor=levy.calculation_year_index_factor,
-    )
-    session.add(row)
-    return row
-
-
-def mark_levy_calculation_sent(session: Session, audit_id: UUID) -> None:
-    """Stamp sent_at on the audit row a delivered quote was priced from.
-
-    By id, not quote reference: a redelivered job records one row per
-    attempt, and only the one that was sent is stamped. The caller commits.
-    """
-    session.execute(
-        update(LevyCalculationRecord)
-        .where(LevyCalculationRecord.id == audit_id)
-        .values(sent_at=func.now())
-    )

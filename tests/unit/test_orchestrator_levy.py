@@ -57,24 +57,19 @@ def lookups(mocker) -> dict:
             "app.levy.service.get_levy_pricing_rows",
             return_value=LevyPricingRows(_charge(), None, None),
         ),
-        "record": mocker.patch("app.orchestrator.record_levy_calculation"),
     }
 
 
-def test_success_returns_calculation_and_logs_audit_record(orch, lookups, caplog):
+def test_success_returns_calculation_and_logs_it(orch, lookups, caplog):
     with caplog.at_level(logging.INFO, logger="app.orchestrator"):
-        recorded = orch._calculate_levy(_job())
+        priced = orch._calculate_levy(_job())
 
-    levy = recorded.levy
+    levy = priced.levy
     assert isinstance(levy, LevyCalculation)
-    assert recorded.audit_id == lookups["record"].return_value.id
     assert levy.edp_id == 1
     assert levy.units == 10
     assert levy.provisional_amount == Decimal("26750.00")
-    session = orch.repository.session.return_value.__enter__.return_value
-    lookups["record"].assert_called_once_with(session, "NRL-000001", levy)
-    session.commit.assert_called_once()
-    audit = next(r.message for r in caplog.records if "Levy calculated" in r.message)
+    logged = next(r.message for r in caplog.records if "Levy calculated" in r.message)
     for fragment in (
         "quote=NRL-000001",
         "edp_id=1",
@@ -89,7 +84,7 @@ def test_success_returns_calculation_and_logs_audit_record(orch, lookups, caplog
         "edp_start_year_index_id=None",
         "calculation_year_index_id=None",
     ):
-        assert fragment in audit
+        assert fragment in logged
 
 
 def test_no_housing_units_raises(orch, lookups):
@@ -139,7 +134,6 @@ def test_no_inflation_index_raises(orch, lookups):
 
     with pytest.raises(LevyChargeUnavailableError, match="RICS CIL inflation index"):
         orch._calculate_levy(job)
-    lookups["record"].assert_not_called()
 
 
 def test_zero_edps_raises_without_lookups(orch, lookups):
@@ -148,7 +142,6 @@ def test_zero_edps_raises_without_lookups(orch, lookups):
     with pytest.raises(LevyChargeUnavailableError, match="no EDP"):
         orch._calculate_levy(job)
     lookups["resolve"].assert_not_called()
-    lookups["record"].assert_not_called()
 
 
 def test_multiple_edps_raises_without_lookups(orch, lookups):
@@ -157,7 +150,6 @@ def test_multiple_edps_raises_without_lookups(orch, lookups):
     with pytest.raises(LevyChargeUnavailableError, match="multiple EDPs"):
         orch._calculate_levy(job)
     lookups["resolve"].assert_not_called()
-    lookups["record"].assert_not_called()
 
 
 def test_missing_boundary_returns_none(orch, lookups):
@@ -165,16 +157,6 @@ def test_missing_boundary_returns_none(orch, lookups):
 
     assert orch._calculate_levy(job) is None
     lookups["resolve"].assert_not_called()
-
-
-def test_failure_does_not_record_an_audit_row(orch, lookups):
-    lookups["pricing"].return_value = None
-    job = _job()
-
-    with pytest.raises(LevyChargeUnavailableError):
-        orch._calculate_levy(job)
-
-    lookups["record"].assert_not_called()
 
 
 def test_process_job_fails_before_anything_else_runs(orch, lookups, mocker, caplog):
@@ -206,10 +188,9 @@ def test_process_job_passes_the_levy_to_the_callback(orch, lookups, mocker):
 
     orch.process_job(_job(), AssessmentType.NUTRIENT)
 
-    job_arg, frames_arg, recorded_arg = callback.call_args.args
+    job_arg, frames_arg, priced_arg = callback.call_args.args
     assert frames_arg is dataframes
-    assert isinstance(recorded_arg.levy, LevyCalculation)
-    assert recorded_arg.audit_id == lookups["record"].return_value.id
+    assert isinstance(priced_arg.levy, LevyCalculation)
 
 
 def test_levy_failure_writes_failed_model_result(orch, lookups, mocker):

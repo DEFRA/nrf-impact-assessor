@@ -10,9 +10,12 @@ from app.models.domain import (
     SpatialAssignment,
     WastewaterImpact,
 )
-from app.models.enums import EdpType
 from app.models.job import IntersectingEdp
-from tests.conftest import EDP_NAME, make_levy_calculation
+from tests.conftest import (
+    CALCULATED_AT,
+    EDP_NAME,
+    make_levy_calculation,
+)
 
 
 def _make_catchment_impact(
@@ -102,26 +105,23 @@ def test_build_payload_derives_edp_from_result():
     result = _make_result(n_total=10.505, p_total=2.304)
 
     payload = build_quote_patch_payload(
-        [result], [_job_edp()], levy=make_levy_calculation()
+        [result],
+        [_job_edp()],
+        levy=make_levy_calculation(),
+        calculated_at=CALCULATED_AT,
     )
 
     assert len(payload["edps"]) == 1
     edp_out = payload["edps"][0]
     assert edp_out["edpId"] == 1
     assert edp_out["edpName"] == EDP_NAME
-    assert edp_out["edpType"] == EdpType.NUTRIENT.value
+    assert edp_out["edpStartDate"] == "2026-01-01"
     assert edp_out["impact"]["nitrogenTotal"]["amount"] == 10.51  # NOSONAR
     assert edp_out["impact"]["nitrogenTotal"]["unit"] == "mg/I TP"
     assert edp_out["impact"]["nitrogenTotal"]["band"] == {"min": 4, "max": 4}
     assert edp_out["impact"]["phosphorusTotal"]["amount"] == 2.30  # NOSONAR
     assert edp_out["impact"]["phosphorusTotal"]["unit"] == "mg/I TP"
     assert edp_out["impact"]["phosphorusTotal"]["band"] == {"min": 3, "max": 3}
-    assert edp_out["levyGbp"] == {
-        "amountExcludingVat": 26750.00,
-        "amountInflationAdjusted": 26750.00,
-        "baseAmount": 26750.00,
-        "modelVersion": 1,
-    }
 
 
 def test_build_payload_excludes_top_level_totals():
@@ -129,7 +129,10 @@ def test_build_payload_excludes_top_level_totals():
     result = _make_result(n_total=10.505, p_total=2.304)
 
     payload = build_quote_patch_payload(
-        [result], [_job_edp()], levy=make_levy_calculation()
+        [result],
+        [_job_edp()],
+        levy=make_levy_calculation(),
+        calculated_at=CALCULATED_AT,
     )
 
     assert "totalNitrogen" not in payload
@@ -168,20 +171,25 @@ def test_build_payload_multiple_catchments_one_edp():
     double-count.
     """
     payload = build_quote_patch_payload(
-        [_two_catchment_result()], [_job_edp()], levy=make_levy_calculation()
+        [_two_catchment_result()],
+        [_job_edp()],
+        levy=make_levy_calculation(),
+        calculated_at=CALCULATED_AT,
     )
 
     assert len(payload["edps"]) == 1
     edp_out = payload["edps"][0]
     assert edp_out["edpName"] == EDP_NAME
-    assert edp_out["edpType"] == EdpType.NUTRIENT.value
     assert edp_out["impact"]["nitrogenTotal"]["amount"] == 20.0  # NOSONAR
     assert edp_out["impact"]["phosphorusTotal"]["amount"] == 2.0  # NOSONAR
 
 
 def test_build_payload_edp_id_comes_from_the_levy_not_a_catchment():
     payload = build_quote_patch_payload(
-        [_two_catchment_result()], [_job_edp()], levy=make_levy_calculation(edp_id=42)
+        [_two_catchment_result()],
+        [_job_edp()],
+        levy=make_levy_calculation(edp_id=42),
+        calculated_at=CALCULATED_AT,
     )
 
     assert payload["edps"][0]["edpId"] == 42
@@ -189,7 +197,10 @@ def test_build_payload_edp_id_comes_from_the_levy_not_a_catchment():
 
 def test_build_payload_levy_values_are_floats():
     payload = build_quote_patch_payload(
-        [_make_result()], [_job_edp()], levy=make_levy_calculation()
+        [_make_result()],
+        [_job_edp()],
+        levy=make_levy_calculation(),
+        calculated_at=CALCULATED_AT,
     )
 
     levy = payload["edps"][0]["levyGbp"]
@@ -209,7 +220,9 @@ def test_build_payload_no_edp_labels():
     """Without an EDP label there is nothing to name the entry, so emit none."""
     result = _make_result()
 
-    payload = build_quote_patch_payload([result], [], levy=make_levy_calculation())
+    payload = build_quote_patch_payload(
+        [result], [], levy=make_levy_calculation(), calculated_at=CALCULATED_AT
+    )
 
     assert payload is None
 
@@ -222,6 +235,7 @@ def test_build_payload_multiple_edp_labels():
         [result],
         [_job_edp(), _job_edp(label="Norfolk EDP 2")],
         levy=make_levy_calculation(),
+        calculated_at=CALCULATED_AT,
     )
 
     assert payload is None
@@ -229,7 +243,9 @@ def test_build_payload_multiple_edp_labels():
 
 def test_build_payload_empty_results():
     """Empty results list means nothing to send."""
-    payload = build_quote_patch_payload([], [_job_edp()], levy=make_levy_calculation())
+    payload = build_quote_patch_payload(
+        [], [_job_edp()], levy=make_levy_calculation(), calculated_at=CALCULATED_AT
+    )
     assert payload is None
 
 
@@ -237,7 +253,10 @@ def test_build_payload_no_nn_catchment():
     """Result with no catchment_impacts means nothing to send."""
     result = _make_result(catchment_impacts=[])
     payload = build_quote_patch_payload(
-        [result], [_job_edp()], levy=make_levy_calculation()
+        [result],
+        [_job_edp()],
+        levy=make_levy_calculation(),
+        calculated_at=CALCULATED_AT,
     )
     assert payload is None
 
@@ -247,7 +266,10 @@ def test_build_payload_rounds_to_two_decimals():
     result = _make_result(n_total=10.999, p_total=0.001)
 
     payload = build_quote_patch_payload(
-        [result], [_job_edp()], levy=make_levy_calculation()
+        [result],
+        [_job_edp()],
+        levy=make_levy_calculation(),
+        calculated_at=CALCULATED_AT,
     )
 
     assert payload["edps"][0]["impact"]["nitrogenTotal"]["amount"] == 11.0  # NOSONAR
@@ -263,7 +285,11 @@ def test_catchments_are_carried_onto_the_edp_entry():
     result = _make_result()
 
     payload = build_quote_patch_payload(
-        [result], [_job_edp()], CATCHMENTS, levy=make_levy_calculation()
+        [result],
+        [_job_edp()],
+        CATCHMENTS,
+        levy=make_levy_calculation(),
+        calculated_at=CALCULATED_AT,
     )
 
     assert payload["edps"][0]["catchments"] == CATCHMENTS
@@ -274,7 +300,31 @@ def test_catchments_default_to_empty_when_not_supplied():
     result = _make_result()
 
     payload = build_quote_patch_payload(
-        [result], [_job_edp()], levy=make_levy_calculation()
+        [result],
+        [_job_edp()],
+        levy=make_levy_calculation(),
+        calculated_at=CALCULATED_AT,
     )
 
     assert payload["edps"][0]["catchments"] == []
+
+
+def test_build_payload_levy_carries_the_audit_fields():
+    payload = build_quote_patch_payload(
+        [_make_result()],
+        [_job_edp()],
+        levy=make_levy_calculation(),
+        calculated_at=CALCULATED_AT,
+    )
+
+    assert payload["edps"][0]["levyGbp"] == {
+        "amountExcludingVat": 26750.0,
+        "amountInflationAdjusted": 26750.0,
+        "baseAmount": 26750.0,
+        "modelVersion": 1,
+        "calculationDate": "2026-09-14T10:30:15Z",
+        "originalBaseAmount": 26750.0,
+        "baseChargePerUnit": 2675.0,
+        "originalBaseChargePerUnit": 2675.0,
+        "units": 10,
+    }

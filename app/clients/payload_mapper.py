@@ -1,11 +1,12 @@
 """Map assessment results to nrf-backend PATCH /quotes/{reference} payload."""
 
 import logging
+from datetime import datetime
 
 from app.calculators.levy import LevyCalculation
 from app.clients.bands import get_band
+from app.levy.wire import LevyWire
 from app.models.domain import ImpactAssessmentResult
-from app.models.enums import EdpType
 from app.models.job import IntersectingEdp
 
 logger = logging.getLogger(__name__)
@@ -27,19 +28,35 @@ def _impact_block(n_total: float, p_total: float) -> dict:
     }
 
 
-def _levy_block(levy: LevyCalculation) -> dict:
-    """The four fields nrf-backend's patchSchema accepts.
+# The audit fields levyGbp carries beyond its original four. The amounts and
+# model version already travel as amountExcludingVat, amountInflationAdjusted
+# and modelVersion.
+_AUDIT_FIELDS = {
+    "calculation_date",
+    "original_base_amount",
+    "base_charge_per_unit",
+    "original_base_charge_per_unit",
+    "units",
+}
+
+
+def _levy_block(levy: LevyCalculation, calculated_at: datetime) -> dict:
+    """The fields nrf-backend's patchSchema accepts for an EDP's levy.
 
     amountExcludingVat and baseAmount are both the provisional amount: the
     backend prints the first in the quote email and the second on the admin
     page as the provisional levy. VAT and the 2028 inflation uplift are not in
     scope (NRF2-913).
     """
+    audit = LevyWire.from_calculation(levy, calculated_at).model_dump(
+        mode="json", by_alias=True, include=_AUDIT_FIELDS
+    )
     return {
         "amountExcludingVat": float(levy.provisional_amount),
         "amountInflationAdjusted": float(levy.inflation_adjusted_amount),
         "baseAmount": float(levy.provisional_amount),
         "modelVersion": levy.calculator_version,
+        **audit,
     }
 
 
@@ -48,17 +65,18 @@ def _edp_entry(
     result: ImpactAssessmentResult,
     catchments: list[dict],
     levy: LevyCalculation,
+    calculated_at: datetime,
 ) -> dict:
     return {
         "edpId": levy.edp_id,
         "edpName": job_edp.label,
-        "edpType": EdpType.NUTRIENT,
+        "edpStartDate": levy.edp_start_date.isoformat(),
         "impact": _impact_block(
             result.total.nitrogen_total_kg_yr,
             result.total.phosphorus_total_kg_yr,
         ),
         "catchments": catchments,
-        "levyGbp": _levy_block(levy),
+        "levyGbp": _levy_block(levy, calculated_at),
     }
 
 
@@ -68,6 +86,7 @@ def build_quote_patch_payload(
     catchments: list[dict] | None = None,
     *,
     levy: LevyCalculation,
+    calculated_at: datetime,
 ) -> dict | None:
     """Build the PATCH body for nrf-backend from assessment results.
 
@@ -86,6 +105,7 @@ def build_quote_patch_payload(
             assessment ran on.
         levy: The levy calculated for the single intersecting EDP; carries the
             resolved EDP_id used as `edpId`.
+        calculated_at: When the levy was calculated, sent as calculationDate.
 
     Returns:
         Dict matching the nrf-backend PATCH /quotes/{reference} schema, or None
@@ -113,4 +133,10 @@ def build_quote_patch_payload(
         )
         return None
 
-    return {"edps": [_edp_entry(intersecting_edps[0], result, catchments or [], levy)]}
+    return {
+        "edps": [
+            _edp_entry(
+                intersecting_edps[0], result, catchments or [], levy, calculated_at
+            )
+        ]
+    }

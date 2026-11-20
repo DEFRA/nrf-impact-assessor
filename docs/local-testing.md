@@ -1,6 +1,6 @@
 # Local Testing Guide
 
-This guide covers running the impact assessor locally against LocalStack (SNS/SQS) and a real or mocked `nrf-backend` for callbacks. Two entry points are available depending on how much of the pipeline you want to exercise.
+This guide covers running the impact assessor locally against LocalStack (SNS/SQS) and a real or mocked `nrf-backend` for callbacks. Four `/test/*` entry points are available depending on how much of the pipeline you want to exercise.
 
 ---
 
@@ -8,10 +8,12 @@ This guide covers running the impact assessor locally against LocalStack (SNS/SQ
 
 | Entry point | What it tests | External deps |
 |---|---|---|
+| `GET /test/db` | Database connectivity and row counts for all reference tables | Postgres |
 | `POST /test/assess` | Assessment logic only (DB, spatial calcs, calculators) | Postgres |
 | `POST /test/enqueue` / `make sns-publish` | Full pipeline: SNS → SQS → consumer → orchestrator → runner → nrf-backend PATCH callback | Postgres, LocalStack, consumer, (optionally) nrf-backend |
+| `POST /test/patch-backend` | The outbound PATCH to nrf-backend only (plumbing test — no DB, no assessment) | nrf-backend |
 
-Both `/test/*` endpoints are only mounted when `API_TESTING_ENABLED=true` and are never available in production.
+All `/test/*` endpoints are only mounted when `API_TESTING_ENABLED=true` and are never available in production. They require an `x-api-key` header matching `IMPACT_ASSESSOR_API_KEY` — `compose.yml` defaults it to `local-dev-impact-assessor-key`, and `scripts/test_wkt.py` sends it automatically.
 
 ---
 
@@ -20,7 +22,7 @@ Both `/test/*` endpoints are only mounted when `API_TESTING_ENABLED=true` and ar
 `compose.yml` provides everything except `nrf-backend` itself:
 
 - `postgres` — PostGIS with reference data (host port `$DB_PORT`, default `5432`)
-- `localstack` — SQS + SNS, gateway remapped to host port `4568`
+- `localstack` — SQS + SNS, gateway on the default host port `4566`
 - `mongodb` — tile metadata
 - `service` — the impact assessor; runs `python -m app.consumer`, which spawns the API server (`:8085`) as a subprocess and polls SQS in the main process
 
@@ -54,7 +56,7 @@ make sqs-purge                                # clear the queue
 
 The default payload lives at `scripts/sample_quote_payload.json` and matches the quote schema the real `nrf-backend` publishes: `reference` (`NRL-######`), `boundaryGeojson` (holding `boundaryGeometryOriginal` and `intersectingEdps`), and `housingUnits`. Each `intersectingEdps` entry carries the EDP's `EDP_Name` as `label`; `/check-boundary` also emits `overlapAreaHa`, `overlapAreaSqm`, `overlapPercentage` and `catchments` per entry, which the sample omits since nothing downstream reads them. Each `catchments` item is `{"label": <the NN catchment's `N2K_Site_N`>, "catchmentOverlapPercentage": <share of the boundary lying in that catchment, 2dp>}`; the shares sum to 100 only when the catchments cover the whole boundary.
 
-> The LocalStack gateway is remapped to host port `4568` to avoid clashing with `nrf-backend`'s own LocalStack. Override with `make sns-publish LOCALSTACK_URL=http://localhost:4566` if needed.
+> The LocalStack gateway stays on its default port `4566` (no remap). If another local stack — e.g. `nrf-backend`'s own LocalStack — already holds `4566`, override with `make sns-publish LOCALSTACK_URL=http://localhost:<port>` or export a different `AWS_ENDPOINT_URL` before `make up`.
 
 ### Watch it flow through
 
@@ -127,12 +129,26 @@ assert backend.patch_quote.call_args.args[0] == "NRL-000001"
 
 ---
 
+## `/test/db` — reference data sanity check
+
+`GET` only. Checks database connectivity and reports a row count per reference table (spatial layers broken down by `layer_type`). Returns `503` when the database is not reachable.
+
+```bash
+curl -s http://localhost:8085/test/db \
+  -H "x-api-key: local-dev-impact-assessor-key" | python -m json.tool
+```
+
+The response is `{ "db_connected": true|false, "tables": [{ "table", "row_count", "status", "error" }] }`.
+
+---
+
 ## `/test/assess` — assessment logic only
 
 Synchronous, no SQS, no callback. Returns results immediately in the HTTP response. Good for iterating on the assessment code itself.
 
 ```bash
 curl -s -X POST http://localhost:8085/test/assess \
+  -H "x-api-key: local-dev-impact-assessor-key" \
   -H "Content-Type: application/json" \
   -d '{
     "wkt": "POLYGON ((620000 310000, 620500 310000, 620500 310500, 620000 310500, 620000 310000))",
@@ -159,6 +175,7 @@ Takes a WKT polygon, wraps it in an SNS-shaped `ImpactAssessmentJob` (with a gen
 
 ```bash
 curl -s -X POST http://localhost:8085/test/enqueue \
+  -H "x-api-key: local-dev-impact-assessor-key" \
   -H "Content-Type: application/json" \
   -d '{
     "wkt": "POLYGON ((620000 310000, 620500 310000, 620500 310500, 620000 310500, 620000 310000))",
@@ -176,6 +193,25 @@ uv run python scripts/test_wkt.py enqueue --example
 ```
 
 Note: `/test/enqueue` does not populate `edps`, so the backend callback will **not** fire for jobs enqueued this way. Use `make sns-publish` when you want to exercise the full pipeline including the PATCH callback.
+
+---
+
+## `/test/patch-backend` — outbound PATCH only
+
+Fires a `PATCH /quotes/{reference}` at `nrf-backend` via `BackendClient`. Plumbing test only — it does not hit the DB, run an assessment, or touch SQS. Use it to validate that `BACKEND_BASE_URL` is set correctly, the network path to nrf-backend is reachable, and the route prefix matches.
+
+```bash
+curl -s -X POST http://localhost:8085/test/patch-backend \
+  -H "x-api-key: local-dev-impact-assessor-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reference": "NRL-000001",
+    "payload": null,
+    "stub_edps": 1
+  }'
+```
+
+When `payload` is omitted, a stub payload is generated via the real `payload_mapper` (so the mapper is exercised too); `stub_edps` (1–10) controls how many stub NN catchments it contains, all under one EDP. Returns `400` for an invalid reference or unset `BACKEND_BASE_URL`, `502` when the PATCH itself fails. See the "nrf-backend callback" section above for pointing the service at a running backend.
 
 ---
 
@@ -206,6 +242,7 @@ Example polygons:
 | `PATCH ... connection refused` | nrf-backend bound to `127.0.0.1` only | Bind to `0.0.0.0` or run nrf-backend inside the same docker network |
 | `ValueError: Required columns missing from input: ['shape_area']` | Orchestrator injected wrong column | Should be `shape_area`, not `area_m2` (app/orchestrator.py) |
 | `404 Not Found` on `/test/*` | `API_TESTING_ENABLED=false` | Set it to `true` (already true in `compose.yml` for local dev) |
+| `401 Unauthorized` on `/test/*` | Missing or wrong `x-api-key` header | Send `-H "x-api-key: local-dev-impact-assessor-key"` (the `compose.yml` default) |
 
 ---
 

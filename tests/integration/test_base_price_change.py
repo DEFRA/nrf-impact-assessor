@@ -11,7 +11,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.models.db import LevyCalculationRecord
 from app.models.job import BoundaryGeojson, ImpactAssessmentJob, IntersectingEdp
 from app.orchestrator import JobOrchestrator
 from app.repositories.repository import Repository
@@ -43,7 +42,7 @@ def _job() -> ImpactAssessmentJob:
     )
 
 
-def test_a_new_quote_is_priced_and_audited_at_the_base_price_in_force_now(
+def test_a_new_quote_is_priced_at_the_base_price_in_force_now(
     repository: Repository,
 ):
     now = datetime.now(UTC)
@@ -62,17 +61,12 @@ def test_a_new_quote_is_priced_and_audited_at_the_base_price_in_force_now(
     )
     insert_base_price(repository, effective_from=now + timedelta(days=30), price="3500")
 
-    recorded = JobOrchestrator(MagicMock(), repository)._calculate_levy(_job())
+    priced = JobOrchestrator(MagicMock(), repository)._calculate_levy(_job())
 
-    assert recorded.levy.levy_charge_id == in_force_id
-    assert recorded.levy.base_charge_per_unit == Decimal("3000")
-    assert recorded.levy.provisional_amount == Decimal("12000.00")
-    assert recorded.levy.inflation_adjusted_amount == Decimal("12000.00")
-    with repository.session() as session:
-        audit = session.get(LevyCalculationRecord, recorded.audit_id)
-        assert audit.levy_charge_id == in_force_id
-        assert audit.base_charge_per_unit == Decimal("3000")
-        assert audit.provisional_amount == Decimal("12000.00")
+    assert priced.levy.levy_charge_id == in_force_id
+    assert priced.levy.base_charge_per_unit == Decimal("3000")
+    assert priced.levy.provisional_amount == Decimal("12000.00")
+    assert priced.levy.inflation_adjusted_amount == Decimal("12000.00")
 
 
 @pytest.fixture

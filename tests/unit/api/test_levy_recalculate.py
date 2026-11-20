@@ -57,7 +57,7 @@ def db(mocker, session):
     }
 
 
-def test_returns_provisional_and_inflation_adjusted_levy(client, db):
+def test_returns_the_levy_with_every_audit_field(client, db):
     response = client.post(URL, json=VALID_BODY)
 
     assert response.status_code == 200
@@ -65,6 +65,11 @@ def test_returns_provisional_and_inflation_adjusted_levy(client, db):
         "calculationDate": None,
         "provisionalAmount": 26750.0,
         "inflationAdjustedAmount": 26750.0,
+        "originalBaseAmount": 26750.0,
+        "baseChargePerUnit": 2675.0,
+        "originalBaseChargePerUnit": 2675.0,
+        "calculatorVersion": 1,
+        "units": 10,
     }
 
 

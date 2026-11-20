@@ -24,6 +24,7 @@ from app.calculators.levy import (
     LevyUnitsTooLargeError,
 )
 from app.levy.service import price_levy
+from app.levy.wire import LevyWire
 from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
 
@@ -61,18 +62,6 @@ class LevyRecalculationRequest(BaseModel):
     def _default_empty_edp_id(cls, value):
         """Use the default EDP when edpId is null or an empty string."""
         return DEFAULT_EDP_ID if value is None or value == "" else value
-
-
-class LevyRecalculationResponse(BaseModel):
-    """Recalculated levy."""
-
-    model_config = ConfigDict(
-        frozen=True, alias_generator=to_camel, populate_by_name=True
-    )
-
-    calculation_date: datetime
-    provisional_amount: float
-    inflation_adjusted_amount: float
 
 
 async def _parse_request(request: Request) -> LevyRecalculationRequest:
@@ -128,7 +117,7 @@ def _recalculate(body: LevyRecalculationRequest) -> LevyCalculation | None:
         },
     },
 )
-async def recalculate_levy(request: Request) -> LevyRecalculationResponse:
+async def recalculate_levy(request: Request) -> LevyWire:
     """Recalculate the levy for an EDP."""
     body = await _parse_request(request)
     try:
@@ -177,8 +166,4 @@ async def recalculate_levy(request: Request) -> LevyRecalculationResponse:
         f"inflation_adjusted_amount={levy.inflation_adjusted_amount}"
     )
     # Inflation is not applied yet: both amounts are the provisional levy.
-    return LevyRecalculationResponse(
-        calculation_date=calculated_at,
-        provisional_amount=float(levy.provisional_amount),
-        inflation_adjusted_amount=float(levy.inflation_adjusted_amount),
-    )
+    return LevyWire.from_calculation(levy, calculated_at)
