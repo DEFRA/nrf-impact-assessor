@@ -70,14 +70,18 @@ class LevyUnitsTooLargeError(LevyChargeUnavailableError):
 
 
 class LevyChargeRow(Protocol):
-    """The base price in force for an EDP; id is the base_prices row's id."""
+    """The charge fields the calculation reads: the base price in force for an
+    EDP, when it took effect, and the EDP's original (oldest) base price.
 
-    id: int
+    Structural rather than an ORM model, so this module stays free of database
+    imports and a test can pass any object with these attributes.
+    """
+
     edp_id: int
-    edp_name: str
     edp_start_date: date
     base_charge_per_unit: Decimal
     effective_from: datetime
+    original_base_charge_per_unit: Decimal
 
 
 class LevyIndexRow(Protocol):
@@ -94,18 +98,22 @@ class LevyYearLine(BaseModel):
 
 
 class LevyCalculation(BaseModel):
-    """One levy calculation. yearly_lines is empty only under MIN_LEVY_AMOUNT."""
+    """One levy calculation, carrying the fields sent to nrf-backend.
 
-    levy_charge_id: int
+    original_base_charge_per_unit is the EDP's oldest base price and
+    original_base_amount is the levy for units at that price, uninflated.
+    yearly_lines is empty only under MIN_LEVY_AMOUNT.
+    """
+
     edp_id: int
-    edp_name: str
     edp_start_date: date
-    calculation_date: date
     calculator_version: int
     units: int = Field(gt=0)
     base_charge_per_unit: Decimal
     base_price_effective_from: datetime
+    original_base_charge_per_unit: Decimal
     provisional_amount: Decimal
+    original_base_amount: Decimal
     inflation_adjusted_amount: Decimal
     yearly_lines: list[LevyYearLine] = []
 
@@ -144,8 +152,8 @@ def calculate_levy(
         ValueError: units is not positive.
         LevyChargeUnavailableError: an index in the range is missing, or the
             calculation date is before the base price took effect.
-        LevyAmountTooLargeError: the provisional or inflation-adjusted amount
-            exceeds MAX_LEVY_AMOUNT, so it could not be stored in the backend.
+        LevyAmountTooLargeError: the provisional, original base or
+            inflation-adjusted amount exceeds MAX_LEVY_AMOUNT, so it could not be stored in the backend.
             Intermediate lines are not sent to nrf-backend, so they are not
             limited.
         LevyUnitsTooLargeError: units exceeds MAX_LEVY_UNITS, so it could not
@@ -168,7 +176,8 @@ def calculate_levy(
     # Only the amounts sent to nrf-backend are limited. Checked before rounding
     # so the error names the unrounded amount. Numeric(10, 4) indices bound any
     # ratio to under 1e10, so every line stays within quantize's precision.
-    largest = max([provisional, *unrounded[-1:]])
+    original_base = charge.original_base_charge_per_unit * units
+    largest = max([provisional, original_base, *unrounded[-1:]])
     if largest >= _FIRST_AMOUNT_TOO_LARGE:
         raise LevyAmountTooLargeError(largest, units, charge.edp_id)
     if units > MAX_LEVY_UNITS:
@@ -184,16 +193,15 @@ def calculate_levy(
         for i, amount in zip(years, unrounded, strict=True)
     ]
     return LevyCalculation(
-        levy_charge_id=charge.id,
         edp_id=charge.edp_id,
-        edp_name=charge.edp_name,
         edp_start_date=charge.edp_start_date,
-        calculation_date=calculation_date,
         calculator_version=LEVY_CALCULATOR_VERSION,
         units=units,
         base_charge_per_unit=charge.base_charge_per_unit,
         base_price_effective_from=charge.effective_from,
+        original_base_charge_per_unit=charge.original_base_charge_per_unit,
         provisional_amount=round_gbp(provisional),
+        original_base_amount=round_gbp(original_base),
         inflation_adjusted_amount=lines[-1].amount if lines else round_gbp(Decimal(0)),
         yearly_lines=lines,
     )

@@ -20,18 +20,18 @@ from app.calculators.levy import (
     round_gbp,
 )
 
-CHARGE_ID = 41
 INDEX = {2026: "400", 2027: "412", 2028: "417", 2029: "422", 2030: "427"}
 
 
-def _charge(price: str, effective_year: int = 2027) -> SimpleNamespace:
+def _charge(
+    price: str, effective_year: int = 2027, original_price: str | None = None
+) -> SimpleNamespace:
     return SimpleNamespace(
-        id=CHARGE_ID,
         edp_id=1,
-        edp_name="Norfolk EDP",
         edp_start_date=date(2026, 1, 1),
         base_charge_per_unit=Decimal(price),
         effective_from=datetime(effective_year, 1, 1, tzinfo=UTC),
+        original_base_charge_per_unit=Decimal(original_price or price),
     )
 
 
@@ -198,6 +198,15 @@ def test_rejects_a_provisional_levy_too_large():
     assert isinstance(exc.value, LevyChargeUnavailableError)
 
 
+def test_rejects_an_original_base_amount_too_large():
+    charge = _charge("2675.00", original_price="99999999.99")
+
+    with pytest.raises(LevyAmountTooLargeError, match="exceeds") as exc:
+        calculate_levy(charge, 101, date(2027, 6, 24), _indices(2027, 2027))
+
+    assert exc.value.amount == Decimal("10099999998.99")
+
+
 def test_rejects_an_inflated_line_too_large():
     with pytest.raises(LevyAmountTooLargeError, match="exceeds"):
         _levy("99999999.99", 100, 2028, y2027="10000000", y2028="10000001")
@@ -244,12 +253,22 @@ def test_carries_the_charge_fields():
     levy = _levy("2675.00", 10, 2027)
 
     assert isinstance(levy, LevyCalculation)
-    assert levy.levy_charge_id == CHARGE_ID
     assert levy.edp_id == 1
-    assert levy.edp_name == "Norfolk EDP"
     assert levy.edp_start_date == date(2026, 1, 1)
-    assert levy.calculation_date == date(2027, 6, 24)
     assert levy.units == 10
+
+
+def test_original_base_is_the_original_charge_times_units_uninflated():
+    result = calculate_levy(
+        _charge("2675.00", 2026, original_price="2500.50"),
+        10,
+        date(2028, 6, 24),
+        _indices(2026, 2028),
+    )
+
+    assert result.original_base_charge_per_unit == Decimal("2500.50")
+    assert result.original_base_amount == Decimal("25005.00")
+    assert str(result.original_base_amount) == "25005.00"
 
 
 @pytest.mark.parametrize("units", [0, -1])

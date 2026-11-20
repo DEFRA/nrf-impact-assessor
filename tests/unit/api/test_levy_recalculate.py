@@ -13,7 +13,6 @@ from app.common.auth import API_KEY_HEADER, require_api_key
 from app.config import config
 from app.main import app
 from app.repositories.levy import LevyPricingRows
-from tests.conftest import EDP_NAME
 
 URL = "/levy/recalculate"
 VALID_BODY = {"edpId": 1, "units": 10, "requestDate": "2026-10-14T08:30:00Z"}
@@ -25,12 +24,11 @@ def _index(year: int, value: str = "400") -> SimpleNamespace:
 
 def _charge() -> SimpleNamespace:
     return SimpleNamespace(
-        id=41,
         edp_id=1,
-        edp_name=EDP_NAME,
         edp_start_date=date(2026, 1, 1),
         base_charge_per_unit=Decimal("2675.0000"),
         effective_from=datetime(2026, 1, 1, tzinfo=UTC),
+        original_base_charge_per_unit=Decimal("2675.0000"),
     )
 
 
@@ -164,6 +162,7 @@ def test_returns_unprocessable_when_the_levy_is_too_large(client, db):
 def test_returns_unprocessable_for_more_units_than_the_maximum(client, db):
     charge = _charge()
     charge.base_charge_per_unit = Decimal("0.01")
+    charge.original_base_charge_per_unit = Decimal("0.01")
     db["pricing"].return_value = _rows(charge)
 
     response = client.post(URL, json=VALID_BODY | {"units": 2_147_483_648})

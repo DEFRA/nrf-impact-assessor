@@ -357,11 +357,14 @@ def test_catchments_default_to_empty_when_not_supplied():
     assert payload["edps"][0]["catchments"] == []
 
 
-def test_build_payload_levy_carries_the_audit_fields():
+def test_build_payload_levy_carries_the_levy_fields():
     payload = build_quote_patch_payload(
         [_make_result()],
         [_job_edp()],
-        levy=make_levy_calculation(),
+        levy=make_levy_calculation(
+            original_base_charge_per_unit=Decimal("2500.00"),
+            original_base_amount=Decimal("25000.00"),
+        ),
         calculated_at=CALCULATED_AT,
     )
 
@@ -371,8 +374,8 @@ def test_build_payload_levy_carries_the_audit_fields():
         "baseAmount": 26750.0,
         "modelVersion": 1,
         "calculationDate": "2026-09-14T10:30:15Z",
-        "originalBaseAmount": 26750.0,
+        "originalBaseAmount": 25000.0,
         "baseChargePerUnit": 2675.0,
-        "originalBaseChargePerUnit": 2675.0,
+        "originalBaseChargePerUnit": 2500.0,
         "units": 10,
     }

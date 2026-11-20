@@ -37,12 +37,11 @@ THIS_YEAR = datetime.now(UTC).year
 
 def _charge(effective_year: int = THIS_YEAR) -> MagicMock:
     charge = MagicMock()
-    charge.id = 41
     charge.edp_id = 1
-    charge.edp_name = EDP_NAME
     charge.edp_start_date = date(2026, 1, 1)
     charge.base_charge_per_unit = Decimal("2675.0000")
     charge.effective_from = datetime(effective_year, 1, 1, tzinfo=UTC)
+    charge.original_base_charge_per_unit = Decimal("2500.0000")
     return charge
 
 
@@ -88,10 +87,10 @@ def test_success_returns_calculation_and_logs_it(orch, lookups, caplog):
         "calculator_version=2",
         "base_charge_per_unit=2675.0000",
         "units=10",
-        "calculation_date=",
+        "original_base_charge_per_unit=2500.0000",
+        "original_base_amount=25000.00",
         "provisional_amount=26750.00",
         "inflation_adjusted_amount=26750.00",
-        f"levy_charge_id={lookups['pricing'].return_value.charge.id}",
         "base_index_value=400",
         "calculation_index_value=400",
         "lines=1",

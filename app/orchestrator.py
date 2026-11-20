@@ -363,14 +363,15 @@ class JobOrchestrator:
         base, last = (lines[0], lines[-1]) if lines else (None, None)
         logger.info(
             "Levy calculated: "
-            f"quote={job_id} edp_id={levy.edp_id} edp_name={levy.edp_name!r} "
+            f"quote={job_id} edp_id={levy.edp_id} "
             f"edp_start_date={levy.edp_start_date} "
             f"calculator_version={levy.calculator_version} "
             f"base_charge_per_unit={levy.base_charge_per_unit} "
-            f"units={levy.units} calculation_date={levy.calculation_date} "
+            f"original_base_charge_per_unit={levy.original_base_charge_per_unit} "
+            f"units={levy.units} "
             f"provisional_amount={levy.provisional_amount} "
+            f"original_base_amount={levy.original_base_amount} "
             f"inflation_adjusted_amount={levy.inflation_adjusted_amount} "
-            f"levy_charge_id={levy.levy_charge_id} "
             f"base_price_effective_from={levy.base_price_effective_from:%Y-%m-%d} "
             f"base_index_id={base and base.index_id} "
             f"base_index_value={base and base.index_value} "

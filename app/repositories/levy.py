@@ -62,14 +62,14 @@ def resolve_edp_id(session: Session, label: str) -> int | None:
 
 class BasePriceInForce(NamedTuple):
     """The base price in force for an EDP, with the EDP fields the levy
-    calculation carries. id is the base_prices row's id."""
+    calculation carries, when it took effect, and the EDP's original (oldest)
+    base price."""
 
-    id: int
     edp_id: int
-    edp_name: str
     edp_start_date: date
     base_charge_per_unit: Decimal
     effective_from: datetime
+    original_base_charge_per_unit: Decimal
 
 
 class LevyPricingRows(NamedTuple):
@@ -112,8 +112,16 @@ def levy_pricing_statement(edp_id: int, units: int, at: datetime) -> Select:
         .lateral()
     )
     index = aliased(LevyInflationIndex, indices)
+    oldest_price = aliased(BasePrice)
+    original_price = (
+        select(oldest_price.base_price)
+        .where(oldest_price.edp_id == edp_id)
+        .order_by(oldest_price.effective_from.asc(), oldest_price.id.asc())
+        .limit(1)
+        .scalar_subquery()
+    )
     return (
-        select(base_price, Edp, index)
+        select(base_price, Edp, original_price, index)
         .join(Edp, Edp.id == base_price.edp_id)
         .outerjoin(index, true())
         .order_by(index.charging_year)
@@ -124,8 +132,8 @@ def get_levy_pricing_rows(
     session: Session, edp_id: int, units: int, at: datetime
 ) -> LevyPricingRows | None:
     """The EDP's base price in force at `at` (its latest row with
-    effective_from at or before `at`) and the index rows for each year from
-    that row's effective year to `at`'s year. None when the EDP does not exist
+    effective_from at or before `at`), the EDP's oldest base price, and the
+    index rows for each year from that row's effective year to `at`'s year. None when the EDP does not exist
     or has no base price in force yet. `at` must be timezone-aware and in UTC.
 
     One statement, so both come from one snapshot: two reads could pair an
@@ -137,13 +145,12 @@ def get_levy_pricing_rows(
     rows = session.execute(stmt).all()
     if not rows:
         return None
-    price, edp, _ = rows[0]
+    price, edp, original, _ = rows[0]
     charge = BasePriceInForce(
-        id=price.id,
         edp_id=edp.id,
-        edp_name=edp.name,
         edp_start_date=edp.start_date,
         base_charge_per_unit=price.base_price,
         effective_from=price.effective_from.astimezone(UTC),
+        original_base_charge_per_unit=original,
     )
     return LevyPricingRows(charge, [index for *_, index in rows if index is not None])

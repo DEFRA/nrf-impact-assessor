@@ -68,9 +68,9 @@ def test_a_label_with_two_ids_means_none(repository: Repository):
 def test_the_latest_base_price_at_or_before_the_moment_is_used(
     repository: Repository,
 ):
-    first = insert_base_price(repository, 7, datetime(2026, 1, 1, tzinfo=UTC))
-    second = insert_base_price(repository, 7, datetime(2026, 6, 1, 12, tzinfo=UTC))
-    insert_base_price(repository, 8, datetime(2026, 3, 1, tzinfo=UTC))
+    insert_base_price(repository, 7, datetime(2026, 1, 1, tzinfo=UTC), price="2675")
+    insert_base_price(repository, 7, datetime(2026, 6, 1, 12, tzinfo=UTC), price="3000")
+    insert_base_price(repository, 8, datetime(2026, 3, 1, tzinfo=UTC), price="1000")
 
     with repository.session() as session:
         before_change = get_levy_pricing_rows(
@@ -80,8 +80,10 @@ def test_the_latest_base_price_at_or_before_the_moment_is_used(
             session, 7, UNITS, datetime(2026, 6, 1, 12, tzinfo=UTC)
         )
 
-    assert before_change.charge.id == first
-    assert at_change.charge.id == second
+    assert before_change.charge.base_charge_per_unit == Decimal("2675")
+    assert at_change.charge.base_charge_per_unit == Decimal("3000")
+    assert before_change.charge.original_base_charge_per_unit == Decimal("2675")
+    assert at_change.charge.original_base_charge_per_unit == Decimal("2675")
 
 
 def test_two_base_prices_for_an_edp_cannot_share_an_effective_from(
@@ -228,7 +230,7 @@ def _years(rows) -> list[int]:
 def test_pricing_rows_return_the_index_for_each_year_from_the_base_year(
     repository: Repository,
 ):
-    base_price_id = insert_base_price(repository, 7, datetime(2027, 1, 1, tzinfo=UTC))
+    insert_base_price(repository, 7, datetime(2027, 1, 1, tzinfo=UTC))
     for year in (2031, 2026, 2028, 2027, 2030, 2029):
         insert_inflation_index(repository, year)
 
@@ -237,9 +239,8 @@ def test_pricing_rows_return_the_index_for_each_year_from_the_base_year(
             session, 7, UNITS, datetime(2030, 3, 1, tzinfo=UTC)
         )
 
-    assert rows.charge.id == base_price_id
     assert rows.charge.edp_id == 7
-    assert rows.charge.edp_name == "Test EDP"
+    assert rows.charge.original_base_charge_per_unit == Decimal("2675")
     assert rows.charge.base_charge_per_unit == Decimal("2675")
     assert rows.charge.effective_from == datetime(2027, 1, 1, tzinfo=UTC)
     assert _years(rows) == [2027, 2028, 2029, 2030]
@@ -257,6 +258,7 @@ def test_pricing_rows_start_at_a_later_base_price(repository: Repository):
         )
 
     assert rows.charge.base_charge_per_unit == Decimal("3000")
+    assert rows.charge.original_base_charge_per_unit == Decimal("2675")
     assert _years(rows) == [2029, 2030]
 
 
