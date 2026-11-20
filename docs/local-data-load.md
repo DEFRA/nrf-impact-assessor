@@ -26,7 +26,7 @@ Before running the script, ensure the following are in place:
 
 1. **PostGIS database is running** — the `db` service must be up:
    ```bash
-   docker compose up db
+   docker compose up postgres
    ```
 
 2. **Database migrations have been applied** — run Alembic to create the schema:
@@ -370,7 +370,7 @@ It picks the most recent `public_schema_*.sql.gz` and `public_<table>_*.sql.gz` 
 make db-restore BACKUP_FILE=./backups/nrf_impact_20260316_120000.sql.gz
 ```
 
-Both targets pipe the decompressed SQL through `psql` into the running container. Run `docker compose up db` first if the container is not already up.
+Both targets pipe the decompressed SQL through `psql` into the running container. Run `docker compose up postgres` first if the container is not already up.
 
 ### Backup file naming
 
@@ -393,11 +393,11 @@ All files within a single `make` invocation share the same timestamp, making it 
 | `ValidationError` on startup | `scripts/.env.local` is missing or incomplete | Copy `.env.example` to `.env.local` and fill in all required variables |
 | `File not found` warning, layer skipped | Source file path is wrong in `.env.local` | Check `BASE_PATH` and the relative paths match your local directory layout |
 | `Missing expected columns` error | Coefficient GeoPackage has unexpected column names | Verify the `COEFFICIENT_LAYER` variable matches the layer name in the GPKG and that source column names match those documented above |
-| `Connection refused` / DB error | PostGIS is not running | Run `docker compose up db` and re-run the script |
+| `Connection refused` / DB error | PostGIS is not running | Run `docker compose up postgres` and re-run the script |
 | `relation "public.nn_catchments" does not exist` | Migrations have not been applied | Run `uv run alembic upgrade head` |
 | Load completes but row count is 0 | Source file is empty or CRS mismatch caused all geometries to be dropped | Open the source file in QGIS to verify it contains data; check CRS |
 | Coefficient load is very slow | ~31.4M polygons is expected to take several minutes | This is normal; use `--sample` for quick tests |
-| `db-backup-tables` produces empty files | Container not running or DB name wrong | Confirm `docker compose up db` is running and `nrf-postgis` is the container name (override with `DB_CONTAINER=`, or clear it to use a host postgres) |
+| `db-backup-tables` produces empty files | Container not running or DB name wrong | Confirm `docker compose up postgres` is running and `nrf-postgis` is the container name (override with `DB_CONTAINER=`, or clear it to use a host postgres) |
 | `zcat: can't stat` on restore | Wrong path passed to `BACKUP_FILE` | Use the full or relative path, e.g. `make db-restore BACKUP_FILE=./backups/foo.sql.gz` |
 | GRANT errors after per-table restore | Used `db-restore` instead of `db-restore-tables` | Use `make db-restore-tables BACKUP_DIR=./backups` — it applies schema grants before data |
 | `no public_schema_*.sql.gz found` | Backup was taken before the schema file was added | Re-take the backup with the current `db-backup-tables`, or manually restore globals + schema first |
