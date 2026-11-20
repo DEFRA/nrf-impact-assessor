@@ -33,7 +33,7 @@ This is work-in-progress. See [To Do List](./TODO.md)
 
 ### Python
 
-Please install python `>= 3.13` and `pipx` in your environment. This template uses [uv](https://github.com/astral-sh/uv) to manage the environment and dependencies.
+Please install python `>= 3.14` and `pipx` in your environment. This template uses [uv](https://github.com/astral-sh/uv) to manage the environment and dependencies.
 
 ```python
 # install uv via pipx
@@ -174,7 +174,7 @@ Follow the convention below for environment variables and secrets in local devel
 
 **Pre-Commit Hooks:** Ensure you install the pre-commit hooks, as above
 
-See [Docs/environment.md](./Docs/environment.md) for a full reference of all environment variables.
+See [docs/environment.md](./docs/environment.md) for a full reference of all environment variables.
 
 ### Development
 
@@ -240,13 +240,45 @@ make test      # or: uv run pytest tests/ app/ -v
 
 ## API endpoints
 
-| Endpoint             | Description                    |
-| :------------------- | :----------------------------- |
-| `GET: /docs`         | Automatic API Swagger docs     |
-| `GET: /health`       | Health check endpoint          |
-| `GET: /example/test` | Simple example endpoint        |
-| `GET: /example/db`   | Database query example         |
-| `GET: /example/http` | HTTP client example            |
+Every endpoint except `/health` and `/version` requires an `x-api-key` header
+matching `IMPACT_ASSESSOR_API_KEY`.
+
+| Endpoint | Description |
+| :--- | :--- |
+| `GET: /health` | Health check endpoint |
+| `GET: /version` | Build info — reports the `GIT_HASH` the service was started with |
+| `POST: /assess` | Submit a geometry file for assessment (202 Accepted; the job runs async) |
+| `GET: /assess/{job_id}` | Poll the status and result of a submitted assessment job |
+| `POST: /check-boundary` | Check whether an uploaded geometry intersects EDP areas |
+| `POST: /compare-boundaries` | Report whether two boundaries cover substantially the same land |
+| `GET: /tiles/{layer}/{z}/{x}/{y}.mvt` | Mapbox Vector Tile for a reference layer |
+| `GET: /aerial_proxy/{z}/{x}/{y}` | Proxy a raster tile from the upstream aerial imagery source |
+| `POST: /wwtw/nearby` | Find WWTW catchments within a given distance of an RLB polygon |
+| `POST: /levy/recalculate` | Recalculate the levy for an EDP |
+| `GET: /base-prices` | List every EDP with its full base price history |
+| `POST: /base-prices` | Add a base price for an EDP |
+| `PATCH: /base-prices/{base_price_id}` | Update a base price |
+| `DELETE: /base-prices/{base_price_id}` | Delete a base price |
+| `GET: /inflation-indexes` | List every inflation index, newest charging year first |
+| `GET: /inflation-indexes/history` | List recorded inflation index additions, most recent first |
+| `POST: /inflation-indexes` | Add the index for a charging year that has not begun yet |
+| `PATCH: /inflation-indexes/{index_id}` | Update an inflation index |
+| `DELETE: /inflation-indexes/{index_id}` | Delete an inflation index |
+
+Conditional endpoints, mounted only when their feature flag is set:
+
+| Endpoint | Enabled by | Description |
+| :--- | :--- | :--- |
+| `GET: /test/db` | `API_TESTING_ENABLED=true` | Check DB connectivity and row counts for all reference tables |
+| `POST: /test/assess` | `API_TESTING_ENABLED=true` | Run an assessment synchronously from a WKT geometry — no S3 or polling |
+| `POST: /test/enqueue` | `API_TESTING_ENABLED=true` | Enqueue an SQS job message with the geometry embedded in the body |
+| `POST: /test/patch-backend` | `API_TESTING_ENABLED=true` | Fire a PATCH at nrf-backend via BackendClient (plumbing test) |
+| `POST: /admin/data-sync` | `DATA_SYNC_ENABLED=true` | Trigger a reference-data reload from S3 (see below) |
+| `GET: /admin/data-sync/{run_id}` | `DATA_SYNC_ENABLED=true` | Poll the status of a data-sync run |
+| `POST: /admin/data-sync/rollback` | `DATA_SYNC_ENABLED=true` | Roll back a completed data-sync run |
+
+The `/admin/data-sync` endpoints authenticate with a separate `x-data-sync-token`
+header matching `DATA_SYNC_AUTH_TOKEN`, not `x-api-key`.
 
 ## Reference data reload
 
