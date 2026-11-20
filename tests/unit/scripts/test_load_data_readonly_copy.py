@@ -44,3 +44,13 @@ def test_unrelated_files_beside_the_source_are_not_copied(tmp_path):
 
     assert "other.gpkg" not in copied
     assert {"layer.shp", "layer.shx", "layer.dbf", "layer.prj"} <= set(copied)
+
+
+def test_file_geodatabase_directory_copy_is_readable(tmp_path):
+    source = tmp_path / "layers.gdb"
+    _write_layer(source, "OpenFileGDB")
+
+    with _gdal_readonly(source) as scratch_path:
+        gdf = gpd.read_file(scratch_path)
+
+    assert gdf["name"].tolist() == ["a"]
