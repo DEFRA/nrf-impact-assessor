@@ -37,8 +37,8 @@ REFERENCE_TABLES = (
     "lookup_table",
     "base_prices",
     "edps",
-    "audit_levy_calculations",
     "levy_inflation_index",
+    "levy_inflation_index_history",
 )
 
 

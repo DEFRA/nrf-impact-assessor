@@ -24,11 +24,11 @@ from pydantic import BaseModel, Field
 LEVY_CALCULATOR_VERSION = 1
 
 _PENNY = Decimal("0.01")
-# The largest amount audit_levy_calculations' numeric(12,2) columns hold.
+# The largest amount nrf-backend's quote_edp_results numeric(12,2) levy columns hold.
 MAX_LEVY_AMOUNT = Decimal("9999999999.99")
 # The smallest unrounded amount that rounds half-up past MAX_LEVY_AMOUNT.
 _FIRST_AMOUNT_TOO_LARGE = MAX_LEVY_AMOUNT + _PENNY / 2
-# The most units audit_levy_calculations' integer units column holds. A cheap
+# The most units nrf-backend's quote_edp_results integer units column holds. A cheap
 # enough charge prices more units than this within MAX_LEVY_AMOUNT.
 MAX_LEVY_UNITS = 2**31 - 1
 
@@ -43,7 +43,7 @@ class LevyChargeUnavailableError(RuntimeError):
 
 
 class LevyAmountTooLargeError(LevyChargeUnavailableError):
-    """The levy exceeds MAX_LEVY_AMOUNT, so it cannot be recorded for audit.
+    """The levy exceeds MAX_LEVY_AMOUNT, so it cannot be stored in the backend.
 
     Carries the amount and units so the recalculate endpoint can tell the
     caller why, unlike the other reasons a levy is unavailable.
@@ -54,12 +54,12 @@ class LevyAmountTooLargeError(LevyChargeUnavailableError):
         self.units = units
         super().__init__(
             f"levy amount {amount} for edp_id={edp_id}, units={units} "
-            f"exceeds the {MAX_LEVY_AMOUNT} an audit record holds"
+            f"exceeds the {MAX_LEVY_AMOUNT} a quote_edp_results row holds"
         )
 
 
 class LevyUnitsTooLargeError(LevyChargeUnavailableError):
-    """units exceeds MAX_LEVY_UNITS, so it cannot be recorded for audit.
+    """units exceeds MAX_LEVY_UNITS, so it cannot be stored in the backend.
 
     Carries the units so the recalculate endpoint can tell the caller why.
     """
@@ -68,23 +68,22 @@ class LevyUnitsTooLargeError(LevyChargeUnavailableError):
         self.units = units
         super().__init__(
             f"units={units} for edp_id={edp_id} exceeds the {MAX_LEVY_UNITS} "
-            "an audit record holds"
+            "a quote_edp_results row holds"
         )
 
 
 class LevyChargeRow(Protocol):
     """The charge fields the calculation reads: the base price in force for an
-    EDP, with id the base_prices row's id.
+    EDP and its original (oldest) base price.
 
     Structural rather than an ORM model, so this module stays free of database
     imports and a test can pass any object with these attributes.
     """
 
-    id: int
     edp_id: int
-    edp_name: str
     edp_start_date: date
     base_charge_per_unit: Decimal
+    original_base_charge_per_unit: Decimal
 
 
 class LevyIndexRow(Protocol):
@@ -95,27 +94,21 @@ class LevyIndexRow(Protocol):
 
 
 class LevyCalculation(BaseModel):
-    """One levy calculation, carrying every audit field.
+    """One levy calculation, carrying the fields sent to nrf-backend.
 
-    The *_id fields name the rows the inputs came from, so the audit record can
-    tell a later correction to a row from the wrong row being picked up. The
-    index fields are None when no inflation step applied.
+    original_base_charge_per_unit is the EDP's oldest base price and
+    original_base_amount is the levy for units at that price, uninflated.
     """
 
-    levy_charge_id: int
     edp_id: int
-    edp_name: str
     edp_start_date: date
-    calculation_date: date
     calculator_version: int
     units: int = Field(gt=0)
     base_charge_per_unit: Decimal
+    original_base_charge_per_unit: Decimal
     provisional_amount: Decimal
+    original_base_amount: Decimal
     inflation_adjusted_amount: Decimal
-    edp_start_year_index_id: UUID | None = None
-    edp_start_year_index_factor: Decimal | None = None
-    calculation_year_index_id: UUID | None = None
-    calculation_year_index_factor: Decimal | None = None
 
 
 def round_gbp(value: Decimal) -> Decimal:
@@ -135,9 +128,10 @@ def calculate_levy(
     """Calculate the provisional and inflation-adjusted levy for one EDP.
 
     Args:
-        charge: The base price in force (BasePriceInForce) with id, edp_id,
-            edp_name, edp_start_date and base_charge_per_unit (Decimal,
-            pounds and pence, at most 2 dp).
+        charge: The base price in force (BasePriceInForce) with edp_id,
+            edp_start_date, base_charge_per_unit and
+            original_base_charge_per_unit (Decimal, pounds and pence, at
+            most 2 dp).
         units: Number of dwellings; must be positive.
         calculation_date: The date the quote is calculated on.
         edp_start_year_index: RICS CIL Index row (LevyInflationIndex) for
@@ -157,9 +151,9 @@ def calculate_levy(
             in a different charging year than the EDP's publication and
             either index is missing.
         LevyAmountTooLargeError: either amount exceeds MAX_LEVY_AMOUNT, so
-            it could not be recorded for audit. A LevyChargeUnavailableError.
+            it could not be stored in the backend. A LevyChargeUnavailableError.
         LevyUnitsTooLargeError: units exceeds MAX_LEVY_UNITS, so it could not
-            be recorded for audit. A LevyChargeUnavailableError.
+            be stored in the backend. A LevyChargeUnavailableError.
     """
     if units <= 0:
         msg = f"units must be positive, got {units}"
@@ -173,6 +167,7 @@ def calculate_levy(
         apply_inflation=apply_inflation,
     )
     provisional = charge.base_charge_per_unit * units
+    original_base = charge.original_base_charge_per_unit * units
     if indices is None:
         inflation_adjusted = provisional
     else:
@@ -185,7 +180,7 @@ def calculate_levy(
     # Checked before rounding: quantize raises InvalidOperation once an amount
     # has more digits than the decimal context's precision, which a large
     # enough units would reach.
-    largest = max(provisional, inflation_adjusted)
+    largest = max(provisional, original_base, inflation_adjusted)
     if largest >= _FIRST_AMOUNT_TOO_LARGE:
         raise LevyAmountTooLargeError(largest, units, charge.edp_id)
     # After the amount check, so a units count too large on both counts reports
@@ -194,19 +189,17 @@ def calculate_levy(
         raise LevyUnitsTooLargeError(units, charge.edp_id)
 
     return LevyCalculation(
-        levy_charge_id=charge.id,
         edp_id=charge.edp_id,
-        edp_name=charge.edp_name,
         edp_start_date=charge.edp_start_date,
-        calculation_date=calculation_date,
         calculator_version=LEVY_CALCULATOR_VERSION,
         units=units,
         base_charge_per_unit=charge.base_charge_per_unit,
+        original_base_charge_per_unit=charge.original_base_charge_per_unit,
         # Exact for pence, so this only sets a 2-place scale. Rounds half-up
         # like the inflated total if a caller bypasses the table's check.
         provisional_amount=round_gbp(provisional),
+        original_base_amount=round_gbp(original_base),
         inflation_adjusted_amount=round_gbp(inflation_adjusted),
-        **_index_audit_fields(indices),
     )
 
 
@@ -235,19 +228,3 @@ def _applied_indices(
         )
         raise LevyChargeUnavailableError(msg)
     return edp_start_year_index, calculation_year_index
-
-
-def _index_audit_fields(
-    indices: tuple[LevyIndexRow, LevyIndexRow] | None,
-) -> dict[str, UUID | Decimal]:
-    """The audit record's index fields. Only indices that were actually applied
-    go on it, so none when no inflation step applied."""
-    if indices is None:
-        return {}
-    start_index, calc_index = indices
-    return {
-        "edp_start_year_index_id": start_index.id,
-        "edp_start_year_index_factor": start_index.index_factor,
-        "calculation_year_index_id": calc_index.id,
-        "calculation_year_index_factor": calc_index.index_factor,
-    }

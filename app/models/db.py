@@ -30,6 +30,11 @@ class Base(DeclarativeBase):
     """Base class for all database models."""
 
 
+# The shared check expression for every table whose comment must contain a
+# non-whitespace character
+COMMENT_NOT_BLANK = r"comment ~ '\S'"
+
+
 class SpatialLayerMixin:
     """Shared columns for spatial layers with name and JSONB attributes."""
 
@@ -237,7 +242,7 @@ class BasePrice(Base):
             "base_price > 0 AND base_price <> 'NaN'",
             name="ck_base_prices_base_price",
         ),
-        CheckConstraint(r"comment ~ '\S'", name="ck_base_prices_comment_not_blank"),
+        CheckConstraint(COMMENT_NOT_BLANK, name="ck_base_prices_comment_not_blank"),
         CheckConstraint(r"requestor ~ '\S'", name="ck_base_prices_requestor_not_blank"),
         CheckConstraint(
             r"jira_ticket ~ '^NRF2-[0-9]+$'", name="ck_base_prices_jira_ticket_format"
@@ -293,7 +298,6 @@ class LevyInflationIndex(Base):
     later calculation year. The 2026 base row and the 2027 charging-schedule
     row (factor 1.0000) are seeded by migration; later years are added by
     NRF Digital admins via the admin frontend (NRF2-1348), one row per year.
-    A row that has priced a quote cannot be deleted (audit FK RESTRICT).
     """
 
     __tablename__ = "levy_inflation_index"
@@ -304,7 +308,7 @@ class LevyInflationIndex(Base):
             name="ck_levy_inflation_index_cil_index",
         ),
         CheckConstraint(
-            r"comment ~ '\S'", name="ck_levy_inflation_index_comment_not_blank"
+            COMMENT_NOT_BLANK, name="ck_levy_inflation_index_comment_not_blank"
         ),
         CheckConstraint(
             r"requestor ~ '\S'", name="ck_levy_inflation_index_requestor_not_blank"
@@ -345,85 +349,50 @@ class LevyInflationIndex(Base):
         )
 
 
-class LevyCalculationRecord(Base):
-    """Audit row for one levy calculation.
+class LevyInflationIndexHistory(Base):
+    """History row for one inflation index addition.
 
-    One row per successful calculation. A redelivered job that calculates again
-    writes another row; the history is the point.
-
-    The values used are copied onto the row, and the *_id columns name the
-    base_prices (levy_charge_id) and levy_inflation_index rows they came from.
-    Comparing the two against the current row shows whether a value was
-    corrected after the event or the wrong row was picked up. The index
-    foreign keys are RESTRICT, so an index row that has priced a quote cannot
-    be deleted. levy_charge_id has no foreign key because base prices can be
-    deleted. The index columns are NULL when no inflation step applied.
-    calculator_version pins the rounding rule that derives the amounts from
-    base_charge_per_unit, units and the index factors.
-
-    sent_at is set once nrf-backend accepts the quote PATCH priced from this
-    row. NULL means delivery was never confirmed: not sent, or sent but the
-    stamp itself failed.
+    Copies the index's values as it was added, so a history row outlives the
+    amendment and the deletion of its index. The row's staff_* is the admin
+    who added it; comment is the comment they entered. Rows before this table
+    existed (the seeds) have no history; the history starts when the table
+    does.
     """
 
-    __tablename__ = "audit_levy_calculations"
-    __table_args__ = {"schema": "public"}
+    __tablename__ = "levy_inflation_index_history"
+    __table_args__ = (
+        CheckConstraint(
+            COMMENT_NOT_BLANK,
+            name="ck_levy_inflation_index_history_comment_not_blank",
+        ),
+        {"schema": "public"},
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    quote_reference: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    edp_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    edp_name: Mapped[str] = mapped_column(String, nullable=False)
-    edp_start_date: Mapped[date] = mapped_column(Date, nullable=False)
-    calculator_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    base_charge_per_unit: Mapped[Decimal] = mapped_column(
-        Numeric(12, 4), nullable=False
-    )
-    units: Mapped[int] = mapped_column(Integer, nullable=False)
-    calculation_date: Mapped[date] = mapped_column(Date, nullable=False)
-    provisional_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    inflation_adjusted_amount: Mapped[Decimal] = mapped_column(
-        Numeric(12, 2), nullable=False
-    )
-    # The base_prices row that priced the quote. Not a foreign key: this table
-    # is being removed, and an audit row must outlive an edited or deleted price.
-    # NULL on rows recorded before base_prices, whose levy_charges ids are gone.
-    levy_charge_id: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, index=True
-    )
-    edp_start_year_index_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey(
-            "public.levy_inflation_index.id",
-            name="fk_audit_levy_calculations_edp_start_year_index",
-            ondelete="RESTRICT",
-        ),
-        nullable=True,
-    )
-    edp_start_year_index_factor: Mapped[Decimal | None] = mapped_column(
-        Numeric(10, 4), nullable=True
-    )
-    calculation_year_index_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey(
-            "public.levy_inflation_index.id",
-            name="fk_audit_levy_calculations_calculation_year_index",
-            ondelete="RESTRICT",
-        ),
-        nullable=True,
-    )
-    calculation_year_index_factor: Mapped[Decimal | None] = mapped_column(
-        Numeric(10, 4), nullable=True
-    )
+    # Names the index row this addition was about. No foreign key: a deleted
+    # index must not take its history with it (the calculation audit's RESTRICT
+    # links still stop an index that priced a quote being deleted at all).
+    inflation_index_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    charging_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The index's values as it was added. index_factor is copied so the
+    # history shows the factor the addition produced, even after a later
+    # amendment re-derives the live row's.
+    cil_index: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    index_factor: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    comment: Mapped[str] = mapped_column(String(500), nullable=False)
+    staff_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    staff_full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    staff_email: Mapped[str] = mapped_column(String(254), nullable=False)
+    requestor: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    jira_ticket: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # When the index was added. Ordered descending, this is the additions
+    # history the admin frontend displays.
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    sent_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
 
     def __repr__(self) -> str:
-        return (
-            f"<LevyCalculationRecord(quote={self.quote_reference}, "
-            f"edp_id={self.edp_id}, provisional={self.provisional_amount})>"
-        )
+        return f"<LevyInflationIndexHistory(year={self.charging_year})>"
 
 
 class DataSyncRun(Base):

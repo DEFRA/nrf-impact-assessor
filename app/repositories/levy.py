@@ -1,6 +1,6 @@
-"""Lookups and the audit record the levy calculation needs: the EDP id for a
-label, the base price and RICS CIL inflation index rows that price an EDP at
-a moment, and the audit record of a calculation. Kept out of the
+"""Lookups the levy calculation needs: the EDP id for a
+label, and the base price and RICS CIL inflation index rows that price an EDP at
+a moment. Kept out of the
 Repository class, which is large and spatial; these are small ORM
 operations."""
 
@@ -8,18 +8,15 @@ import logging
 from datetime import date, datetime
 from decimal import Decimal
 from typing import NamedTuple
-from uuid import UUID
 
-from sqlalchemy import Integer, cast, extract, func, select, update
+from sqlalchemy import Integer, cast, extract, select
 from sqlalchemy.orm import Session, aliased
 
-from app.calculators.levy import LevyCalculation
 from app.data_sync.active_version import get_active_version
 from app.models.db import (
     BasePrice,
     Edp,
     EdpBoundaryLayer,
-    LevyCalculationRecord,
     LevyInflationIndex,
 )
 
@@ -65,13 +62,12 @@ def resolve_edp_id(session: Session, label: str) -> int | None:
 
 class BasePriceInForce(NamedTuple):
     """The base price in force for an EDP, with the EDP fields the levy
-    calculation and its audit record carry. id is the base_prices row's id."""
+    calculation carries, and its original (oldest) base price."""
 
-    id: int
     edp_id: int
-    edp_name: str
     edp_start_date: date
     base_charge_per_unit: Decimal
+    original_base_charge_per_unit: Decimal
 
 
 class LevyPricingRows(NamedTuple):
@@ -96,8 +92,16 @@ def get_levy_pricing_rows(
     """
     start_index = aliased(LevyInflationIndex)
     calculation_index = aliased(LevyInflationIndex)
+    oldest_price = aliased(BasePrice)
+    original_price = (
+        select(oldest_price.base_price)
+        .where(oldest_price.edp_id == edp_id)
+        .order_by(oldest_price.effective_from.asc(), oldest_price.id.asc())
+        .limit(1)
+        .scalar_subquery()
+    )
     stmt = (
-        select(BasePrice, Edp, start_index, calculation_index)
+        select(BasePrice, Edp, original_price, start_index, calculation_index)
         .join(Edp, Edp.id == BasePrice.edp_id)
         .outerjoin(
             start_index,
@@ -114,50 +118,11 @@ def get_levy_pricing_rows(
     row = session.execute(stmt).one_or_none()
     if row is None:
         return None
-    base_price, edp, start, calculation = row
+    base_price, edp, original, start, calculation = row
     charge = BasePriceInForce(
-        id=base_price.id,
         edp_id=edp.id,
-        edp_name=edp.name,
         edp_start_date=edp.start_date,
         base_charge_per_unit=base_price.base_price,
+        original_base_charge_per_unit=original,
     )
     return LevyPricingRows(charge, start, calculation)
-
-
-def record_levy_calculation(
-    session: Session, quote_reference: str, levy: LevyCalculation
-) -> LevyCalculationRecord:
-    """Add the scenario 7 audit row for one calculation. The caller commits."""
-    row = LevyCalculationRecord(
-        quote_reference=quote_reference,
-        edp_id=levy.edp_id,
-        edp_name=levy.edp_name,
-        edp_start_date=levy.edp_start_date,
-        calculator_version=levy.calculator_version,
-        base_charge_per_unit=levy.base_charge_per_unit,
-        units=levy.units,
-        calculation_date=levy.calculation_date,
-        provisional_amount=levy.provisional_amount,
-        inflation_adjusted_amount=levy.inflation_adjusted_amount,
-        levy_charge_id=levy.levy_charge_id,
-        edp_start_year_index_id=levy.edp_start_year_index_id,
-        edp_start_year_index_factor=levy.edp_start_year_index_factor,
-        calculation_year_index_id=levy.calculation_year_index_id,
-        calculation_year_index_factor=levy.calculation_year_index_factor,
-    )
-    session.add(row)
-    return row
-
-
-def mark_levy_calculation_sent(session: Session, audit_id: UUID) -> None:
-    """Stamp sent_at on the audit row a delivered quote was priced from.
-
-    By id, not quote reference: a redelivered job records one row per
-    attempt, and only the one that was sent is stamped. The caller commits.
-    """
-    session.execute(
-        update(LevyCalculationRecord)
-        .where(LevyCalculationRecord.id == audit_id)
-        .values(sent_at=func.now())
-    )

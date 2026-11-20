@@ -471,20 +471,23 @@ def _build_stub_patch_payload(stub_edps: int = 1) -> dict:
         total=NutrientImpact(nitrogen_total_kg_yr=0.0, phosphorus_total_kg_yr=0.0),
         catchment_impacts=catchments,
     )
+    calculated_at = datetime.now(UTC)
     stub_levy = LevyCalculation(
-        levy_charge_id=1,
         edp_id=1,
-        edp_name=_STUB_EDP_LABEL,
         edp_start_date=date(2026, 1, 1),
-        calculation_date=datetime.now(UTC).date(),
         calculator_version=LEVY_CALCULATOR_VERSION,
         units=1,
         base_charge_per_unit=Decimal("2675.0000"),
+        original_base_charge_per_unit=Decimal("2675.0000"),
         provisional_amount=Decimal("2675.00"),
+        original_base_amount=Decimal("2675.00"),
         inflation_adjusted_amount=Decimal("2675.00"),
     )
     payload = build_quote_patch_payload(
-        [stub_result], [IntersectingEdp(label=_STUB_EDP_LABEL)], levy=stub_levy
+        [stub_result],
+        [IntersectingEdp(label=_STUB_EDP_LABEL)],
+        levy=stub_levy,
+        calculated_at=calculated_at,
     )
     if payload is None:
         msg = "Stub inputs produced no payload"

@@ -16,11 +16,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.main import app
-from app.models.db import LevyInflationIndex
-from app.repositories.levy import record_levy_calculation
+from app.models.db import LevyInflationIndex, LevyInflationIndexHistory
 from app.repositories.repository import Repository
-from tests.conftest import make_levy_calculation
-from tests.integration.conftest import insert_base_price, insert_inflation_index
+from tests.integration.conftest import insert_inflation_index
 
 pytestmark = pytest.mark.integration
 
@@ -47,6 +45,18 @@ def _body(**overrides) -> dict:
         "staffFullName": "Ada Admin",
         "staffEmail": "ada@example.com",
     } | overrides
+
+
+def _history(repository: Repository) -> list[LevyInflationIndexHistory]:
+    """Every history row, oldest first, as the additions were made."""
+    with repository.session() as session:
+        return list(
+            session.scalars(
+                select(LevyInflationIndexHistory).order_by(
+                    LevyInflationIndexHistory.created_at
+                )
+            )
+        )
 
 
 @pytest.fixture
@@ -332,32 +342,121 @@ def test_delete_is_refused_once_the_charging_year_has_begun(
     assert _count(repository) == 1
 
 
-def test_delete_of_an_index_that_priced_a_quote_is_refused(
-    client: TestClient, repository: Repository
-):
-    charge_id = insert_base_price(repository)
-    start_id = insert_inflation_index(repository, BASE_YEAR)
-    future_id = insert_inflation_index(repository, _future_year())
-    levy = make_levy_calculation(
-        levy_charge_id=charge_id,
-        edp_start_year_index_id=start_id,
-        edp_start_year_index_factor=Decimal("1.0000"),
-        calculation_year_index_id=future_id,
-        calculation_year_index_factor=Decimal("1.0000"),
-    )
-    with repository.session() as session:
-        record_levy_calculation(session, "NRL-000001", levy)
-        session.commit()
-
-    response = client.delete(f"{URL}/{future_id}")
-
-    assert response.status_code == 409
-    assert response.json()["detail"]["error"] == "inflation_index_in_use"
-    assert "used to price a quote" in response.json()["detail"]["message"]
-    assert _count(repository) == 2
-
-
 def test_delete_of_an_unknown_index_is_not_found(client: TestClient):
     response = client.delete(f"{URL}/00000000-0000-0000-0000-000000000000")
 
     assert response.status_code == 404
+
+
+def test_add_records_the_addition_in_the_history(
+    client: TestClient, repository: Repository
+):
+    insert_inflation_index(repository, BASE_YEAR)
+
+    response = client.post(URL, json=_body())
+
+    assert response.status_code == 201
+    [row] = _history(repository)
+    assert row.inflation_index_id == UUID(response.json()["id"])
+    assert row.charging_year == _future_year()
+    assert row.cil_index == Decimal("384.21")
+    assert row.index_factor == Decimal("0.9605")
+    assert row.comment == "NE advice"
+    assert row.requestor == "Grace Hopper"
+    assert row.jira_ticket == "NRF2-1234"
+    assert (row.staff_id, row.staff_full_name, row.staff_email) == (
+        "entra-oid",
+        "Ada Admin",
+        "ada@example.com",
+    )
+
+
+def test_a_refused_add_writes_no_history(client: TestClient, repository: Repository):
+    insert_inflation_index(repository, BASE_YEAR)
+    taken_year = _future_year()
+    insert_inflation_index(repository, taken_year)
+
+    response = client.post(URL, json=_body())
+
+    assert response.status_code == 409
+    assert _history(repository) == []
+
+
+def test_change_writes_no_history(client: TestClient, repository: Repository):
+    insert_inflation_index(repository, BASE_YEAR)
+    future_id = insert_inflation_index(repository, _future_year())
+
+    response = client.patch(
+        f"{URL}/{future_id}",
+        json={
+            "cilIndex": 420.00,
+            "comment": "Revised",
+            "requestor": "Alan Turing",
+            "jiraTicket": "NRF2-2000",
+            "staffId": "other-oid",
+            "staffFullName": "Bob Admin",
+            "staffEmail": "bob@example.com",
+        },
+    )
+
+    assert response.status_code == 200
+    assert _history(repository) == []
+
+
+def test_delete_writes_no_history_and_keeps_the_addition_record(
+    client: TestClient, repository: Repository
+):
+    insert_inflation_index(repository, BASE_YEAR)
+    added = client.post(URL, json=_body())
+    future_id = UUID(added.json()["id"])
+
+    response = client.delete(f"{URL}/{future_id}")
+
+    assert response.status_code == 204
+    # The index is gone; its addition record survives it
+    assert _count(repository) == 1
+    [row] = _history(repository)
+    assert row.inflation_index_id == future_id
+    assert row.charging_year == _future_year()
+    assert row.comment == "NE advice"
+
+
+def test_lists_the_additions_history_most_recent_first(
+    client: TestClient, repository: Repository
+):
+    insert_inflation_index(repository, BASE_YEAR)
+    first_id = UUID(client.post(URL, json=_body()).json()["id"])
+    second_id = UUID(
+        client.post(URL, json=_body(chargingYear=_future_year() + 1)).json()["id"]
+    )
+
+    response = client.get(f"{URL}/history")
+
+    assert response.status_code == 200
+    [second, first] = response.json()
+    assert [row["inflationIndexId"] for row in (second, first)] == [
+        str(second_id),
+        str(first_id),
+    ]
+    assert set(second) == {
+        "id",
+        "inflationIndexId",
+        "chargingYear",
+        "cilIndex",
+        "indexFactor",
+        "comment",
+        "requestor",
+        "jiraTicket",
+        "staffId",
+        "staffFullName",
+        "staffEmail",
+        "createdAt",
+    }
+    assert second["comment"] == "NE advice"
+
+
+def test_the_additions_history_starts_empty(client: TestClient):
+    response = client.get(f"{URL}/history")
+
+    assert response.status_code == 200
+    assert response.json() == []

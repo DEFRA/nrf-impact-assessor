@@ -13,7 +13,6 @@ from app.common.auth import API_KEY_HEADER, require_api_key
 from app.config import config
 from app.main import app
 from app.repositories.levy import LevyPricingRows
-from tests.conftest import EDP_NAME
 
 URL = "/levy/recalculate"
 VALID_BODY = {"edpId": 1, "units": 10, "requestDate": "2026-10-14T08:30:00Z"}
@@ -25,11 +24,10 @@ def _index(factor: str) -> SimpleNamespace:
 
 def _charge(edp_start_date: date = date(2026, 1, 1)) -> SimpleNamespace:
     return SimpleNamespace(
-        id=41,
         edp_id=1,
-        edp_name=EDP_NAME,
         edp_start_date=edp_start_date,
         base_charge_per_unit=Decimal("2675.0000"),
+        original_base_charge_per_unit=Decimal("2675.0000"),
     )
 
 
@@ -57,7 +55,7 @@ def db(mocker, session):
     }
 
 
-def test_returns_provisional_and_inflation_adjusted_levy(client, db):
+def test_returns_the_levy_with_every_audit_field(client, db):
     response = client.post(URL, json=VALID_BODY)
 
     assert response.status_code == 200
@@ -65,6 +63,11 @@ def test_returns_provisional_and_inflation_adjusted_levy(client, db):
         "calculationDate": None,
         "provisionalAmount": 26750.0,
         "inflationAdjustedAmount": 26750.0,
+        "originalBaseAmount": 26750.0,
+        "baseChargePerUnit": 2675.0,
+        "originalBaseChargePerUnit": 2675.0,
+        "calculatorVersion": 1,
+        "units": 10,
     }
 
 
@@ -156,6 +159,7 @@ def test_returns_unprocessable_when_the_levy_is_too_large(client, db):
 def test_returns_unprocessable_for_more_units_than_the_audit_record_holds(client, db):
     charge = _charge()
     charge.base_charge_per_unit = Decimal("0.01")
+    charge.original_base_charge_per_unit = Decimal("0.01")
     db["pricing"].return_value = LevyPricingRows(charge, None, None)
 
     response = client.post(URL, json=VALID_BODY | {"units": 2_147_483_648})

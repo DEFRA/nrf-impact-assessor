@@ -2,7 +2,8 @@
 
 One row per charging year, in force for that whole year. The admin frontend
 sends the published RICS CIL Index number; the factor applied to a levy is
-derived from the fixed 2026 base row, never accepted from the caller.
+derived from the fixed 2026 base row, never accepted from the caller. Every
+add also writes an additions-history row.
 """
 
 import logging
@@ -27,7 +28,7 @@ from app.common.api_fields import (
     StaffId,
     UpdateModel,
 )
-from app.models.db import LevyInflationIndex
+from app.models.db import LevyInflationIndex, LevyInflationIndexHistory
 from app.repositories import inflation_indexes as store
 from app.repositories.engine import get_shared_repository
 from app.repositories.repository import Repository
@@ -104,6 +105,32 @@ class InflationIndexResponse(_CamelModel):
     staff_email: str
 
 
+class InflationIndexHistoryResponse(_CamelModel):
+    """The record of one inflation index addition.
+
+    The index's values as it was added, so a row outlives the amendment or
+    deletion of its index."""
+
+    model_config = ConfigDict(
+        frozen=True,
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    id: UUID
+    inflation_index_id: UUID
+    charging_year: int
+    cil_index: float
+    index_factor: float
+    comment: str
+    requestor: str | None
+    jira_ticket: str | None
+    staff_id: str
+    staff_full_name: str
+    staff_email: str
+    created_at: datetime
+
+
 def _to_response(row: LevyInflationIndex) -> InflationIndexResponse:
     return InflationIndexResponse(
         id=row.id,
@@ -118,6 +145,25 @@ def _to_response(row: LevyInflationIndex) -> InflationIndexResponse:
         staff_id=row.staff_id,
         staff_full_name=row.staff_full_name,
         staff_email=row.staff_email,
+    )
+
+
+def _to_history_response(
+    row: LevyInflationIndexHistory,
+) -> InflationIndexHistoryResponse:
+    return InflationIndexHistoryResponse(
+        id=row.id,
+        inflation_index_id=row.inflation_index_id,
+        charging_year=row.charging_year,
+        cil_index=row.cil_index,
+        index_factor=row.index_factor,
+        comment=row.comment,
+        requestor=row.requestor,
+        jira_ticket=row.jira_ticket,
+        staff_id=row.staff_id,
+        staff_full_name=row.staff_full_name,
+        staff_email=row.staff_email,
+        created_at=row.created_at,
     )
 
 
@@ -166,6 +212,20 @@ def list_inflation_indexes() -> list[InflationIndexResponse]:
         return [_to_response(row) for row in store.list_inflation_indexes(session)]
 
 
+@router.get(
+    "/inflation-indexes/history",
+    response_model_by_alias=True,
+    summary="List every recorded addition, most recent first",
+)
+def list_inflation_index_history() -> list[InflationIndexHistoryResponse]:
+    """Return the additions history: one row per added index."""
+    with _get_repository().session() as session:
+        return [
+            _to_history_response(row)
+            for row in store.list_inflation_index_history(session)
+        ]
+
+
 @router.post(
     "/inflation-indexes",
     status_code=status.HTTP_201_CREATED,
@@ -207,9 +267,7 @@ def add_inflation_index(body: InflationIndexCreate) -> InflationIndexResponse:
     response_model_by_alias=True,
     responses={
         404: {"description": "Inflation index not found"},
-        409: {
-            "description": "The charging year has begun, or the index has priced a quote"
-        },
+        409: {"description": "The charging year has begun"},
         422: {"description": "Invalid request"},
         500: {"description": "The base charging year's index row is missing"},
     },
@@ -248,9 +306,7 @@ def update_inflation_index(
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
         404: {"description": "Inflation index not found"},
-        409: {
-            "description": "The charging year has begun, or the index has priced a quote"
-        },
+        409: {"description": "The charging year has begun"},
     },
 )
 def delete_inflation_index(index_id: UUID) -> None:
@@ -264,12 +320,6 @@ def delete_inflation_index(index_id: UUID) -> None:
             _raise_conflict(
                 "inflation_index_taken_effect",
                 f"Inflation index {index_id} has taken effect and cannot be deleted",
-            )
-        except store.InflationIndexInUseError:
-            _raise_conflict(
-                "inflation_index_in_use",
-                f"Inflation index {index_id} has been used to price a quote "
-                "and cannot be deleted",
             )
         session.commit()
         logger.info(f"Inflation index deleted: id={index_id}")

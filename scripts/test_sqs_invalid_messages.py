@@ -16,7 +16,7 @@ Usage:
     python scripts/test_sqs_invalid_messages.py
 
 Environment overrides:
-    AWS_ENDPOINT_URL   default http://localhost:4568
+    AWS_ENDPOINT_URL   default http://localhost:4566
     SQS_QUEUE_NAME     default nrf-impact-assessment-jobs
     AWS_REGION         default eu-west-2
 
@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.aws.sqs import SQSClient  # noqa: E402
 
-ENDPOINT_URL = os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4568")
+ENDPOINT_URL = os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4566")
 QUEUE_NAME = os.environ.get("SQS_QUEUE_NAME", "nrf-impact-assessment-jobs")
 REGION = os.environ.get("AWS_REGION", "eu-west-2")
 

@@ -4,7 +4,6 @@ import logging
 import time
 from datetime import UTC, datetime
 from typing import NamedTuple
-from uuid import UUID
 
 import geopandas as gpd
 import shapely
@@ -26,11 +25,7 @@ from app.levy.service import price_levy
 from app.models.enums import AssessmentType
 from app.models.job import ImpactAssessmentJob
 from app.repositories.audit import record_model_result
-from app.repositories.levy import (
-    mark_levy_calculation_sent,
-    record_levy_calculation,
-    resolve_edp_id,
-)
+from app.repositories.levy import resolve_edp_id
 from app.repositories.repository import Repository
 from app.runner.runner import run_assessment
 
@@ -44,12 +39,13 @@ _NO_EDP_ID = "no EDP_id for label in edp_boundary_layer"
 _NO_CHARGE = "no base price in force for EDP"
 
 
-class RecordedLevy(NamedTuple):
-    """A levy calculation and the id of the audit row it was recorded as, so
-    the callback can stamp sent_at on that row once the quote is delivered."""
+class PricedLevy(NamedTuple):
+    """A levy calculation and the moment it was calculated, both sent to
+    nrf-backend in the quote callback, which records them as the calculation
+    history."""
 
     levy: LevyCalculation
-    audit_id: UUID
+    calculated_at: datetime
 
 
 class JobProcessingError(RuntimeError):
@@ -118,7 +114,7 @@ class JobOrchestrator:
             # LevyChargeUnavailableError, which the consumer treats as "not
             # done": the message stays on the queue, no PATCH, so no quote
             # email (scenario 5).
-            recorded = self._calculate_levy(job)
+            priced = self._calculate_levy(job)
 
             if not job.boundary_geojson:
                 msg = (
@@ -138,7 +134,7 @@ class JobOrchestrator:
 
             # Callback to nrf-backend if quote reference and EDPs are present.
             # Raises if the PATCH fails, so an undelivered quote is retried.
-            self._send_results_callback(job, dataframes, recorded)
+            self._send_results_callback(job, dataframes, priced)
 
             processing_time = time.time() - start_time
             logger.info(
@@ -305,9 +301,9 @@ class JobOrchestrator:
 
         return gdf
 
-    def _calculate_levy(self, job: ImpactAssessmentJob) -> RecordedLevy | None:
+    def _calculate_levy(self, job: ImpactAssessmentJob) -> PricedLevy | None:
         """Resolve the charge for the job's single EDP, calculate the levy and
-        persist the scenario 7 audit row. Returns the levy with that row's id.
+        log it. Returns the levy with the moment it was calculated.
 
         Returns None only when there is no boundary at all: the geometry check
         that follows raises its own error for that case. A boundary that
@@ -360,28 +356,21 @@ class JobOrchestrator:
                 raise unavailable(str(e), where) from e
             if levy is None:
                 raise unavailable(_NO_CHARGE, where)
-            record = record_levy_calculation(session, job_id, levy)
-            session.commit()
-            audit_id = record.id
 
-        # Scenario 7 audit record, also in the log so a quote can be traced
-        # without a database query. One line, key=value.
+        # Logged so a quote can be traced without a database query.
         logger.info(
             "Levy calculated: "
-            f"quote={job_id} edp_id={levy.edp_id} edp_name={levy.edp_name!r} "
+            f"quote={job_id} edp_id={levy.edp_id} "
             f"edp_start_date={levy.edp_start_date} "
             f"calculator_version={levy.calculator_version} "
             f"base_charge_per_unit={levy.base_charge_per_unit} "
-            f"units={levy.units} calculation_date={levy.calculation_date} "
+            f"original_base_charge_per_unit={levy.original_base_charge_per_unit} "
+            f"units={levy.units} "
             f"provisional_amount={levy.provisional_amount} "
-            f"inflation_adjusted_amount={levy.inflation_adjusted_amount} "
-            f"levy_charge_id={levy.levy_charge_id} "
-            f"edp_start_year_index_id={levy.edp_start_year_index_id} "
-            f"edp_start_year_index_factor={levy.edp_start_year_index_factor} "
-            f"calculation_year_index_id={levy.calculation_year_index_id} "
-            f"calculation_year_index_factor={levy.calculation_year_index_factor}"
+            f"original_base_amount={levy.original_base_amount} "
+            f"inflation_adjusted_amount={levy.inflation_adjusted_amount}"
         )
-        return RecordedLevy(levy=levy, audit_id=audit_id)
+        return PricedLevy(levy=levy, calculated_at=calculated_at)
 
     def _boundary_catchments(self, job: ImpactAssessmentJob) -> list[dict]:
         """The NN catchments the job's boundary falls in.
@@ -408,7 +397,7 @@ class JobOrchestrator:
         self,
         job: ImpactAssessmentJob,
         dataframes: dict,
-        recorded: RecordedLevy | None,
+        priced: PricedLevy | None,
     ) -> None:
         """Send assessment results to nrf-backend via PATCH /quotes/{reference}.
 
@@ -421,8 +410,7 @@ class JobOrchestrator:
         and the message is redelivered / DLQ'd rather than deleted with the
         quote never sent. That includes having nothing to send: no assessment
         results, no NN catchment impact, or no EDP payload raise
-        JobProcessingError. Once the backend accepts it, sent_at is stamped on
-        the audit row the quote was priced from.
+        JobProcessingError.
         """
         if not self.backend_client:
             logger.error("Backend client not configured, skipping results callback")
@@ -430,7 +418,7 @@ class JobOrchestrator:
         if not job.reference:
             logger.error("Job has no reference, skipping results callback")
             return
-        if recorded is None:
+        if priced is None:
             logger.error(
                 f"No levy calculated for quote {job.reference}, "
                 "skipping results callback"
@@ -469,7 +457,8 @@ class JobOrchestrator:
             results=results,
             intersecting_edps=intersecting_edps,
             catchments=catchments,
-            levy=recorded.levy,
+            levy=priced.levy,
+            calculated_at=priced.calculated_at,
         )
         if payload is None:
             msg = (
@@ -486,18 +475,3 @@ class JobOrchestrator:
             f"(HTTP {response.status_code} in {time.time() - start:.2f}s, "
             f"{len(edps)} EDP(s): {edp_names})"
         )
-        self._mark_sent(job.reference, recorded.audit_id)
-
-    def _mark_sent(self, reference: str, audit_id: UUID) -> None:
-        """Stamp sent_at on the audit row. Failures are logged, not raised:
-        the quote is already delivered, and failing the job would redeliver
-        the message and send it again."""
-        try:
-            with self.repository.session() as session:
-                mark_levy_calculation_sent(session, audit_id)
-                session.commit()
-        except Exception:
-            logger.exception(
-                f"Quote {reference} was delivered but sent_at could not be set "
-                f"on audit row {audit_id}"
-            )

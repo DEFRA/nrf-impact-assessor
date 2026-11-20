@@ -124,4 +124,143 @@
         </rollback>
     </changeSet>
 
+    <!-- Alembic revision: a3f6c8d2e4b7 -->
+
+    <!-- One row per inflation index addition, written in the same
+         transaction as the add. Amendments and deletions are not recorded.
+         The table starts empty: the seeded rows predate admin additions, so
+         there is nothing to backfill. inflation_index_id has no foreign key
+         on purpose: a deleted index must keep its history. -->
+    <changeSet id="17-inflation-index-history" author="nrf">
+        <createTable tableName="levy_inflation_index_history" schemaName="public">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="inflation_index_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="charging_year" type="integer">
+                <constraints nullable="false"/>
+            </column>
+            <column name="cil_index" type="numeric(10,4)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="index_factor" type="numeric(10,4)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="comment" type="varchar(500)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="staff_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="staff_full_name" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="staff_email" type="varchar(254)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="requestor" type="varchar(255)">
+                <constraints nullable="true"/>
+            </column>
+            <column name="jira_ticket" type="varchar(20)">
+                <constraints nullable="true"/>
+            </column>
+            <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <sql>ALTER TABLE public.levy_inflation_index_history
+            ADD CONSTRAINT ck_levy_inflation_index_history_comment_not_blank
+            CHECK (comment ~ '\S')</sql>
+        <createIndex indexName="ix_public_levy_inflation_index_history_inflation_index_id"
+                     tableName="levy_inflation_index_history" schemaName="public">
+            <column name="inflation_index_id"/>
+        </createIndex>
+        <rollback>
+            <dropIndex indexName="ix_public_levy_inflation_index_history_inflation_index_id"
+                       tableName="levy_inflation_index_history" schemaName="public"/>
+            <dropTable tableName="levy_inflation_index_history" schemaName="public"/>
+        </rollback>
+    </changeSet>
+
+    <!-- Alembic revision: 9a4d7c2b1e30 -->
+
+    <!-- The levy calculation history now lives in nrf-backend. Rows are
+         discarded: there is no production data yet. The rollback recreates the
+         table empty. -->
+    <changeSet id="17-drop-audit-levy-calculations" author="nrf">
+        <dropTable tableName="audit_levy_calculations" schemaName="public"/>
+        <rollback>
+            <createTable tableName="audit_levy_calculations" schemaName="public">
+                <column name="id" type="uuid">
+                    <constraints primaryKey="true" nullable="false"/>
+                </column>
+                <column name="quote_reference" type="varchar">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="edp_id" type="integer">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="edp_name" type="varchar">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="edp_start_date" type="date">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="calculator_version" type="integer">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="base_charge_per_unit" type="numeric(12,4)">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="units" type="integer">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="calculation_date" type="date">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="provisional_amount" type="numeric(12,2)">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="inflation_adjusted_amount" type="numeric(12,2)">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="levy_charge_id" type="integer"/>
+                <column name="edp_start_year_index_id" type="uuid"/>
+                <column name="edp_start_year_index_factor" type="numeric(10,4)"/>
+                <column name="calculation_year_index_id" type="uuid"/>
+                <column name="calculation_year_index_factor" type="numeric(10,4)"/>
+                <column name="created_at" type="timestamptz" defaultValueComputed="now()">
+                    <constraints nullable="false"/>
+                </column>
+                <column name="sent_at" type="timestamptz"/>
+            </createTable>
+            <createIndex indexName="ix_public_audit_levy_calculations_quote_reference"
+                         tableName="audit_levy_calculations" schemaName="public">
+                <column name="quote_reference"/>
+            </createIndex>
+            <createIndex indexName="ix_public_audit_levy_calculations_levy_charge_id"
+                         tableName="audit_levy_calculations" schemaName="public">
+                <column name="levy_charge_id"/>
+            </createIndex>
+            <addForeignKeyConstraint constraintName="fk_audit_levy_calculations_edp_start_year_index"
+                                     baseTableName="audit_levy_calculations"
+                                     baseTableSchemaName="public"
+                                     baseColumnNames="edp_start_year_index_id"
+                                     referencedTableName="levy_inflation_index"
+                                     referencedTableSchemaName="public"
+                                     referencedColumnNames="id"
+                                     onDelete="RESTRICT"/>
+            <addForeignKeyConstraint constraintName="fk_audit_levy_calculations_calculation_year_index"
+                                     baseTableName="audit_levy_calculations"
+                                     baseTableSchemaName="public"
+                                     baseColumnNames="calculation_year_index_id"
+                                     referencedTableName="levy_inflation_index"
+                                     referencedTableSchemaName="public"
+                                     referencedColumnNames="id"
+                                     onDelete="RESTRICT"/>
+        </rollback>
+    </changeSet>
+
 </databaseChangeLog>
