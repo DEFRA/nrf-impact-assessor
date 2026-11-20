@@ -160,14 +160,25 @@ timestamps are stored and passed as UTC; the charging year is the UTC year.
 the factor it derives against the 2026 base (2026 = 1.0000): the factor is
 `cil_index / the 2026 row's cil_index`, quantized to 4 dp half-up. A row is in
 force for the whole of its charging year — the effective date is 1 January
-00:00 UTC of `charging_year`, derived, not stored — and it is read when the
-calculation date falls in a later charging year than the EDP's publication, to
-inflation-adjust the provisional amount. Migration `2ddd520a2291` seeds the
+00:00 UTC of `charging_year`, derived, not stored. The levy reads `cil_index`
+for every year from the base price's effective year to the calculation year:
+each year's amount is provisional x that year's index / the effective year's
+index, and the calculation year's amount is the inflation-adjusted levy. Migration `2ddd520a2291` seeds the
 2026 base row and the 2027 charging-schedule row (factor 1.0000: the first
 year's inflation is built into the charging schedule) with the user recorded
 as `system`; later years are added by NRF Digital admins through the admin
 frontend one row per year, each recording who saved it, when and why. A row
 whose charging year has begun cannot be changed or deleted.
+
+The seeded rows already keep 2027 quotes uninflated: the 2027 `cil_index`
+equals 2026's, so no admin step is needed for that. The steps below are only
+needed to replace the seeded 2027 `cil_index` with the published figure while
+keeping 2027 quotes uninflated. Both must be saved **before 2027-01-01 00:00
+UTC**: a base price for each EDP effective 2027-01-01 00:00 UTC (so 2027 is the
+base year and its own index cancels out), and the 2027 row's `cil_index` set to
+the published figure. Changing the index alone would inflate 2027 quotes priced
+from a 2026 base price. From that moment the admin APIs refuse both: a base
+price must take effect in the future, and the 2027 row has taken effect.
 
 `levy_inflation_index_history` records **additions only**: one row per index
 added, written in the same transaction as the add, copying the values as saved.

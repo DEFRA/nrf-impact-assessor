@@ -42,11 +42,7 @@ LEVY_CHARGE_ID = 41
 
 
 def make_levy_calculation(**overrides) -> LevyCalculation:
-    """Build a LevyCalculation carrying every scenario 7 audit field.
-
-    Shared so the audit-field contract lives in one place; pass keyword
-    overrides for the fields a test actually cares about.
-    """
+    """Build a LevyCalculation; pass overrides for the fields a test cares about."""
     fields = {
         "levy_charge_id": LEVY_CHARGE_ID,
         "edp_id": 1,
@@ -56,6 +52,7 @@ def make_levy_calculation(**overrides) -> LevyCalculation:
         "calculator_version": 1,
         "units": 10,
         "base_charge_per_unit": Decimal("2675.0000"),
+        "base_price_effective_from": datetime(2026, 1, 1, tzinfo=UTC),
         "provisional_amount": Decimal("26750.00"),
         "inflation_adjusted_amount": Decimal("26750.00"),
     }

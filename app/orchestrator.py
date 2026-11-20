@@ -357,7 +357,10 @@ class JobOrchestrator:
             if levy is None:
                 raise unavailable(_NO_CHARGE, where)
 
-        # Logged so a quote can be traced without a database query.
+        # Logged so a quote can be traced without a database query. One line,
+        # key=value. No lines (under the minimum) logs the index fields as None.
+        lines = levy.yearly_lines
+        base, last = (lines[0], lines[-1]) if lines else (None, None)
         logger.info(
             "Levy calculated: "
             f"quote={job_id} edp_id={levy.edp_id} edp_name={levy.edp_name!r} "
@@ -368,10 +371,12 @@ class JobOrchestrator:
             f"provisional_amount={levy.provisional_amount} "
             f"inflation_adjusted_amount={levy.inflation_adjusted_amount} "
             f"levy_charge_id={levy.levy_charge_id} "
-            f"edp_start_year_index_id={levy.edp_start_year_index_id} "
-            f"edp_start_year_index_factor={levy.edp_start_year_index_factor} "
-            f"calculation_year_index_id={levy.calculation_year_index_id} "
-            f"calculation_year_index_factor={levy.calculation_year_index_factor}"
+            f"base_price_effective_from={levy.base_price_effective_from:%Y-%m-%d} "
+            f"base_index_id={base and base.index_id} "
+            f"base_index_value={base and base.index_value} "
+            f"calculation_index_id={last and last.index_id} "
+            f"calculation_index_value={last and last.index_value} "
+            f"lines={len(lines)}"
         )
         return PricedLevy(levy=levy, calculated_at=calculated_at)
 

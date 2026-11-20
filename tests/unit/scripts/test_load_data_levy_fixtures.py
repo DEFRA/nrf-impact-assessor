@@ -7,13 +7,8 @@ writes, so a local reload never nulls them.
 """
 
 from decimal import Decimal
-from unittest.mock import MagicMock
 
-import pytest
-from load_data import SpatialDataLoader, _levy_index_from_row
-from sqlalchemy.exc import IntegrityError
-
-from app.models.db import LevyInflationIndex
+from load_data import _levy_index_from_row
 
 ROW = {
     "charging_year": "2026",
@@ -44,25 +39,3 @@ def _csv(tmp_path, charging_year: str):
         "system@nrf.invalid\n"
     )
     return path
-
-
-def test_removing_a_priced_index_explains_the_fk_failure(tmp_path):
-    # A quote priced from the 2026 row holds a RESTRICT FK to it, so rekeying
-    # the row (a delete plus an insert) fails at the delete flush.
-    priced = _levy_index_from_row(ROW)
-    session = MagicMock()
-    session.scalars.return_value = [priced]
-    session.flush.side_effect = IntegrityError("DELETE", {}, Exception("fk"))
-    repository = MagicMock()
-    repository.session.return_value.__enter__.return_value = session
-    loader = SpatialDataLoader.__new__(SpatialDataLoader)
-    loader.repository = repository
-    csv_path = _csv(tmp_path, "2027")
-
-    with pytest.raises(RuntimeError, match=r"charging_year=2026"):
-        loader._upsert_csv_table(
-            csv_path,
-            LevyInflationIndex,
-            _levy_index_from_row,
-            key=("charging_year",),
-        )

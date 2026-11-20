@@ -324,8 +324,7 @@ The `levy_inflation_index.csv` fixture carries the provenance columns
 Since NRF2-1348 admins own this table: the CSV sync only seeds the baseline
 years — a reload **deletes any admin-added year the CSV does not list**, so
 re-run `load_data.py` with care while testing admin-added future years
-locally (or add the year to the CSV). A priced quote still blocks the delete
-through the audit table's `RESTRICT` foreign keys.
+locally (or add the year to the CSV).
 
 ### Full database backup
 

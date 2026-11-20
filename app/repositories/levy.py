@@ -1,17 +1,17 @@
-"""Lookups the levy calculation needs: the EDP id for a
-label, and the base price and RICS CIL inflation index rows that price an EDP at
-a moment. Kept out of the
+"""Lookups the levy calculation needs: the EDP id for a label, and the base
+price and RICS CIL inflation index rows that price an EDP at a moment. Kept out of the
 Repository class, which is large and spatial; these are small ORM
 operations."""
 
 import logging
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import NamedTuple
 
-from sqlalchemy import Integer, cast, extract, select
+from sqlalchemy import Numeric, Select, bindparam, func, select, true
 from sqlalchemy.orm import Session, aliased
 
+from app.calculators.levy import MIN_LEVY_AMOUNT
 from app.data_sync.active_version import get_active_version
 from app.models.db import (
     BasePrice,
@@ -62,61 +62,88 @@ def resolve_edp_id(session: Session, label: str) -> int | None:
 
 class BasePriceInForce(NamedTuple):
     """The base price in force for an EDP, with the EDP fields the levy
-    calculation and its audit record carry. id is the base_prices row's id."""
+    calculation carries. id is the base_prices row's id."""
 
     id: int
     edp_id: int
     edp_name: str
     edp_start_date: date
     base_charge_per_unit: Decimal
+    effective_from: datetime
 
 
 class LevyPricingRows(NamedTuple):
-    """The charge and the RICS CIL index rows that price a levy."""
+    """The charge and the RICS CIL index rows from its effective year to the
+    calculation year, ascending. A year with no row is absent. Empty when the
+    levy is under MIN_LEVY_AMOUNT, which is not inflated."""
 
     charge: BasePriceInForce
-    edp_start_year_index: LevyInflationIndex | None
-    calculation_year_index: LevyInflationIndex | None
+    indices: list[LevyInflationIndex]
 
 
-def get_levy_pricing_rows(
-    session: Session, edp_id: int, at: datetime
-) -> LevyPricingRows | None:
-    """The EDP's base price in force at `at` (its latest row with
-    effective_from at or before `at`) with the index rows for its start year
-    and for the year `at` falls in, in one round trip. None when the EDP
-    does not exist or has no base price in force yet.
-
-    `at` must be timezone-aware and in UTC. Either index is None when that year has none.
-    Both are fetched even in the EDP start year, where calculate_levy ignores
-    them; a lookup by the unique charging_year costs less than a second query.
-    """
-    start_index = aliased(LevyInflationIndex)
-    calculation_index = aliased(LevyInflationIndex)
-    stmt = (
-        select(BasePrice, Edp, start_index, calculation_index)
-        .join(Edp, Edp.id == BasePrice.edp_id)
-        .outerjoin(
-            start_index,
-            start_index.charging_year == cast(extract("year", Edp.start_date), Integer),
-        )
-        .outerjoin(
-            calculation_index,
-            calculation_index.charging_year == at.year,
-        )
+def levy_pricing_statement(edp_id: int, units: int, at: datetime) -> Select:
+    """The one statement get_levy_pricing_rows runs, built apart so a test can
+    EXPLAIN it."""
+    in_force = (
+        select(BasePrice)
         .where(BasePrice.edp_id == edp_id, BasePrice.effective_from <= at)
         .order_by(BasePrice.effective_from.desc())
         .limit(1)
+        .subquery()
     )
-    row = session.execute(stmt).one_or_none()
-    if row is None:
+    base_price = aliased(BasePrice, in_force)
+    base_year = func.extract("year", func.timezone("UTC", base_price.effective_from))
+    # Numeric, so a units count past bigint still binds; the calculator
+    # rejects it with the reason.
+    is_inflated = base_price.base_price * bindparam(
+        "units", units, type_=Numeric()
+    ) >= bindparam("min_levy", MIN_LEVY_AMOUNT, type_=Numeric())
+    # A LATERAL subquery whose filter names only the base price becomes a
+    # one-time filter, so under MIN_LEVY_AMOUNT the index table is never
+    # scanned. OFFSET 0 stops the planner flattening it into a join filter,
+    # which scans the table and discards the rows.
+    indices = (
+        select(LevyInflationIndex)
+        .where(
+            LevyInflationIndex.charging_year.between(base_year, at.year),
+            is_inflated,
+        )
+        .offset(0)
+        .lateral()
+    )
+    index = aliased(LevyInflationIndex, indices)
+    return (
+        select(base_price, Edp, index)
+        .join(Edp, Edp.id == base_price.edp_id)
+        .outerjoin(index, true())
+        .order_by(index.charging_year)
+    )
+
+
+def get_levy_pricing_rows(
+    session: Session, edp_id: int, units: int, at: datetime
+) -> LevyPricingRows | None:
+    """The EDP's base price in force at `at` (its latest row with
+    effective_from at or before `at`) and the index rows for each year from
+    that row's effective year to `at`'s year. None when the EDP does not exist
+    or has no base price in force yet. `at` must be timezone-aware and in UTC.
+
+    One statement, so both come from one snapshot: two reads could pair an
+    older base price with an index saved after it, a state never committed.
+    The index table is only read when the levy reaches MIN_LEVY_AMOUNT, the
+    rule calculators.levy.needs_inflation applies.
+    """
+    stmt = levy_pricing_statement(edp_id, units, at)
+    rows = session.execute(stmt).all()
+    if not rows:
         return None
-    base_price, edp, start, calculation = row
+    price, edp, _ = rows[0]
     charge = BasePriceInForce(
-        id=base_price.id,
+        id=price.id,
         edp_id=edp.id,
         edp_name=edp.name,
         edp_start_date=edp.start_date,
-        base_charge_per_unit=base_price.base_price,
+        base_charge_per_unit=price.base_price,
+        effective_from=price.effective_from.astimezone(UTC),
     )
-    return LevyPricingRows(charge, start, calculation)
+    return LevyPricingRows(charge, [index for *_, index in rows if index is not None])

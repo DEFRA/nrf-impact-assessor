@@ -5,7 +5,7 @@ or the assessment run, so the SQS message stays on the queue and no PATCH
 (and so no email) is sent."""
 
 import logging
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -32,14 +32,22 @@ def _job(labels=(EDP_NAME,), units: int | None = 10) -> ImpactAssessmentJob:
     )
 
 
-def _charge() -> MagicMock:
+THIS_YEAR = datetime.now(UTC).year
+
+
+def _charge(effective_year: int = THIS_YEAR) -> MagicMock:
     charge = MagicMock()
     charge.id = 41
     charge.edp_id = 1
     charge.edp_name = EDP_NAME
     charge.edp_start_date = date(2026, 1, 1)
     charge.base_charge_per_unit = Decimal("2675.0000")
+    charge.effective_from = datetime(effective_year, 1, 1, tzinfo=UTC)
     return charge
+
+
+def _index(year: int, value: str) -> SimpleNamespace:
+    return SimpleNamespace(id=uuid4(), charging_year=year, cil_index=Decimal(value))
 
 
 @pytest.fixture
@@ -55,7 +63,7 @@ def lookups(mocker) -> dict:
         "resolve": mocker.patch("app.orchestrator.resolve_edp_id", return_value=1),
         "pricing": mocker.patch(
             "app.levy.service.get_levy_pricing_rows",
-            return_value=LevyPricingRows(_charge(), None, None),
+            return_value=LevyPricingRows(_charge(), [_index(THIS_YEAR, "400")]),
         ),
     }
 
@@ -69,20 +77,24 @@ def test_success_returns_calculation_and_logs_it(orch, lookups, caplog):
     assert levy.edp_id == 1
     assert levy.units == 10
     assert levy.provisional_amount == Decimal("26750.00")
+    session = orch.repository.session.return_value.__enter__.return_value
+    session.add.assert_not_called()
+    session.commit.assert_not_called()
     logged = next(r.message for r in caplog.records if "Levy calculated" in r.message)
     for fragment in (
         "quote=NRL-000001",
         "edp_id=1",
         "edp_start_date=2026-01-01",
-        "calculator_version=1",
+        "calculator_version=2",
         "base_charge_per_unit=2675.0000",
         "units=10",
         "calculation_date=",
         "provisional_amount=26750.00",
         "inflation_adjusted_amount=26750.00",
         f"levy_charge_id={lookups['pricing'].return_value.charge.id}",
-        "edp_start_year_index_id=None",
-        "calculation_year_index_id=None",
+        "base_index_value=400",
+        "calculation_index_value=400",
+        "lines=1",
     ):
         assert fragment in logged
 
@@ -110,26 +122,22 @@ def test_no_charge_row_raises(orch, lookups):
         orch._calculate_levy(job)
 
 
-def test_applies_inflation_index_when_calculation_year_differs(orch, lookups):
-    charge = _charge()
-    charge.edp_start_date = date(2020, 1, 1)
-    start = SimpleNamespace(id=uuid4(), index_factor=Decimal("300"))
-    calc = SimpleNamespace(id=uuid4(), index_factor=Decimal("400"))
-    lookups["pricing"].return_value = LevyPricingRows(charge, start, calc)
+def test_applies_inflation_from_the_base_price_year(orch, lookups):
+    start = _index(THIS_YEAR - 1, "300")
+    calc = _index(THIS_YEAR, "400")
+    lookups["pricing"].return_value = LevyPricingRows(
+        _charge(THIS_YEAR - 1), [start, calc]
+    )
 
     levy = orch._calculate_levy(_job()).levy
 
-    assert levy.inflation_adjusted_amount != levy.provisional_amount
     # round_gbp(2675 * 10 * 400 / 300) = round_gbp(35666.666...) = 35666.67
     assert levy.inflation_adjusted_amount == Decimal("35666.67")
-    assert levy.edp_start_year_index_id == start.id
-    assert levy.calculation_year_index_id == calc.id
+    assert [line.index_id for line in levy.yearly_lines] == [start.id, calc.id]
 
 
 def test_no_inflation_index_raises(orch, lookups):
-    charge = _charge()
-    charge.edp_start_date = date(2020, 1, 1)
-    lookups["pricing"].return_value = LevyPricingRows(charge, None, None)
+    lookups["pricing"].return_value = LevyPricingRows(_charge(), [])
     job = _job()
 
     with pytest.raises(LevyChargeUnavailableError, match="RICS CIL inflation index"):

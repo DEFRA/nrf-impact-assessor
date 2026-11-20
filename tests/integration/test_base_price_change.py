@@ -1,5 +1,4 @@
-"""A base price change against PostGIS, end to end: a new quote is priced and
-audited at the base price in force when it is calculated, and a price staff
+"""A base price change against PostGIS, end to end: a new quote is priced at the base price in force when it is calculated, and a price staff
 add through /base-prices is the one /levy/recalculate uses from its
 effective_from."""
 
@@ -14,7 +13,11 @@ from app.main import app
 from app.models.job import BoundaryGeojson, ImpactAssessmentJob, IntersectingEdp
 from app.orchestrator import JobOrchestrator
 from app.repositories.repository import Repository
-from tests.integration.conftest import insert_base_price, insert_edp_boundary
+from tests.integration.conftest import (
+    insert_base_price,
+    insert_edp_boundary,
+    insert_inflation_index,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -29,6 +32,12 @@ WKT = (
 
 def _iso(value: datetime) -> str:
     return value.isoformat().replace("+00:00", "Z")
+
+
+def _flat_indices(repository: Repository, first: int, last: int) -> None:
+    """The same index every year, so nothing is inflated."""
+    for year in range(first, last + 1):
+        insert_inflation_index(repository, year)
 
 
 def _job() -> ImpactAssessmentJob:
@@ -46,9 +55,8 @@ def test_a_new_quote_is_priced_at_the_base_price_in_force_now(
     repository: Repository,
 ):
     now = datetime.now(UTC)
-    # The EDP starts in the current charging year, so no inflation step (and
-    # no index row) is needed whenever this runs.
     edp_start = date(now.year, 1, 1)
+    _flat_indices(repository, now.year - 1, now.year)
     insert_edp_boundary(repository, EDP_LABEL, WKT, edp_id=EDP_ID)
     insert_base_price(
         repository,
@@ -83,6 +91,7 @@ def test_a_base_price_added_by_staff_is_priced_from_its_effective_from(
 ):
     insert_base_price(repository, price="2675")
     effective_from = datetime.now(UTC).replace(microsecond=0) + timedelta(days=30)
+    _flat_indices(repository, 2026, effective_from.year)
 
     added = client.post(
         "/base-prices",
