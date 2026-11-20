@@ -311,7 +311,7 @@ def test_catchments_default_to_empty_when_not_supplied():
     assert payload["edps"][0]["catchments"] == []
 
 
-def test_build_payload_levy_carries_the_audit_fields():
+def test_build_payload_levy_carries_the_levy_fields():
     payload = build_quote_patch_payload(
         [_make_result()],
         [_job_edp()],

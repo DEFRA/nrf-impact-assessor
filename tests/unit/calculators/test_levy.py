@@ -107,6 +107,15 @@ def test_rejects_a_provisional_levy_too_large_for_the_audit_record():
     assert isinstance(exc.value, LevyChargeUnavailableError)
 
 
+def test_rejects_an_original_base_amount_too_large_for_the_audit_record():
+    charge = _charge("2675.00", original_price="99999999.99")
+
+    with pytest.raises(LevyAmountTooLargeError, match="exceeds") as exc:
+        calculate_levy(charge, units=101, calculation_date=CALC_DATE)
+
+    assert exc.value.amount == Decimal("10099999998.99")
+
+
 def test_rejects_an_inflated_levy_too_large_for_the_audit_record():
     # Provisional 9,999,999,999.00 fits; inflated by 1.0000001 it does not.
     charge = _charge("99999999.99")
@@ -296,7 +305,7 @@ def test_skips_inflation_when_not_applied_even_if_indices_are_missing():
     assert result.inflation_adjusted_amount == result.provisional_amount
 
 
-def test_carries_audit_fields():
+def test_carries_the_levy_fields():
     result = calculate_levy(_charge("2675.0000"), units=10, calculation_date=CALC_DATE)
 
     assert isinstance(result, LevyCalculation)

@@ -92,10 +92,11 @@ def get_levy_pricing_rows(
     """
     start_index = aliased(LevyInflationIndex)
     calculation_index = aliased(LevyInflationIndex)
+    oldest_price = aliased(BasePrice)
     original_price = (
-        select(BasePrice.base_price)
-        .where(BasePrice.edp_id == edp_id)
-        .order_by(BasePrice.effective_from.asc())
+        select(oldest_price.base_price)
+        .where(oldest_price.edp_id == edp_id)
+        .order_by(oldest_price.effective_from.asc(), oldest_price.id.asc())
         .limit(1)
         .scalar_subquery()
     )

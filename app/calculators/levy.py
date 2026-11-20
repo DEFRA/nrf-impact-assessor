@@ -129,8 +129,9 @@ def calculate_levy(
 
     Args:
         charge: The base price in force (BasePriceInForce) with edp_id,
-            edp_name, edp_start_date and base_charge_per_unit (Decimal,
-            pounds and pence, at most 2 dp).
+            edp_start_date, base_charge_per_unit and
+            original_base_charge_per_unit (Decimal, pounds and pence, at
+            most 2 dp).
         units: Number of dwellings; must be positive.
         calculation_date: The date the quote is calculated on.
         edp_start_year_index: RICS CIL Index row (LevyInflationIndex) for
