@@ -34,11 +34,10 @@ def _job(labels=(EDP_NAME,), units: int | None = 10) -> ImpactAssessmentJob:
 
 def _charge() -> MagicMock:
     charge = MagicMock()
-    charge.id = 41
     charge.edp_id = 1
-    charge.edp_name = EDP_NAME
     charge.edp_start_date = date(2026, 1, 1)
     charge.base_charge_per_unit = Decimal("2675.0000")
+    charge.original_base_charge_per_unit = Decimal("2500.0000")
     return charge
 
 
@@ -77,12 +76,10 @@ def test_success_returns_calculation_and_logs_it(orch, lookups, caplog):
         "calculator_version=1",
         "base_charge_per_unit=2675.0000",
         "units=10",
-        "calculation_date=",
+        "original_base_charge_per_unit=2500.0000",
+        "original_base_amount=25000.00",
         "provisional_amount=26750.00",
         "inflation_adjusted_amount=26750.00",
-        f"levy_charge_id={lookups['pricing'].return_value.charge.id}",
-        "edp_start_year_index_id=None",
-        "calculation_year_index_id=None",
     ):
         assert fragment in logged
 
@@ -122,8 +119,6 @@ def test_applies_inflation_index_when_calculation_year_differs(orch, lookups):
     assert levy.inflation_adjusted_amount != levy.provisional_amount
     # round_gbp(2675 * 10 * 400 / 300) = round_gbp(35666.666...) = 35666.67
     assert levy.inflation_adjusted_amount == Decimal("35666.67")
-    assert levy.edp_start_year_index_id == start.id
-    assert levy.calculation_year_index_id == calc.id
 
 
 def test_no_inflation_index_raises(orch, lookups):

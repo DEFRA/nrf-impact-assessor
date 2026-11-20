@@ -224,16 +224,15 @@ def test_a_blank_inflation_index_comment_is_rejected(
 def test_pricing_rows_join_the_edp_start_and_calculation_year_indices(
     repository: Repository,
 ):
-    base_price_id = insert_base_price(repository, 7)
+    insert_base_price(repository, 7)
     start_id = insert_inflation_index(repository, 2026, index_factor="1.0000")
     calc_id = insert_inflation_index(repository, 2027, index_factor="1.0500")
 
     with repository.session() as session:
         rows = get_levy_pricing_rows(session, 7, datetime(2027, 3, 1, tzinfo=UTC))
 
-    assert rows.charge.id == base_price_id
     assert rows.charge.edp_id == 7
-    assert rows.charge.edp_name == "Test EDP"
+    assert rows.charge.original_base_charge_per_unit == Decimal("2675")
     assert rows.charge.base_charge_per_unit == Decimal("2675")
     assert rows.edp_start_year_index.id == start_id
     assert rows.calculation_year_index.id == calc_id
