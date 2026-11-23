@@ -143,20 +143,30 @@ def test_exactly_50_pounds_is_inflated():
 
 
 def test_missing_middle_year_index_is_unavailable():
+    charge = _charge("2675.00")
     indices = [_index(2027, "412"), _index(2029, "422")]
+    calculation_date = date(2029, 6, 24)
 
     with pytest.raises(LevyChargeUnavailableError, match="2028"):
-        calculate_levy(_charge("2675.00"), 1, date(2029, 6, 24), indices)
+        calculate_levy(charge, 1, calculation_date, indices)
 
 
 def test_missing_base_year_index_is_unavailable():
+    charge = _charge("2675.00")
+    indices = [_index(2028, "417")]
+    calculation_date = date(2028, 6, 24)
+
     with pytest.raises(LevyChargeUnavailableError, match="2027"):
-        calculate_levy(_charge("2675.00"), 1, date(2028, 6, 24), [_index(2028, "417")])
+        calculate_levy(charge, 1, calculation_date, indices)
 
 
 def test_calculation_before_the_base_year_is_unavailable():
+    charge = _charge("2675.00")
+    indices = _indices(2026, 2027)
+    calculation_date = date(2026, 6, 24)
+
     with pytest.raises(LevyChargeUnavailableError):
-        calculate_levy(_charge("2675.00"), 1, date(2026, 6, 24), _indices(2026, 2027))
+        calculate_levy(charge, 1, calculation_date, indices)
 
 
 @pytest.mark.parametrize(
@@ -200,9 +210,11 @@ def test_rejects_a_provisional_levy_too_large():
 
 def test_rejects_an_original_base_amount_too_large():
     charge = _charge("2675.00", original_price="99999999.99")
+    indices = _indices(2027, 2027)
+    calculation_date = date(2027, 6, 24)
 
     with pytest.raises(LevyAmountTooLargeError, match="exceeds") as exc:
-        calculate_levy(charge, 101, date(2027, 6, 24), _indices(2027, 2027))
+        calculate_levy(charge, 101, calculation_date, indices)
 
     assert exc.value.amount == Decimal("10099999998.99")
 
