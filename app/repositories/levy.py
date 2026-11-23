@@ -67,9 +67,9 @@ class BasePriceInForce(NamedTuple):
 
     edp_id: int
     edp_start_date: date
-    base_charge_per_unit: Decimal
-    effective_from: datetime
-    original_base_charge_per_unit: Decimal
+    base_price_per_unit: Decimal
+    base_price_effective_from: datetime
+    original_base_price_per_unit: Decimal
 
 
 class LevyPricingRows(NamedTuple):
@@ -149,8 +149,8 @@ def get_levy_pricing_rows(
     charge = BasePriceInForce(
         edp_id=edp.id,
         edp_start_date=edp.start_date,
-        base_charge_per_unit=price.base_price,
-        effective_from=price.effective_from.astimezone(UTC),
-        original_base_charge_per_unit=original,
+        base_price_per_unit=price.base_price,
+        base_price_effective_from=price.effective_from.astimezone(UTC),
+        original_base_price_per_unit=original,
     )
     return LevyPricingRows(charge, [index for *_, index in rows if index is not None])

@@ -29,9 +29,9 @@ def _charge(
     return SimpleNamespace(
         edp_id=1,
         edp_start_date=date(2026, 1, 1),
-        base_charge_per_unit=Decimal(price),
-        effective_from=datetime(effective_year, 1, 1, tzinfo=UTC),
-        original_base_charge_per_unit=Decimal(original_price or price),
+        base_price_per_unit=Decimal(price),
+        base_price_effective_from=datetime(effective_year, 1, 1, tzinfo=UTC),
+        original_base_price_per_unit=Decimal(original_price or price),
     )
 
 
@@ -278,7 +278,7 @@ def test_original_base_is_the_original_charge_times_units_uninflated():
         _indices(2026, 2028),
     )
 
-    assert result.original_base_charge_per_unit == Decimal("2500.50")
+    assert result.original_base_price_per_unit == Decimal("2500.50")
     assert result.original_base_amount == Decimal("25005.00")
     assert str(result.original_base_amount) == "25005.00"
 

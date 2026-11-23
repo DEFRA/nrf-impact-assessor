@@ -217,7 +217,7 @@ def test_build_payload_levy_under_minimum_is_zero():
     baseAmount keeps the provisional figure it was decided from."""
     levy = make_levy_calculation(
         units=1,
-        base_charge_per_unit=Decimal("49.99"),
+        base_price_per_unit=Decimal("49.99"),
         provisional_amount=Decimal("49.99"),
         inflation_adjusted_amount=Decimal("0.00"),
     )
@@ -246,7 +246,7 @@ def test_build_payload_levy_under_minimum_is_zero():
 def test_build_payload_levy_at_minimum_is_charged():
     levy = make_levy_calculation(
         units=1,
-        base_charge_per_unit=Decimal("50.00"),
+        base_price_per_unit=Decimal("50.00"),
         provisional_amount=Decimal("50.00"),
         inflation_adjusted_amount=Decimal("50.00"),
     )
@@ -362,7 +362,7 @@ def test_build_payload_levy_carries_the_levy_fields():
         [_make_result()],
         [_job_edp()],
         levy=make_levy_calculation(
-            original_base_charge_per_unit=Decimal("2500.00"),
+            original_base_price_per_unit=Decimal("2500.00"),
             original_base_amount=Decimal("25000.00"),
         ),
         calculated_at=CALCULATED_AT,

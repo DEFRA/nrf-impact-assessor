@@ -8,9 +8,9 @@ from tests.conftest import CALCULATED_AT, make_levy_calculation
 
 def test_original_base_values_come_from_the_original_base_price():
     levy = make_levy_calculation(
-        base_charge_per_unit=Decimal("2675.00"),
+        base_price_per_unit=Decimal("2675.00"),
         provisional_amount=Decimal("26750.00"),
-        original_base_charge_per_unit=Decimal("2500.00"),
+        original_base_price_per_unit=Decimal("2500.00"),
         original_base_amount=Decimal("25000.00"),
     )
 

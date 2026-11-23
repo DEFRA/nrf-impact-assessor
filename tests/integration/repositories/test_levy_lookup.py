@@ -80,10 +80,10 @@ def test_the_latest_base_price_at_or_before_the_moment_is_used(
             session, 7, UNITS, datetime(2026, 6, 1, 12, tzinfo=UTC)
         )
 
-    assert before_change.charge.base_charge_per_unit == Decimal("2675")
-    assert at_change.charge.base_charge_per_unit == Decimal("3000")
-    assert before_change.charge.original_base_charge_per_unit == Decimal("2675")
-    assert at_change.charge.original_base_charge_per_unit == Decimal("2675")
+    assert before_change.charge.base_price_per_unit == Decimal("2675")
+    assert at_change.charge.base_price_per_unit == Decimal("3000")
+    assert before_change.charge.original_base_price_per_unit == Decimal("2675")
+    assert at_change.charge.original_base_price_per_unit == Decimal("2675")
 
 
 def test_two_base_prices_for_an_edp_cannot_share_an_effective_from(
@@ -240,9 +240,9 @@ def test_pricing_rows_return_the_index_for_each_year_from_the_base_year(
         )
 
     assert rows.charge.edp_id == 7
-    assert rows.charge.original_base_charge_per_unit == Decimal("2675")
-    assert rows.charge.base_charge_per_unit == Decimal("2675")
-    assert rows.charge.effective_from == datetime(2027, 1, 1, tzinfo=UTC)
+    assert rows.charge.original_base_price_per_unit == Decimal("2675")
+    assert rows.charge.base_price_per_unit == Decimal("2675")
+    assert rows.charge.base_price_effective_from == datetime(2027, 1, 1, tzinfo=UTC)
     assert _years(rows) == [2027, 2028, 2029, 2030]
 
 
@@ -257,8 +257,8 @@ def test_pricing_rows_start_at_a_later_base_price(repository: Repository):
             session, 7, UNITS, datetime(2030, 3, 1, tzinfo=UTC)
         )
 
-    assert rows.charge.base_charge_per_unit == Decimal("3000")
-    assert rows.charge.original_base_charge_per_unit == Decimal("2675")
+    assert rows.charge.base_price_per_unit == Decimal("3000")
+    assert rows.charge.original_base_price_per_unit == Decimal("2675")
     assert _years(rows) == [2029, 2030]
 
 
@@ -297,7 +297,7 @@ def test_pricing_rows_leave_the_indices_out_under_50_pounds(
     with repository.session() as session:
         rows = get_levy_pricing_rows(session, 7, 1, datetime(2026, 9, 14, tzinfo=UTC))
 
-    assert rows.charge.base_charge_per_unit == Decimal(price)
+    assert rows.charge.base_price_per_unit == Decimal(price)
     assert _years(rows) == years
 
 

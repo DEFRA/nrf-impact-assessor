@@ -69,9 +69,9 @@ def test_a_new_quote_is_priced_at_the_base_price_in_force_now(
 
     priced = JobOrchestrator(MagicMock(), repository)._calculate_levy(_job())
 
-    assert priced.levy.original_base_charge_per_unit == Decimal("2675")
+    assert priced.levy.original_base_price_per_unit == Decimal("2675")
     assert priced.levy.original_base_amount == Decimal("10700.00")
-    assert priced.levy.base_charge_per_unit == Decimal("3000")
+    assert priced.levy.base_price_per_unit == Decimal("3000")
     assert priced.levy.provisional_amount == Decimal("12000.00")
     assert priced.levy.inflation_adjusted_amount == Decimal("12000.00")
 

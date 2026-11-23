@@ -26,9 +26,9 @@ def _charge() -> SimpleNamespace:
     return SimpleNamespace(
         edp_id=1,
         edp_start_date=date(2026, 1, 1),
-        base_charge_per_unit=Decimal("2675.0000"),
-        effective_from=datetime(2026, 1, 1, tzinfo=UTC),
-        original_base_charge_per_unit=Decimal("2675.0000"),
+        base_price_per_unit=Decimal("2675.0000"),
+        base_price_effective_from=datetime(2026, 1, 1, tzinfo=UTC),
+        original_base_price_per_unit=Decimal("2675.0000"),
     )
 
 
@@ -70,7 +70,7 @@ def test_returns_the_levy_with_every_audit_field(client, db):
         "originalBaseAmount": 26750.0,
         "baseChargePerUnit": 2675.0,
         "originalBaseChargePerUnit": 2675.0,
-        "calculatorVersion": 2,
+        "calculatorVersion": 1,
         "units": 10,
     }
 
@@ -139,7 +139,7 @@ def test_returns_not_found_when_no_base_price_is_in_force_for_the_edp(client, db
 
 def test_prices_a_base_charge_with_pence(client, db):
     charge = _charge()
-    charge.base_charge_per_unit = Decimal("2675.55")
+    charge.base_price_per_unit = Decimal("2675.55")
     db["pricing"].return_value = _rows(charge)
 
     response = client.post(URL, json=VALID_BODY)
@@ -161,8 +161,8 @@ def test_returns_unprocessable_when_the_levy_is_too_large(client, db):
 
 def test_returns_unprocessable_for_more_units_than_the_maximum(client, db):
     charge = _charge()
-    charge.base_charge_per_unit = Decimal("0.01")
-    charge.original_base_charge_per_unit = Decimal("0.01")
+    charge.base_price_per_unit = Decimal("0.01")
+    charge.original_base_price_per_unit = Decimal("0.01")
     db["pricing"].return_value = _rows(charge)
 
     response = client.post(URL, json=VALID_BODY | {"units": 2_147_483_648})

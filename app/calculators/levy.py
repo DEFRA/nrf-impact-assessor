@@ -16,11 +16,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-# Sent to nrf-backend as modelVersion. 2: per-year lines from the base year.
-LEVY_CALCULATOR_VERSION = 2
+# Sent to nrf-backend as modelVersion.
+LEVY_CALCULATOR_VERSION = 1
 MIN_LEVY_AMOUNT = Decimal("50")
 
 _PENNY = Decimal("0.01")
+_ZERO_GBP = Decimal("0.00")
 # The largest amount nrf-backend's quote_edp_results numeric(12,2) levy columns hold.
 MAX_LEVY_AMOUNT = Decimal("9999999999.99")
 # The smallest unrounded amount that rounds half-up past MAX_LEVY_AMOUNT.
@@ -79,9 +80,9 @@ class LevyChargeRow(Protocol):
 
     edp_id: int
     edp_start_date: date
-    base_charge_per_unit: Decimal
-    effective_from: datetime
-    original_base_charge_per_unit: Decimal
+    base_price_per_unit: Decimal
+    base_price_effective_from: datetime
+    original_base_price_per_unit: Decimal
 
 
 class LevyIndexRow(Protocol):
@@ -100,7 +101,7 @@ class LevyYearLine(BaseModel):
 class LevyCalculation(BaseModel):
     """One levy calculation, carrying the fields sent to nrf-backend.
 
-    original_base_charge_per_unit is the EDP's oldest base price and
+    original_base_price_per_unit is the EDP's oldest base price and
     original_base_amount is the levy for units at that price, uninflated.
     yearly_lines is empty only under MIN_LEVY_AMOUNT.
     """
@@ -109,9 +110,9 @@ class LevyCalculation(BaseModel):
     edp_start_date: date
     calculator_version: int
     units: int = Field(gt=0)
-    base_charge_per_unit: Decimal
+    base_price_per_unit: Decimal
     base_price_effective_from: datetime
-    original_base_charge_per_unit: Decimal
+    original_base_price_per_unit: Decimal
     provisional_amount: Decimal
     original_base_amount: Decimal
     inflation_adjusted_amount: Decimal
@@ -121,7 +122,7 @@ class LevyCalculation(BaseModel):
     def charged_amount(self) -> Decimal:
         """The levy charged: the provisional amount, or £0 under MIN_LEVY_AMOUNT."""
         if self.provisional_amount < MIN_LEVY_AMOUNT:
-            return round_gbp(Decimal(0))
+            return _ZERO_GBP
         return self.provisional_amount
 
 
@@ -133,7 +134,7 @@ def round_gbp(value: Decimal) -> Decimal:
 def needs_inflation(charge: LevyChargeRow, units: int) -> bool:
     """Whether the levy is inflated, so calculate_levy needs its index rows:
     a provisional amount under MIN_LEVY_AMOUNT is charged as £0."""
-    return charge.base_charge_per_unit * units >= MIN_LEVY_AMOUNT
+    return charge.base_price_per_unit * units >= MIN_LEVY_AMOUNT
 
 
 def calculate_levy(
@@ -144,7 +145,7 @@ def calculate_levy(
 ) -> LevyCalculation:
     """Calculate the provisional and inflation-adjusted levy for one EDP.
 
-    `indices` must hold a row for every year from charge.effective_from's year
+    `indices` must hold a row for every year from charge.base_price_effective_from's year
     to calculation_date's year; rows outside that range are ignored. When
     needs_inflation is false it is not read, so it may be empty.
 
@@ -163,7 +164,7 @@ def calculate_levy(
         msg = f"units must be positive, got {units}"
         raise ValueError(msg)
 
-    provisional = charge.base_charge_per_unit * units
+    provisional = charge.base_price_per_unit * units
     years = (
         _year_indices(charge, calculation_date, indices)
         if needs_inflation(charge, units)
@@ -176,7 +177,7 @@ def calculate_levy(
     # Only the amounts sent to nrf-backend are limited. Checked before rounding
     # so the error names the unrounded amount. Numeric(10, 4) indices bound any
     # ratio to under 1e10, so every line stays within quantize's precision.
-    original_base = charge.original_base_charge_per_unit * units
+    original_base = charge.original_base_price_per_unit * units
     largest = max([provisional, original_base, *unrounded[-1:]])
     if largest >= _FIRST_AMOUNT_TOO_LARGE:
         raise LevyAmountTooLargeError(largest, units, charge.edp_id)
@@ -197,12 +198,12 @@ def calculate_levy(
         edp_start_date=charge.edp_start_date,
         calculator_version=LEVY_CALCULATOR_VERSION,
         units=units,
-        base_charge_per_unit=charge.base_charge_per_unit,
-        base_price_effective_from=charge.effective_from,
-        original_base_charge_per_unit=charge.original_base_charge_per_unit,
+        base_price_per_unit=charge.base_price_per_unit,
+        base_price_effective_from=charge.base_price_effective_from,
+        original_base_price_per_unit=charge.original_base_price_per_unit,
         provisional_amount=round_gbp(provisional),
         original_base_amount=round_gbp(original_base),
-        inflation_adjusted_amount=lines[-1].amount if lines else round_gbp(Decimal(0)),
+        inflation_adjusted_amount=lines[-1].amount if lines else _ZERO_GBP,
         yearly_lines=lines,
     )
 
@@ -215,7 +216,7 @@ def _year_indices(
     Raises:
         LevyChargeUnavailableError: the range is empty or a year has no row.
     """
-    first, last = charge.effective_from.year, calculation_date.year
+    first, last = charge.base_price_effective_from.year, calculation_date.year
     if last < first:
         msg = f"calculation year {last} is before the base price year {first}"
         raise LevyChargeUnavailableError(msg)
