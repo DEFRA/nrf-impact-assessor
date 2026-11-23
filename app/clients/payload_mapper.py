@@ -44,8 +44,10 @@ def _levy_block(levy: LevyCalculation, calculated_at: datetime) -> dict:
     """The fields nrf-backend's patchSchema accepts for an EDP's levy.
 
     amountExcludingVat is the levy charged, printed in the quote email.
-    baseAmount is always the provisional amount, shown on the admin page. VAT
-    is not in scope.
+    amountInflationAdjusted is the provisional amount inflated by the CIL
+    index to the calculation year, or £0 when the provisional amount is under
+    MIN_LEVY_AMOUNT; it is not what is charged. baseAmount is always the
+    provisional amount, shown on the admin page. VAT is not in scope.
     """
     audit = LevyWire.from_calculation(levy, calculated_at).model_dump(
         mode="json", by_alias=True, include=_AUDIT_FIELDS
