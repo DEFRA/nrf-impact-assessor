@@ -322,10 +322,11 @@ class LevyInflationIndex(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     charging_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    # The published RICS CIL Index number for the charging year. The factor
-    # applied to a levy is cil_index / the 2026 base row's cil_index, stored
-    # in index_factor; ck_levy_inflation_index_cil_index keeps it positive and
-    # not NaN.
+    # The published RICS CIL Index number for the charging year. A levy is
+    # scaled by cil_index(year) / cil_index(base price's effective year).
+    # index_factor (cil_index / the 2026 row's) is for display only; the
+    # calculation does not read it. ck_levy_inflation_index_cil_index keeps
+    # cil_index positive and not NaN.
     cil_index: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
     index_factor: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

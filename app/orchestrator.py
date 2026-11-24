@@ -315,9 +315,9 @@ class JobOrchestrator:
             LevyChargeUnavailableError: no housing units on the job, the
                 boundary intersects zero or multiple EDPs, no EDP_id for the
                 label in the active boundary layer, no base price in force
-                for that id today, or (when today falls in a
-                different charging year than the EDP's publication) no RICS
-                CIL index for one of those years.
+                for that id today, or (when the levy is not under
+                MIN_LEVY_AMOUNT) no RICS CIL index for a year from the base
+                price's effective year to today's.
         """
         job_id = job.reference or "unknown"
         calculated_at = datetime.now(UTC)

@@ -133,8 +133,9 @@ def get_levy_pricing_rows(
 ) -> LevyPricingRows | None:
     """The EDP's base price in force at `at` (its latest row with
     effective_from at or before `at`), the EDP's oldest base price, and the
-    index rows for each year from that row's effective year to `at`'s year. None when the EDP does not exist
-    or has no base price in force yet. `at` must be timezone-aware and in UTC.
+    index rows for each year from that row's effective year to `at`'s year.
+    None when the EDP does not exist or has no base price in force yet. `at`
+    must be timezone-aware and in UTC.
 
     One statement, so both come from one snapshot: two reads could pair an
     older base price with an index saved after it, a state never committed.

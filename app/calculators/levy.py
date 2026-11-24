@@ -86,6 +86,9 @@ class LevyChargeRow(Protocol):
 
 
 class LevyIndexRow(Protocol):
+    """The index fields the calculation reads: one RICS CIL index per charging
+    year. Structural, like LevyChargeRow."""
+
     id: UUID
     charging_year: int
     cil_index: Decimal
@@ -99,7 +102,8 @@ class LevyYearLine(BaseModel):
 
 
 class LevyCalculation(BaseModel):
-    """One levy calculation, carrying the fields sent to nrf-backend.
+    """One levy calculation. base_price_effective_from and yearly_lines are
+    logged, not sent to nrf-backend.
 
     original_base_price_per_unit is the EDP's oldest base price and
     original_base_amount is the levy for units at that price, uninflated.
@@ -145,18 +149,19 @@ def calculate_levy(
 ) -> LevyCalculation:
     """Calculate the provisional and inflation-adjusted levy for one EDP.
 
-    `indices` must hold a row for every year from charge.base_price_effective_from's year
-    to calculation_date's year; rows outside that range are ignored. When
-    needs_inflation is false it is not read, so it may be empty.
+    `indices` must hold a row for every year from the year of
+    charge.base_price_effective_from to calculation_date's year; rows outside
+    that range are ignored. When needs_inflation is false it is not read, so
+    it may be empty.
 
     Raises:
         ValueError: units is not positive.
         LevyChargeUnavailableError: an index in the range is missing, or the
             calculation date is before the base price took effect.
         LevyAmountTooLargeError: the provisional, original base or
-            inflation-adjusted amount exceeds MAX_LEVY_AMOUNT, so it could not be stored in the backend.
-            Intermediate lines are not sent to nrf-backend, so they are not
-            limited.
+            inflation-adjusted amount exceeds MAX_LEVY_AMOUNT, so it could not
+            be stored in the backend. Intermediate lines are not sent to
+            nrf-backend, so they are not limited.
         LevyUnitsTooLargeError: units exceeds MAX_LEVY_UNITS, so it could not
             be stored in the backend.
     """
@@ -176,7 +181,7 @@ def calculate_levy(
 
     # Only the amounts sent to nrf-backend are limited. Checked before rounding
     # so the error names the unrounded amount. Numeric(10, 4) indices bound any
-    # ratio to under 1e10, so every line stays within quantize's precision.
+    # ratio to under 1e12, so every line stays within quantize's precision.
     original_base = charge.original_base_price_per_unit * units
     largest = max([provisional, original_base, *unrounded[-1:]])
     if largest >= _FIRST_AMOUNT_TOO_LARGE:

@@ -118,3 +118,29 @@ def test_a_changed_base_price_restarts_inflation_from_its_year(
     assert response.status_code == 200
     assert response.json()["provisionalAmount"] == 12000.0
     assert response.json()["inflationAdjustedAmount"] == 12000.0
+
+
+def test_a_request_before_the_first_base_price_is_not_found(
+    client: TestClient, repository: Repository
+):
+    insert_base_price(repository)
+
+    response = client.post(URL, json=BODY | {"requestDate": "2025-12-31T23:59:59Z"})
+
+    assert response.status_code == 404
+
+
+def test_a_levy_under_the_minimum_needs_no_index_rows(repository: Repository):
+    """AC9: under £50 the levy is £0 with no index row for any year, here from
+    the 2026 base year to 2030."""
+    insert_base_price(repository, price="49.99")
+
+    with patch("app.levy.router._get_repository", return_value=repository):
+        response = TestClient(app).post(
+            URL,
+            json={"edpId": 1, "units": 1, "requestDate": "2030-06-24T12:00:00Z"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["provisionalAmount"] == 49.99
+    assert response.json()["inflationAdjustedAmount"] == 0.0

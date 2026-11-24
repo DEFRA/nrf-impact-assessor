@@ -1,6 +1,6 @@
-"""A base price change against PostGIS, end to end: a new quote is priced at the base price in force when it is calculated, and a price staff
-add through /base-prices is the one /levy/recalculate uses from its
-effective_from."""
+"""A base price change against PostGIS, end to end: a new quote is priced at
+the base price in force when it is calculated, and a price staff add through
+/base-prices is the one /levy/recalculate uses from its effective_from."""
 
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal

@@ -319,12 +319,8 @@ No table references it, so the restore truncates it like the others
 `edps` and `base_prices` are not in the list: a migration seeds them and admins
 manage them.
 
-The `levy_inflation_index.csv` fixture carries the provenance columns
-(`comment`, `staff_*`) the admin CRUD writes, so a reload never nulls them.
-Since NRF2-1348 admins own this table: the CSV sync only seeds the baseline
-years — a reload **deletes any admin-added year the CSV does not list**, so
-re-run `load_data.py` with care while testing admin-added future years
-locally (or add the year to the CSV).
+`load_data.py` loads no levy data. `edps`, `base_prices` and
+`levy_inflation_index` are seeded by migration only, and admins add later rows.
 
 ### Full database backup
 
