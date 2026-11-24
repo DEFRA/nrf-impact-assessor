@@ -12,7 +12,6 @@ from sqlalchemy.exc import DataError, IntegrityError
 
 from app.repositories.levy import (
     get_levy_pricing_rows,
-    levy_pricing_statement,
     resolve_edp_id,
 )
 from app.repositories.repository import Repository
@@ -26,7 +25,6 @@ from tests.integration.conftest import (
 pytestmark = pytest.mark.integration
 
 LABEL = "Test EDP"
-UNITS = 10
 WKT = (
     "MULTIPOLYGON(((600000 300000, 601000 300000, 601000 301000, "
     "600000 301000, 600000 300000)))"
@@ -74,10 +72,10 @@ def test_the_latest_base_price_at_or_before_the_moment_is_used(
 
     with repository.session() as session:
         before_change = get_levy_pricing_rows(
-            session, 7, UNITS, datetime(2026, 6, 1, 11, 59, 59, tzinfo=UTC)
+            session, 7, datetime(2026, 6, 1, 11, 59, 59, tzinfo=UTC)
         )
         at_change = get_levy_pricing_rows(
-            session, 7, UNITS, datetime(2026, 6, 1, 12, tzinfo=UTC)
+            session, 7, datetime(2026, 6, 1, 12, tzinfo=UTC)
         )
 
     assert before_change.charge.base_price_per_unit == Decimal("2675")
@@ -235,9 +233,7 @@ def test_pricing_rows_return_the_index_for_each_year_from_the_base_year(
         insert_inflation_index(repository, year)
 
     with repository.session() as session:
-        rows = get_levy_pricing_rows(
-            session, 7, UNITS, datetime(2030, 3, 1, tzinfo=UTC)
-        )
+        rows = get_levy_pricing_rows(session, 7, datetime(2030, 3, 1, tzinfo=UTC))
 
     assert rows.charge.edp_id == 7
     assert rows.charge.original_base_price_per_unit == Decimal("2675")
@@ -253,9 +249,7 @@ def test_pricing_rows_start_at_a_later_base_price(repository: Repository):
         insert_inflation_index(repository, year)
 
     with repository.session() as session:
-        rows = get_levy_pricing_rows(
-            session, 7, UNITS, datetime(2030, 3, 1, tzinfo=UTC)
-        )
+        rows = get_levy_pricing_rows(session, 7, datetime(2030, 3, 1, tzinfo=UTC))
 
     assert rows.charge.base_price_per_unit == Decimal("3000")
     assert rows.charge.original_base_price_per_unit == Decimal("2675")
@@ -268,9 +262,7 @@ def test_pricing_rows_leave_a_gap_year_out(repository: Repository):
     insert_inflation_index(repository, 2029)
 
     with repository.session() as session:
-        rows = get_levy_pricing_rows(
-            session, 7, UNITS, datetime(2029, 3, 1, tzinfo=UTC)
-        )
+        rows = get_levy_pricing_rows(session, 7, datetime(2029, 3, 1, tzinfo=UTC))
 
     assert _years(rows) == [2027, 2029]
 
@@ -281,68 +273,10 @@ def test_pricing_rows_need_a_base_price_in_force(repository: Repository):
 
     with repository.session() as session:
         in_force = datetime(2026, 9, 14, tzinfo=UTC)
-        assert get_levy_pricing_rows(session, 7, UNITS, in_force) is not None
+        assert get_levy_pricing_rows(session, 7, in_force) is not None
         too_early = datetime(2025, 12, 31, 23, 59, 59, tzinfo=UTC)
-        assert get_levy_pricing_rows(session, 7, UNITS, too_early) is None
-        assert get_levy_pricing_rows(session, 99, UNITS, in_force) is None
-
-
-@pytest.mark.parametrize(("price", "years"), [("49.99", []), ("50.00", [2026])])
-def test_pricing_rows_leave_the_indices_out_under_50_pounds(
-    repository: Repository, price: str, years: list[int]
-):
-    insert_base_price(repository, 7, datetime(2026, 1, 1, tzinfo=UTC), price=price)
-    insert_inflation_index(repository, 2026, index_factor="1.0000")
-
-    with repository.session() as session:
-        rows = get_levy_pricing_rows(session, 7, 1, datetime(2026, 9, 14, tzinfo=UTC))
-
-    assert rows.charge.base_price_per_unit == Decimal(price)
-    assert _years(rows) == years
-
-
-def _index_scan_loops(plan: dict) -> list[int]:
-    """Actual Loops of every plan node that reads levy_inflation_index."""
-    loops = []
-    if plan.get("Relation Name") == "levy_inflation_index":
-        loops.append(plan["Actual Loops"])
-    for child in plan.get("Plans", []):
-        loops.extend(_index_scan_loops(child))
-    return loops
-
-
-@pytest.mark.parametrize(("price", "loops"), [("49.99", [0]), ("50.00", [1])])
-def test_the_index_table_is_not_read_under_50_pounds(
-    repository: Repository, price: str, loops: list[int]
-):
-    # Leaving the rows out is not enough: the scan itself must not run.
-    insert_base_price(repository, 7, datetime(2026, 1, 1, tzinfo=UTC), price=price)
-    insert_inflation_index(repository, 2026, index_factor="1.0000")
-    stmt = levy_pricing_statement(7, 1, datetime(2026, 9, 14, tzinfo=UTC))
-
-    with repository.session() as session:
-        compiled = stmt.compile(dialect=session.bind.dialect)
-        [[explained]] = (
-            session.connection()
-            .exec_driver_sql(
-                f"EXPLAIN (ANALYZE, FORMAT JSON) {compiled}", compiled.params
-            )
-            .all()
-        )
-
-    assert _index_scan_loops(explained[0]["Plan"]) == loops
-
-
-def test_pricing_rows_bind_more_units_than_a_bigint_holds(repository: Repository):
-    insert_base_price(repository, 7, datetime(2026, 1, 1, tzinfo=UTC))
-    insert_inflation_index(repository, 2026, index_factor="1.0000")
-
-    with repository.session() as session:
-        rows = get_levy_pricing_rows(
-            session, 7, 10**24, datetime(2026, 9, 14, tzinfo=UTC)
-        )
-
-    assert _years(rows) == [2026]
+        assert get_levy_pricing_rows(session, 7, too_early) is None
+        assert get_levy_pricing_rows(session, 99, in_force) is None
 
 
 def test_pricing_rows_are_read_in_one_statement(repository: Repository):
@@ -359,7 +293,7 @@ def test_pricing_rows_are_read_in_one_statement(repository: Repository):
     event.listen(repository.engine, "before_cursor_execute", record)
     try:
         with repository.session() as session:
-            get_levy_pricing_rows(session, 7, UNITS, datetime(2030, 3, 1, tzinfo=UTC))
+            get_levy_pricing_rows(session, 7, datetime(2030, 3, 1, tzinfo=UTC))
     finally:
         event.remove(repository.engine, "before_cursor_execute", record)
 

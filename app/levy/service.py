@@ -14,12 +14,12 @@ def price_levy(
 ) -> LevyCalculation | None:
     """Price the levy for an EDP at a moment. Returns None when the EDP has no
     base price in force at `at`. `at` must be timezone-aware and in UTC. A
-    levy under MIN_LEVY_AMOUNT is £0, so its index rows are not read.
+    levy under MIN_LEVY_AMOUNT is £0 and needs no index rows.
 
     Raises:
         LevyChargeUnavailableError: an index is missing or the levy is too large.
     """
-    rows = get_levy_pricing_rows(session, edp_id, units, at)
+    rows = get_levy_pricing_rows(session, edp_id, at)
     if rows is None:
         return None
     return calculate_levy(rows.charge, units, at.date(), rows.indices)

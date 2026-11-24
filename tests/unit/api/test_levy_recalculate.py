@@ -90,7 +90,6 @@ def test_prices_the_edp_at_the_requested_date_time(client, db):
 
     assert db["pricing"].call_args.args[1:] == (
         1,
-        10,
         datetime(2026, 10, 14, 8, 30, tzinfo=UTC),
     )
 

@@ -199,8 +199,9 @@ to nrf-backend, which keeps the values it was sent in `quote_edp_results`:
 units, the base and original base charge per unit, the provisional, original
 base and inflation-adjusted amounts, the calculation date and
 `calculator_version`. The base price
-row, its effective date and the per-year index rows and amounts are not sent;
-the impact-assessor logs them with each calculation.
+row, its effective date and the per-year index rows and amounts are not sent.
+For a quote job the impact-assessor logs the effective date, the first and last
+index rows and the number of lines, but not each year's amount.
 
 `audit_model_results` is the assessment-run audit: one row per
 `process_job` attempt, so a redelivered job records one row per try. On success

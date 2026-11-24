@@ -103,7 +103,7 @@ class LevyYearLine(BaseModel):
 
 class LevyCalculation(BaseModel):
     """One levy calculation. base_price_effective_from and yearly_lines are
-    logged, not sent to nrf-backend.
+    not sent to nrf-backend.
 
     original_base_price_per_unit is the EDP's oldest base price and
     original_base_amount is the levy for units at that price, uninflated.
