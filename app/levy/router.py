@@ -85,15 +85,7 @@ def _get_repository() -> Repository:
 def _recalculate(body: LevyRecalculationRequest) -> LevyCalculation | None:
     """Price the levy for the requested EDP, units and moment."""
     with _get_repository().session() as session:
-        # Inflation is out of scope here, so a missing RICS CIL index for a
-        # later charging year must not make the levy unavailable.
-        return price_levy(
-            session,
-            body.edp_id,
-            body.units,
-            body.request_date,
-            apply_inflation=False,
-        )
+        return price_levy(session, body.edp_id, body.units, body.request_date)
 
 
 @router.post(
@@ -112,9 +104,7 @@ def _recalculate(body: LevyRecalculationRequest) -> LevyCalculation | None:
     responses={
         400: {"description": "Invalid request"},
         404: {"description": "No base price in force for the EDP at the date-time"},
-        422: {
-            "description": "Levy or units too large to record, or otherwise unavailable"
-        },
+        422: {"description": "Levy or units too large, or otherwise unavailable"},
     },
 )
 async def recalculate_levy(request: Request) -> LevyWire:
@@ -165,5 +155,6 @@ async def recalculate_levy(request: Request) -> LevyWire:
         f"provisional_amount={levy.provisional_amount} "
         f"inflation_adjusted_amount={levy.inflation_adjusted_amount}"
     )
-    # Inflation is not applied yet: both amounts are the provisional levy.
+    # Provisional is units x base price; the adjusted amount is it inflated to
+    # the calculation year, or £0 when provisional is under £50.
     return LevyWire.from_calculation(levy, calculated_at)

@@ -212,6 +212,52 @@ def test_build_payload_levy_values_are_floats():
     )
 
 
+def test_build_payload_levy_under_minimum_is_zero():
+    """Under £50 the levy is £0: the customer-facing amount says so, and
+    baseAmount keeps the provisional figure it was decided from."""
+    levy = make_levy_calculation(
+        units=1,
+        base_price_per_unit=Decimal("49.99"),
+        provisional_amount=Decimal("49.99"),
+        inflation_adjusted_amount=Decimal("0.00"),
+    )
+
+    payload = build_quote_patch_payload(
+        [_make_result()], [_job_edp()], levy=levy, calculated_at=CALCULATED_AT
+    )
+
+    levy_gbp = payload["edps"][0]["levyGbp"]
+    assert {
+        k: levy_gbp[k]
+        for k in (
+            "amountExcludingVat",
+            "amountInflationAdjusted",
+            "baseAmount",
+            "modelVersion",
+        )
+    } == {
+        "amountExcludingVat": 0.0,
+        "amountInflationAdjusted": 0.0,
+        "baseAmount": 49.99,
+        "modelVersion": 1,
+    }
+
+
+def test_build_payload_levy_at_minimum_is_charged():
+    levy = make_levy_calculation(
+        units=1,
+        base_price_per_unit=Decimal("50.00"),
+        provisional_amount=Decimal("50.00"),
+        inflation_adjusted_amount=Decimal("50.00"),
+    )
+
+    payload = build_quote_patch_payload(
+        [_make_result()], [_job_edp()], levy=levy, calculated_at=CALCULATED_AT
+    )
+
+    assert payload["edps"][0]["levyGbp"]["amountExcludingVat"] == 50.0  # NOSONAR
+
+
 def test_mapper_has_no_provisional_edp_id():
     import app.clients.payload_mapper as mapper
 
@@ -316,7 +362,7 @@ def test_build_payload_levy_carries_the_levy_fields():
         [_make_result()],
         [_job_edp()],
         levy=make_levy_calculation(
-            original_base_charge_per_unit=Decimal("2500.00"),
+            original_base_price_per_unit=Decimal("2500.00"),
             original_base_amount=Decimal("25000.00"),
         ),
         calculated_at=CALCULATED_AT,

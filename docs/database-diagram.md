@@ -160,14 +160,33 @@ timestamps are stored and passed as UTC; the charging year is the UTC year.
 the factor it derives against the 2026 base (2026 = 1.0000): the factor is
 `cil_index / the 2026 row's cil_index`, quantized to 4 dp half-up. A row is in
 force for the whole of its charging year — the effective date is 1 January
-00:00 UTC of `charging_year`, derived, not stored — and it is read when the
-calculation date falls in a later charging year than the EDP's publication, to
-inflation-adjust the provisional amount. Migration `2ddd520a2291` seeds the
-2026 base row and the 2027 charging-schedule row (factor 1.0000: the first
-year's inflation is built into the charging schedule) with the user recorded
-as `system`; later years are added by NRF Digital admins through the admin
-frontend one row per year, each recording who saved it, when and why. A row
-whose charging year has begun cannot be changed or deleted.
+00:00 UTC of `charging_year`, derived, not stored. The levy reads `cil_index`
+for every year from the base price's effective year to the calculation year:
+each year's amount is provisional x that year's index / the effective year's
+index, and the calculation year's amount is the inflation-adjusted levy.
+Migration `2ddd520a2291` seeds the 2026 base row and the 2027
+charging-schedule row (factor 1.0000: the first year's inflation is built into
+the charging schedule) with the user recorded as `system`; later years are
+added by NRF Digital admins through the admin frontend one row per year, each
+recording who saved it, when and why. A row whose charging year has begun
+cannot be changed or deleted.
+
+**2027 go-live (deadline 2027-01-01 00:00 UTC).** The seeded 2027 `cil_index`
+equals 2026's, so 2027 quotes are uninflated as they stand, but 2027 does not
+yet hold the published index. Two admin changes are needed, and both must be
+saved before 2027-01-01 00:00 UTC:
+
+1. Add a base price for every EDP effective 2027-01-01 00:00 UTC, so 2027 is
+   the base year and its own index cancels out.
+2. Set the 2027 row's `cil_index` to the published figure.
+
+Doing step 2 without step 1 inflates 2027 quotes priced from a 2026 base price.
+From 2027-01-01 00:00 UTC the admin APIs refuse both changes, because a base
+price must take effect in the future and the 2027 row has taken effect. If the
+changes are missed, the seeded base price keeps 2026 as its base year and the
+2027 row stays at the 2026 value. Every later quote then divides by the 2026
+index: with the workshop's figures, a 2028 quote uses 417 / 400 instead of
+417 / 412 and comes out about 3% high, and the admin APIs cannot correct it.
 
 `levy_inflation_index_history` records **additions only**: one row per index
 added, written in the same transaction as the add, copying the values as saved.
@@ -176,11 +195,13 @@ seeded rows predate it). `inflation_index_id` has no foreign key on purpose, so
 deleting an index does not take its history with it.
 
 Levy calculations are not recorded in this database. Each calculation is sent
-to nrf-backend, which keeps the history in `quote_edp_results`: the values it
-used, the `base_prices` row (`levy_charge_id`) and, when an inflation step
-applied, the two `levy_inflation_index` rows it came from. The rounded per-unit
-charges are not stored: `calculator_version` pins the rounding rule that
-derives them from the base charge per unit and the index factors.
+to nrf-backend, which keeps the values it was sent in `quote_edp_results`:
+units, the base and original base charge per unit, the provisional, original
+base and inflation-adjusted amounts, the calculation date and
+`calculator_version`. The base price
+row, its effective date and the per-year index rows and amounts are not sent.
+For a quote job the impact-assessor logs the effective date, the first and last
+index rows and the number of lines, but not each year's amount.
 
 `audit_model_results` is the assessment-run audit: one row per
 `process_job` attempt, so a redelivered job records one row per try. On success

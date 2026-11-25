@@ -36,9 +36,8 @@ import shutil
 import sqlite3
 import sys
 import tempfile
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
-from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
@@ -64,7 +63,6 @@ import typer  # noqa: E402
 from fixture_manifest import validate_fixture_manifest  # noqa: E402
 from settings import ScriptSettings, db_settings  # noqa: E402
 from sqlalchemy import delete, func, select  # noqa: E402
-from sqlalchemy.exc import IntegrityError  # noqa: E402
 
 from app.models.db import (  # noqa: E402
     CoefficientLayer,
@@ -73,7 +71,6 @@ from app.models.db import (  # noqa: E402
     EdpExcludedAreas,
     GcnPonds,
     GcnRiskZones,
-    LevyInflationIndex,
     LookupTable,
     LpaBoundaries,
     NnCatchments,
@@ -214,9 +211,6 @@ class SpatialDataLoader:
         self.sample_mode = sample_mode
         self.sample_limit = 100 if sample_mode else None
         self.batch_size = batch_size
-        # Fixtures-only convenience so a local/CI job can exercise the levy
-        # calculation end-to-end; the migration does not seed this table.
-        self.levy_inflation_index_csv: Path | None = None
 
         if fixtures_dir is not None:
             validate_fixture_manifest(fixtures_dir)
@@ -238,7 +232,6 @@ class SpatialDataLoader:
             self.edp_boundary_layer = "edp_boundary_extents"
             self.edp_excluded_areas_gpkg = fixtures_dir / "edp_excluded_areas.gpkg"
             self.edp_excluded_areas_layer = "edp_excluded_areas"
-            self.levy_inflation_index_csv = fixtures_dir / "levy_inflation_index.csv"
         else:
             if settings is None:
                 msg = "Either settings or fixtures_dir must be provided"
@@ -271,7 +264,6 @@ class SpatialDataLoader:
         self.load_spatial_layers()
         self.load_coefficient_layer()
         self.load_lookup_tables()
-        self.load_levy_fixtures()
         print("All data loaded successfully!")
 
     def load_spatial_layers(self, layer_types: list[str] | None = None) -> None:
@@ -754,101 +746,6 @@ class SpatialDataLoader:
 
         except Exception as e:
             print(f"Error loading {table_name}: {e}")
-
-    def load_levy_fixtures(self) -> None:
-        """Load levy_inflation_index from its CSV fixture.
-
-        The CSV path is None outside fixtures_dir mode. edps and base_prices
-        are not loaded: the migration seeds EDP 1 and its first base price.
-        """
-        self._upsert_csv_table(
-            self.levy_inflation_index_csv,
-            LevyInflationIndex,
-            _levy_index_from_row,
-            key=("charging_year",),
-        )
-
-    def _upsert_csv_table(
-        self,
-        csv_path: Path | None,
-        model: type,
-        row_to_model: "Callable[[dict], Any]",
-        key: tuple[str, ...],
-    ) -> None:
-        """Sync a table to its CSV fixture, matching rows on ``key``.
-
-        Matched rows are updated in place so they keep their id: the audit
-        table's RESTRICT foreign keys point at those ids, so a delete-and-
-        reinsert fails once any quote has been priced. A row dropped from the
-        CSV is deleted, which still fails if a quote was priced from it.
-        """
-        if csv_path is None or not csv_path.exists():
-            print(f"Skipping {model.__tablename__}: no fixture at {csv_path}")
-            return
-
-        # dtype=str keeps decimal/date fields as the literal text in the CSV,
-        # so parsing is explicit below rather than round-tripping through a
-        # pandas-inferred float or Timestamp.
-        df = pd.read_csv(csv_path, dtype=str)
-        rows = [row_to_model(row) for row in df.to_dict(orient="records")]
-        columns = [
-            c.key for c in model.__table__.columns if c.key not in ("id", "created_at")
-        ]
-
-        def key_of(obj: Any) -> tuple:
-            return tuple(getattr(obj, k) for k in key)
-
-        with self.repository.session() as session:
-            existing = {key_of(obj): obj for obj in session.scalars(select(model))}
-            wanted = {key_of(obj) for obj in rows}
-
-            stale = [obj for k, obj in existing.items() if k not in wanted]
-            for obj in stale:
-                session.delete(obj)
-            # Flush deletes first so a failure names the removed rows.
-            try:
-                session.flush()
-            except IntegrityError as e:
-                stale_keys = "; ".join(
-                    ", ".join(f"{k}={v}" for k, v in zip(key, key_of(obj)))
-                    for obj in stale
-                )
-                msg = (
-                    f"Cannot remove {model.__tablename__} rows no longer in "
-                    f"{csv_path.name} ({stale_keys}): priced quotes in the audit "
-                    "table reference them. Changing a key column counts as a "
-                    "removal; clear the local audit rows first."
-                )
-                raise RuntimeError(msg) from e
-
-            for row in rows:
-                current = existing.get(key_of(row))
-                if current is None:
-                    session.add(row)
-                    continue
-                for column in columns:
-                    setattr(current, column, getattr(row, column))
-
-            session.commit()
-
-        print(
-            f"Synced {len(rows)} {model.__tablename__} fixture rows"
-            f" ({len(stale)} removed)"
-        )
-
-
-def _levy_index_from_row(row: dict) -> LevyInflationIndex:
-    """Build a LevyInflationIndex from one levy_inflation_index.csv row."""
-    return LevyInflationIndex(
-        id=uuid4(),
-        charging_year=int(row["charging_year"]),
-        cil_index=Decimal(str(row["cil_index"])),
-        index_factor=Decimal(str(row["index_factor"])),
-        comment=row["comment"],
-        staff_id=row["staff_id"],
-        staff_full_name=row["staff_full_name"],
-        staff_email=row["staff_email"],
-    )
 
 
 def _load_selected_layers(loader: "SpatialDataLoader", layer: list[str]) -> None:

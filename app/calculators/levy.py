@@ -1,29 +1,27 @@
 """Nature restoration levy calculation.
 
-The base charge per unit is a positive amount in pounds and pence: the
-base_prices table stores it as numeric(10, 2) and rejects anything not positive
-(ck_base_prices_base_price), so provisional levy = units x base_charge_per_unit is exact.
-
-Inflation adjustment: the charging year is the calendar year. If
-calculation_date falls in the EDP's own charging year (edp_start_date's
-year), the base charge is used unadjusted. Otherwise it is scaled by the
-ratio of the RICS CIL Index for the calculation year to the index for the
-EDP's charging year, and the inflated total (units x base charge x ratio)
-is rounded to 2 dp. That is the only rounding step that changes a value.
-It is half-up: the third decimal 0-4 rounds down, 5-9 rounds up. Python's
-built-in round() is banker's rounding, so it is never used here.
+Provisional = units x the base price in force. Under £50 the adjusted amount
+is £0. Otherwise there is one line per charging year from the base price's
+effective year to the calculation year: provisional x that year's RICS CIL
+index / the effective year's index, rounded half-up to pence, never compounded.
+The last line is the inflation-adjusted amount. Charging years are UTC
+calendar years. Python's round() is banker's rounding, so it is never used.
 """
 
-from datetime import date
+from collections.abc import Sequence
+from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Protocol
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+# Sent to nrf-backend as modelVersion.
 LEVY_CALCULATOR_VERSION = 1
+MIN_LEVY_AMOUNT = Decimal("50")
 
 _PENNY = Decimal("0.01")
+_ZERO_GBP = Decimal("0.00")
 # The largest amount nrf-backend's quote_edp_results numeric(12,2) levy columns hold.
 MAX_LEVY_AMOUNT = Decimal("9999999999.99")
 # The smallest unrounded amount that rounds half-up past MAX_LEVY_AMOUNT.
@@ -74,7 +72,7 @@ class LevyUnitsTooLargeError(LevyChargeUnavailableError):
 
 class LevyChargeRow(Protocol):
     """The charge fields the calculation reads: the base price in force for an
-    EDP and its original (oldest) base price.
+    EDP, when it took effect, and the EDP's original (oldest) base price.
 
     Structural rather than an ORM model, so this module stays free of database
     imports and a test can pass any object with these attributes.
@@ -82,33 +80,54 @@ class LevyChargeRow(Protocol):
 
     edp_id: int
     edp_start_date: date
-    base_charge_per_unit: Decimal
-    original_base_charge_per_unit: Decimal
+    base_price_per_unit: Decimal
+    base_price_effective_from: datetime
+    original_base_price_per_unit: Decimal
 
 
 class LevyIndexRow(Protocol):
-    """The RICS CIL Index fields the calculation reads, structural as above."""
+    """The index fields the calculation reads: one RICS CIL index per charging
+    year. Structural, like LevyChargeRow."""
 
     id: UUID
-    index_factor: Decimal
+    charging_year: int
+    cil_index: Decimal
+
+
+class LevyYearLine(BaseModel):
+    year: int
+    index_id: UUID
+    index_value: Decimal
+    amount: Decimal
 
 
 class LevyCalculation(BaseModel):
-    """One levy calculation, carrying the fields sent to nrf-backend.
+    """One levy calculation. base_price_effective_from and yearly_lines are
+    not sent to nrf-backend.
 
-    original_base_charge_per_unit is the EDP's oldest base price and
+    original_base_price_per_unit is the EDP's oldest base price and
     original_base_amount is the levy for units at that price, uninflated.
+    yearly_lines is empty only under MIN_LEVY_AMOUNT.
     """
 
     edp_id: int
     edp_start_date: date
     calculator_version: int
     units: int = Field(gt=0)
-    base_charge_per_unit: Decimal
-    original_base_charge_per_unit: Decimal
+    base_price_per_unit: Decimal
+    base_price_effective_from: datetime
+    original_base_price_per_unit: Decimal
     provisional_amount: Decimal
     original_base_amount: Decimal
     inflation_adjusted_amount: Decimal
+    yearly_lines: list[LevyYearLine] = []
+
+    @property
+    def charged_amount(self) -> Decimal:
+        """The levy charged: the provisional amount, or £0 under MIN_LEVY_AMOUNT."""
+        if self.provisional_amount < MIN_LEVY_AMOUNT:
+            return _ZERO_GBP
+        return self.provisional_amount
 
 
 def round_gbp(value: Decimal) -> Decimal:
@@ -116,115 +135,99 @@ def round_gbp(value: Decimal) -> Decimal:
     return value.quantize(_PENNY, rounding=ROUND_HALF_UP)
 
 
+def needs_inflation(charge: LevyChargeRow, units: int) -> bool:
+    """Whether the levy is inflated, so calculate_levy needs its index rows:
+    a provisional amount under MIN_LEVY_AMOUNT is charged as £0."""
+    return charge.base_price_per_unit * units >= MIN_LEVY_AMOUNT
+
+
 def calculate_levy(
     charge: LevyChargeRow,
     units: int,
     calculation_date: date,
-    edp_start_year_index: LevyIndexRow | None = None,
-    calculation_year_index: LevyIndexRow | None = None,
-    *,
-    apply_inflation: bool = True,
+    indices: Sequence[LevyIndexRow],
 ) -> LevyCalculation:
     """Calculate the provisional and inflation-adjusted levy for one EDP.
 
-    Args:
-        charge: The base price in force (BasePriceInForce) with edp_id,
-            edp_start_date, base_charge_per_unit and
-            original_base_charge_per_unit (Decimal, pounds and pence, at
-            most 2 dp).
-        units: Number of dwellings; must be positive.
-        calculation_date: The date the quote is calculated on.
-        edp_start_year_index: RICS CIL Index row (LevyInflationIndex) for
-            the charging year the EDP was published (edp_start_date's year).
-            Only required when calculation_date falls in a different charging
-            year.
-        calculation_year_index: RICS CIL Index row for calculation_date's
-            charging year. Only required when calculation_date falls in a
-            different charging year than the EDP's publication.
-        apply_inflation: False skips the inflation step whatever the year,
-            so the indices are neither needed nor recorded and the
-            inflation-adjusted amount is the provisional amount.
+    `indices` must hold a row for every year from the year of
+    charge.base_price_effective_from to calculation_date's year; rows outside
+    that range are ignored. When needs_inflation is false it is not read, so
+    it may be empty.
 
     Raises:
-        ValueError: units is not a positive integer.
-        LevyChargeUnavailableError: inflation applies, calculation_date falls
-            in a different charging year than the EDP's publication and
-            either index is missing.
-        LevyAmountTooLargeError: either amount exceeds MAX_LEVY_AMOUNT, so
-            it could not be stored in the backend. A LevyChargeUnavailableError.
+        ValueError: units is not positive.
+        LevyChargeUnavailableError: an index in the range is missing, or the
+            calculation date is before the base price took effect.
+        LevyAmountTooLargeError: the provisional, original base or
+            inflation-adjusted amount exceeds MAX_LEVY_AMOUNT, so it could not
+            be stored in the backend. Intermediate lines are not sent to
+            nrf-backend, so they are not limited.
         LevyUnitsTooLargeError: units exceeds MAX_LEVY_UNITS, so it could not
-            be stored in the backend. A LevyChargeUnavailableError.
+            be stored in the backend.
     """
     if units <= 0:
         msg = f"units must be positive, got {units}"
         raise ValueError(msg)
 
-    indices = _applied_indices(
-        charge,
-        calculation_date,
-        edp_start_year_index,
-        calculation_year_index,
-        apply_inflation=apply_inflation,
+    provisional = charge.base_price_per_unit * units
+    years = (
+        _year_indices(charge, calculation_date, indices)
+        if needs_inflation(charge, units)
+        else []
     )
-    provisional = charge.base_charge_per_unit * units
-    original_base = charge.original_base_charge_per_unit * units
-    if indices is None:
-        inflation_adjusted = provisional
-    else:
-        start_index, calc_index = indices
-        # Divide last so the unrounded total stays exact whenever it can be.
-        inflation_adjusted = (
-            provisional * calc_index.index_factor / start_index.index_factor
-        )
+    base = years[0] if years else None
+    # Divide last so the unrounded amount stays exact whenever it can be.
+    unrounded = [provisional * i.cil_index / base.cil_index for i in years]
 
-    # Checked before rounding: quantize raises InvalidOperation once an amount
-    # has more digits than the decimal context's precision, which a large
-    # enough units would reach.
-    largest = max(provisional, original_base, inflation_adjusted)
+    # Only the amounts sent to nrf-backend are limited. Checked before rounding
+    # so the error names the unrounded amount. Numeric(10, 4) indices bound any
+    # ratio to under 1e12, so every line stays within quantize's precision.
+    original_base = charge.original_base_price_per_unit * units
+    largest = max([provisional, original_base, *unrounded[-1:]])
     if largest >= _FIRST_AMOUNT_TOO_LARGE:
         raise LevyAmountTooLargeError(largest, units, charge.edp_id)
-    # After the amount check, so a units count too large on both counts reports
-    # the amount, the limit a caller meets first at any realistic charge.
     if units > MAX_LEVY_UNITS:
         raise LevyUnitsTooLargeError(units, charge.edp_id)
 
+    lines = [
+        LevyYearLine(
+            year=i.charging_year,
+            index_id=i.id,
+            index_value=i.cil_index,
+            amount=round_gbp(amount),
+        )
+        for i, amount in zip(years, unrounded, strict=True)
+    ]
     return LevyCalculation(
         edp_id=charge.edp_id,
         edp_start_date=charge.edp_start_date,
         calculator_version=LEVY_CALCULATOR_VERSION,
         units=units,
-        base_charge_per_unit=charge.base_charge_per_unit,
-        original_base_charge_per_unit=charge.original_base_charge_per_unit,
-        # Exact for pence, so this only sets a 2-place scale. Rounds half-up
-        # like the inflated total if a caller bypasses the table's check.
+        base_price_per_unit=charge.base_price_per_unit,
+        base_price_effective_from=charge.base_price_effective_from,
+        original_base_price_per_unit=charge.original_base_price_per_unit,
         provisional_amount=round_gbp(provisional),
         original_base_amount=round_gbp(original_base),
-        inflation_adjusted_amount=round_gbp(inflation_adjusted),
+        inflation_adjusted_amount=lines[-1].amount if lines else _ZERO_GBP,
+        yearly_lines=lines,
     )
 
 
-def _applied_indices(
-    charge: LevyChargeRow,
-    calculation_date: date,
-    edp_start_year_index: LevyIndexRow | None,
-    calculation_year_index: LevyIndexRow | None,
-    *,
-    apply_inflation: bool,
-) -> tuple[LevyIndexRow, LevyIndexRow] | None:
-    """The (EDP start year, calculation year) indices to inflate by, or None
-    when no inflation step applies.
+def _year_indices(
+    charge: LevyChargeRow, calculation_date: date, indices: Sequence[LevyIndexRow]
+) -> list[LevyIndexRow]:
+    """The index row for each year from the base year to the calculation year.
 
     Raises:
-        LevyChargeUnavailableError: inflation applies and either index is
-            missing.
+        LevyChargeUnavailableError: the range is empty or a year has no row.
     """
-    if not apply_inflation or calculation_date.year == charge.edp_start_date.year:
-        return None
-    if edp_start_year_index is None or calculation_year_index is None:
-        msg = (
-            "Missing RICS CIL inflation index for edp_start_year="
-            f"{charge.edp_start_date.year} or calculation_year="
-            f"{calculation_date.year}"
-        )
+    first, last = charge.base_price_effective_from.year, calculation_date.year
+    if last < first:
+        msg = f"calculation year {last} is before the base price year {first}"
         raise LevyChargeUnavailableError(msg)
-    return edp_start_year_index, calculation_year_index
+    by_year = {i.charging_year: i for i in indices}
+    missing = [y for y in range(first, last + 1) if y not in by_year]
+    if missing:
+        msg = f"Missing RICS CIL inflation index for years {missing}"
+        raise LevyChargeUnavailableError(msg)
+    return [by_year[y] for y in range(first, last + 1)]

@@ -315,9 +315,9 @@ class JobOrchestrator:
             LevyChargeUnavailableError: no housing units on the job, the
                 boundary intersects zero or multiple EDPs, no EDP_id for the
                 label in the active boundary layer, no base price in force
-                for that id today, or (when today falls in a
-                different charging year than the EDP's publication) no RICS
-                CIL index for one of those years.
+                for that id today, or (when the levy is not under
+                MIN_LEVY_AMOUNT) no RICS CIL index for a year from the base
+                price's effective year to today's.
         """
         job_id = job.reference or "unknown"
         calculated_at = datetime.now(UTC)
@@ -357,18 +357,27 @@ class JobOrchestrator:
             if levy is None:
                 raise unavailable(_NO_CHARGE, where)
 
-        # Logged so a quote can be traced without a database query.
+        # Logged so a quote can be traced without a database query. One line,
+        # key=value. No lines (under the minimum) logs the index fields as None.
+        lines = levy.yearly_lines
+        base, last = (lines[0], lines[-1]) if lines else (None, None)
         logger.info(
             "Levy calculated: "
             f"quote={job_id} edp_id={levy.edp_id} "
             f"edp_start_date={levy.edp_start_date} "
             f"calculator_version={levy.calculator_version} "
-            f"base_charge_per_unit={levy.base_charge_per_unit} "
-            f"original_base_charge_per_unit={levy.original_base_charge_per_unit} "
+            f"base_price_per_unit={levy.base_price_per_unit} "
+            f"original_base_price_per_unit={levy.original_base_price_per_unit} "
             f"units={levy.units} "
             f"provisional_amount={levy.provisional_amount} "
             f"original_base_amount={levy.original_base_amount} "
-            f"inflation_adjusted_amount={levy.inflation_adjusted_amount}"
+            f"inflation_adjusted_amount={levy.inflation_adjusted_amount} "
+            f"base_price_effective_from={levy.base_price_effective_from:%Y-%m-%d} "
+            f"base_index_id={base and base.index_id} "
+            f"base_index_value={base and base.index_value} "
+            f"calculation_index_id={last and last.index_id} "
+            f"calculation_index_value={last and last.index_value} "
+            f"lines={len(lines)}"
         )
         return PricedLevy(levy=levy, calculated_at=calculated_at)
 

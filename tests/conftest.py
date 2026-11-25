@@ -38,15 +38,15 @@ CALCULATED_AT = datetime(2026, 9, 14, 10, 30, 15, tzinfo=UTC)
 
 
 def make_levy_calculation(**overrides) -> LevyCalculation:
-    """Build a LevyCalculation; pass keyword overrides for the fields a test
-    actually cares about."""
+    """Build a LevyCalculation; pass overrides for the fields a test cares about."""
     fields = {
         "edp_id": 1,
         "edp_start_date": date(2026, 1, 1),
         "calculator_version": 1,
         "units": 10,
-        "base_charge_per_unit": Decimal("2675.0000"),
-        "original_base_charge_per_unit": Decimal("2675.0000"),
+        "base_price_per_unit": Decimal("2675.0000"),
+        "base_price_effective_from": datetime(2026, 1, 1, tzinfo=UTC),
+        "original_base_price_per_unit": Decimal("2675.0000"),
         "provisional_amount": Decimal("26750.00"),
         "original_base_amount": Decimal("26750.00"),
         "inflation_adjusted_amount": Decimal("26750.00"),

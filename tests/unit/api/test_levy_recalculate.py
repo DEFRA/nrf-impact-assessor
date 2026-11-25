@@ -18,17 +18,22 @@ URL = "/levy/recalculate"
 VALID_BODY = {"edpId": 1, "units": 10, "requestDate": "2026-10-14T08:30:00Z"}
 
 
-def _index(factor: str) -> SimpleNamespace:
-    return SimpleNamespace(id=uuid4(), index_factor=Decimal(factor))
+def _index(year: int, value: str = "400") -> SimpleNamespace:
+    return SimpleNamespace(id=uuid4(), charging_year=year, cil_index=Decimal(value))
 
 
-def _charge(edp_start_date: date = date(2026, 1, 1)) -> SimpleNamespace:
+def _charge() -> SimpleNamespace:
     return SimpleNamespace(
         edp_id=1,
-        edp_start_date=edp_start_date,
-        base_charge_per_unit=Decimal("2675.0000"),
-        original_base_charge_per_unit=Decimal("2675.0000"),
+        edp_start_date=date(2026, 1, 1),
+        base_price_per_unit=Decimal("2675.0000"),
+        base_price_effective_from=datetime(2026, 1, 1, tzinfo=UTC),
+        original_base_price_per_unit=Decimal("2675.0000"),
     )
+
+
+def _rows(charge: SimpleNamespace | None = None, *indices) -> LevyPricingRows:
+    return LevyPricingRows(charge or _charge(), list(indices) or [_index(2026)])
 
 
 @pytest.fixture
@@ -49,8 +54,7 @@ def session(mocker):
 def db(mocker, session):
     return {
         "pricing": mocker.patch(
-            "app.levy.service.get_levy_pricing_rows",
-            return_value=LevyPricingRows(_charge(), None, None),
+            "app.levy.service.get_levy_pricing_rows", return_value=_rows()
         ),
     }
 
@@ -112,10 +116,8 @@ def test_does_not_write_to_the_database(client, db, session):
     session.commit.assert_not_called()
 
 
-def test_does_not_inflate_the_levy_in_a_later_charging_year(client, db):
-    db["pricing"].return_value = LevyPricingRows(
-        _charge(), _index("1.0000"), _index("1.0500")
-    )
+def test_inflates_the_levy_in_a_later_charging_year(client, db):
+    db["pricing"].return_value = _rows(None, _index(2026), _index(2027, "420"))
 
     response = client.post(
         URL, json=VALID_BODY | {"requestDate": "2027-03-01T12:00:00Z"}
@@ -123,7 +125,7 @@ def test_does_not_inflate_the_levy_in_a_later_charging_year(client, db):
 
     assert response.status_code == 200
     assert response.json()["provisionalAmount"] == 26750.0
-    assert response.json()["inflationAdjustedAmount"] == 26750.0
+    assert response.json()["inflationAdjustedAmount"] == 28087.5
 
 
 def test_returns_not_found_when_no_base_price_is_in_force_for_the_edp(client, db):
@@ -136,8 +138,8 @@ def test_returns_not_found_when_no_base_price_is_in_force_for_the_edp(client, db
 
 def test_prices_a_base_charge_with_pence(client, db):
     charge = _charge()
-    charge.base_charge_per_unit = Decimal("2675.55")
-    db["pricing"].return_value = LevyPricingRows(charge, None, None)
+    charge.base_price_per_unit = Decimal("2675.55")
+    db["pricing"].return_value = _rows(charge)
 
     response = client.post(URL, json=VALID_BODY)
 
@@ -156,11 +158,11 @@ def test_returns_unprocessable_when_the_levy_is_too_large(client, db):
     )
 
 
-def test_returns_unprocessable_for_more_units_than_the_audit_record_holds(client, db):
+def test_returns_unprocessable_for_more_units_than_the_maximum(client, db):
     charge = _charge()
-    charge.base_charge_per_unit = Decimal("0.01")
-    charge.original_base_charge_per_unit = Decimal("0.01")
-    db["pricing"].return_value = LevyPricingRows(charge, None, None)
+    charge.base_price_per_unit = Decimal("0.01")
+    charge.original_base_price_per_unit = Decimal("0.01")
+    db["pricing"].return_value = _rows(charge)
 
     response = client.post(URL, json=VALID_BODY | {"units": 2_147_483_648})
 
@@ -179,24 +181,14 @@ def test_returns_unprocessable_for_more_units_than_decimal_precision(client, db)
     assert response.json()["detail"].startswith("Levy of £2,675,000,000,")
 
 
-@pytest.mark.parametrize(
-    "rows",
-    [
-        LevyPricingRows(_charge(), None, None),
-        LevyPricingRows(_charge(), None, _index("1.0500")),
-        LevyPricingRows(_charge(), _index("1.0000"), None),
-    ],
-)
-def test_prices_a_later_charging_year_without_inflation_indices(client, db, rows):
-    db["pricing"].return_value = rows
+def test_returns_unprocessable_when_an_index_is_missing(client, db):
+    db["pricing"].return_value = _rows(None, _index(2026))
 
     response = client.post(
         URL, json=VALID_BODY | {"requestDate": "2027-06-15T12:00:00Z"}
     )
 
-    assert response.status_code == 200
-    assert response.json()["provisionalAmount"] == 26750.0
-    assert response.json()["inflationAdjustedAmount"] == 26750.0
+    assert response.status_code == 422
 
 
 @pytest.mark.parametrize(
