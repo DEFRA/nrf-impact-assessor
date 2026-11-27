@@ -1,6 +1,4 @@
-"""_find_intersecting_catchments against real PostGIS.
-
-"""
+"""_find_intersecting_catchments against real PostGIS."""
 
 import geopandas as gpd
 import pytest
