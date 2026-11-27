@@ -34,6 +34,10 @@
          so adding them NOT NULL outright fails with "column ... contains
          null values". -->
     <changeSet id="15-inflation-index-provenance" author="nrf">
+        <!-- The checksum of the first version, from PR #205. Environments that
+             applied it before the backfill was added in PR #209 keep that
+             checksum. Both versions leave the same schema. -->
+        <validCheckSum>9:d877396fe2ff4becd4512fe74bab7b8d</validCheckSum>
         <addColumn tableName="levy_inflation_index" schemaName="public">
             <column name="comment" type="varchar(500)"/>
             <column name="staff_id" type="varchar(36)"/>
